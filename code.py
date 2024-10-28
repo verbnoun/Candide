@@ -62,6 +62,12 @@ class SPIReceiver:
             MISO=Constants.SPI_MISO
         )
         
+        # Wait for SPI to be ready
+        while not self.spi.try_lock():
+            pass
+        self.spi.configure(baudrate=1000000, phase=0, polarity=0)
+        self.spi.unlock()
+        
         # Monitor CS as INPUT since we're the slave
         self.cs = digitalio.DigitalInOut(Constants.SPI_CS)
         self.cs.direction = digitalio.Direction.INPUT
@@ -70,6 +76,7 @@ class SPIReceiver:
         # Initialize SPI device without chip select (we're slave)
         self.spi_device = SPIDevice(
             self.spi,
+            chip_select=None,  # No CS for slave
             baudrate=1000000,  # 1MHz to match base
             polarity=0,
             phase=0
@@ -101,106 +108,31 @@ class SPIReceiver:
         self._out_buffer[3] = 0
         print("[Cart] Prepared handshake response")
 
-    def _prepare_connected_response(self):
-        """Prepare normal operation response"""
-        self._out_buffer[0] = self.SYNC_ACK
-        self._out_buffer[1] = 0
-        self._out_buffer[2] = 0
-        self._out_buffer[3] = 0
-
     def check_connection(self):
         """Process incoming communication based on state"""
         try:
             # Only process when CS is active (low)
             if not self.cs.value:  # CS is active low
                 with self.spi_device as device:
-                    # Read incoming data
-                    device.readinto(self._in_buffer)
+                    # Single transaction - immediately send prepared response
+                    device.write_readinto(self._out_buffer, self._in_buffer)
+                
+                if any(self._in_buffer):  # If we received any data
+                    print(f"[Cart] Write/Read: received={[hex(b) for b in self._in_buffer]} sent={[hex(b) for b in self._out_buffer]}")
                     
-                    if any(self._in_buffer):  # If we received any data
-                        print(f"[Cart] Received: {[hex(b) for b in self._in_buffer]}")
-                        
-                        if self.state == self.DISCONNECTED:
-                            self._handle_sync()
-                        elif self.state == self.SYNC_COMPLETE:
-                            self._handle_handshake()
-                        elif self.state == self.CONNECTED:
-                            self._handle_communication()
+                    if self.state == self.DISCONNECTED:
+                        # Check if it's a sync request
+                        if (self._in_buffer[0] == self.SYNC_REQUEST and
+                            self._in_buffer[1] == self.PROTOCOL_VERSION):
+                            print("[Cart] Valid sync request - proceeding to handshake")
+                            self.state = self.SYNC_COMPLETE
+                            self._prepare_handshake_response()
                             
-                    # Write response after processing
-                    device.write(self._out_buffer)
-                    print(f"[Cart] Sent: {[hex(b) for b in self._out_buffer]}")
-                    
             return self.state == self.CONNECTED
-                    
+                        
         except Exception as e:
             print(f"[Cart] Connection error: {str(e)}")
             return False
-
-    def _handle_sync(self):
-        """Handle sync request from base"""
-        try:
-            if (self._in_buffer[0] == self.SYNC_REQUEST and
-                self._in_buffer[1] == self.PROTOCOL_VERSION):
-                
-                print("[Cart] Sync request received")
-                self.state = self.SYNC_COMPLETE
-                self.last_sync_time = time.monotonic()
-                self._prepare_handshake_response()
-                print("[Cart] Sync complete - Ready for handshake")
-                return True
-
-        except Exception as e:
-            print(f"[Cart] Sync error: {str(e)}")
-
-        return False
-
-    def _handle_handshake(self):
-        """Handle handshake phase"""
-        try:
-            if self._in_buffer[0] == self.HI_CANDIDE:
-                print("[Cart] Handshake received")
-                self.state = self.CONNECTED
-                self._prepare_connected_response()
-                print("[Cart] Connected to base station!")
-                return True
-                    
-        except Exception as e:
-            print(f"[Cart] Handshake error: {str(e)}")
-            
-        return False
-
-    def _handle_communication(self):
-        """Handle normal operation communication"""
-        try:
-            if self._in_buffer[0] == self.SYNC_REQUEST:
-                self._prepare_connected_response()
-                return True
-            elif any(self._in_buffer):  # Process other commands
-                return self._process_command()
-                    
-        except Exception as e:
-            print(f"[Cart] Communication error: {str(e)}")
-            self.reset_state()
-            
-        return False
-
-    def _process_command(self):
-        """Process received command"""
-        command = self._in_buffer[0]
-        print(f"[Cart] Processing command: {hex(command)}")
-        # Command processing logic here
-        return True
-
-    def reset_state(self):
-        """Reset to initial state"""
-        self.state = self.DISCONNECTED
-        self._prepare_sync_response()
-        print("[Cart] Reset to initial state")
-
-    def is_ready(self):
-        """Check if connection is established"""
-        return self.state == self.CONNECTED
 
     def read_message(self):
         """Read a message if connection is ready"""
@@ -217,6 +149,16 @@ class SPIReceiver:
             print(f"[Cart] Read error: {str(e)}")
             
         return None
+
+    def reset_state(self):
+        """Reset to initial state"""
+        self.state = self.DISCONNECTED
+        self._prepare_sync_response()
+        print("[Cart] Reset to initial state")
+
+    def is_ready(self):
+        """Check if connection is established"""
+        return self.state == self.CONNECTED
 
     def cleanup(self):
         """Clean shutdown"""
