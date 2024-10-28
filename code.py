@@ -62,103 +62,122 @@ class SPIReceiver:
             MISO=Constants.SPI_MISO
         )
         
-        # Configure chip select
+        # Monitor CS as INPUT since we're the slave
         self.cs = digitalio.DigitalInOut(Constants.SPI_CS)
         self.cs.direction = digitalio.Direction.INPUT
-        self.cs.pull = digitalio.Pull.UP
+        self.cs.pull = digitalio.Pull.UP  # Pull up when not selected
         
-        # Initialize SPIDevice
+        # Initialize SPI device without chip select (we're slave)
         self.spi_device = SPIDevice(
             self.spi,
-            self.cs,
-            baudrate=1000000,
+            baudrate=1000000,  # 1MHz to match base
             polarity=0,
             phase=0
         )
         
-        self._out_buffer = bytearray(4)
-        self._in_buffer = bytearray(4)
+        # Initialize buffers
+        self._out_buffer = bytearray(4)  # Response buffer
+        self._in_buffer = bytearray(4)   # Receive buffer
+        
+        # Prepare initial sync response
+        self._prepare_sync_response()
         
         print("[Cart] SPI initialized, signaling presence")
+        print("[Cart] Waiting for base station...")
+
+    def _prepare_sync_response(self):
+        """Prepare sync acknowledgment response"""
+        self._out_buffer[0] = self.SYNC_ACK
+        self._out_buffer[1] = self.PROTOCOL_VERSION
+        self._out_buffer[2] = 0
+        self._out_buffer[3] = 0
+        print("[Cart] Prepared sync response")
+
+    def _prepare_handshake_response(self):
+        """Prepare handshake response"""
+        self._out_buffer[0] = self.HELLO_BART
+        self._out_buffer[1] = 0
+        self._out_buffer[2] = 0
+        self._out_buffer[3] = 0
+        print("[Cart] Prepared handshake response")
+
+    def _prepare_connected_response(self):
+        """Prepare normal operation response"""
+        self._out_buffer[0] = self.SYNC_ACK
+        self._out_buffer[1] = 0
+        self._out_buffer[2] = 0
+        self._out_buffer[3] = 0
 
     def check_connection(self):
         """Process incoming communication based on state"""
-        if not self.cs.value:  # CS active
-            if self.state == self.DISCONNECTED:
-                return self._handle_sync()
-            elif self.state == self.SYNC_COMPLETE:
-                return self._start_handshake()
-            elif self.state == self.CONNECTED:
-                return self._handle_communication()
-                
-        return self.state == self.CONNECTED
+        try:
+            # Only process when CS is active (low)
+            if not self.cs.value:  # CS is active low
+                with self.spi_device as device:
+                    # Read incoming data
+                    device.readinto(self._in_buffer)
+                    
+                    if any(self._in_buffer):  # If we received any data
+                        print(f"[Cart] Received: {[hex(b) for b in self._in_buffer]}")
+                        
+                        if self.state == self.DISCONNECTED:
+                            self._handle_sync()
+                        elif self.state == self.SYNC_COMPLETE:
+                            self._handle_handshake()
+                        elif self.state == self.CONNECTED:
+                            self._handle_communication()
+                            
+                    # Write response after processing
+                    device.write(self._out_buffer)
+                    print(f"[Cart] Sent: {[hex(b) for b in self._out_buffer]}")
+                    
+            return self.state == self.CONNECTED
+                    
+        except Exception as e:
+            print(f"[Cart] Connection error: {str(e)}")
+            return False
 
     def _handle_sync(self):
         """Handle sync request from base"""
         try:
-            with self.spi_device as device:
-                # Read sync request
-                device.readinto(self._in_buffer)
-
-                # Print received data for debugging
-                print(f"[Cart] Received: {list(self._in_buffer)}")
-
-                if (self._in_buffer[0] == self.SYNC_REQUEST and
-                    self._in_buffer[1] == self.PROTOCOL_VERSION):
-                    
-                    # Send ACK with matching version
-                    time.sleep(0.01)
-                    self._out_buffer = bytearray([self.SYNC_ACK, 
-                                                self.PROTOCOL_VERSION, 0, 0])
-                    device.write(self._out_buffer)
-                    
-                    print("[Cart] Sync complete - Ready for handshake")
-                    self.state = self.SYNC_COMPLETE
-                    self.last_sync_time = time.monotonic()
-                    return True
+            if (self._in_buffer[0] == self.SYNC_REQUEST and
+                self._in_buffer[1] == self.PROTOCOL_VERSION):
+                
+                print("[Cart] Sync request received")
+                self.state = self.SYNC_COMPLETE
+                self.last_sync_time = time.monotonic()
+                self._prepare_handshake_response()
+                print("[Cart] Sync complete - Ready for handshake")
+                return True
 
         except Exception as e:
             print(f"[Cart] Sync error: {str(e)}")
 
         return False
 
-    def _start_handshake(self):
-        """Initiate handshake after sync"""
+    def _handle_handshake(self):
+        """Handle handshake phase"""
         try:
-            with self.spi_device as device:
-                # Send HELLO_BART
-                self._out_buffer = bytearray([self.HELLO_BART, 0, 0, 0])
-                device.write(self._out_buffer)
-                time.sleep(0.01)
-                
-                # Wait for HI_CANDIDE
-                device.readinto(self._in_buffer)
-                
-                if self._in_buffer[0] == self.HI_CANDIDE:
-                    self.state = self.CONNECTED
-                    print("[Cart] Connected to base station!")
-                    return True
-                else:
-                    print("[Cart] Invalid handshake response")
+            if self._in_buffer[0] == self.HI_CANDIDE:
+                print("[Cart] Handshake received")
+                self.state = self.CONNECTED
+                self._prepare_connected_response()
+                print("[Cart] Connected to base station!")
+                return True
                     
         except Exception as e:
             print(f"[Cart] Handshake error: {str(e)}")
             
-        self.reset_state()
         return False
 
     def _handle_communication(self):
         """Handle normal operation communication"""
         try:
-            with self.spi_device as device:
-                device.readinto(self._in_buffer)
-                
-                # Handle sync check
-                if self._in_buffer[0] == self.SYNC_REQUEST:
-                    self._out_buffer = bytearray([self.SYNC_ACK, 0, 0, 0])
-                    time.sleep(0.01)
-                    device.write(self._out_buffer)
-                    return True
+            if self._in_buffer[0] == self.SYNC_REQUEST:
+                self._prepare_connected_response()
+                return True
+            elif any(self._in_buffer):  # Process other commands
+                return self._process_command()
                     
         except Exception as e:
             print(f"[Cart] Communication error: {str(e)}")
@@ -166,9 +185,17 @@ class SPIReceiver:
             
         return False
 
+    def _process_command(self):
+        """Process received command"""
+        command = self._in_buffer[0]
+        print(f"[Cart] Processing command: {hex(command)}")
+        # Command processing logic here
+        return True
+
     def reset_state(self):
         """Reset to initial state"""
         self.state = self.DISCONNECTED
+        self._prepare_sync_response()
         print("[Cart] Reset to initial state")
 
     def is_ready(self):
@@ -181,13 +208,13 @@ class SPIReceiver:
             return None
             
         try:
-            with self.spi_device as device:
-                if not self.cs.value:  # Only read when CS is active
+            if not self.cs.value:  # Only read when selected
+                with self.spi_device as device:
                     device.readinto(self._in_buffer)
-                    return self._in_buffer if any(self._in_buffer) else None
+                    return bytes(self._in_buffer) if any(self._in_buffer) else None
                     
         except Exception as e:
-            print(f"Read Error: {str(e)}")
+            print(f"[Cart] Read error: {str(e)}")
             
         return None
 
@@ -197,6 +224,8 @@ class SPIReceiver:
         self.reset_state()
         time.sleep(0.1)
         self.spi.deinit()
+        self.cs.deinit()
+        self.detect.deinit()
 
 class Candide:
     def __init__(self):
