@@ -72,7 +72,7 @@ class SPIReceiver:
         while not self.spi.try_lock():
             pass
         self.spi.configure(
-            baudrate=500000,
+            baudrate=50000,  #50kHz
             polarity=1,
             phase=1
         )
@@ -87,7 +87,7 @@ class SPIReceiver:
         self.spi_device = SPIDevice(
             self.spi,
             chip_select=None,  # No CS for slave
-            baudrate=500000,
+            baudrate=50000,  #50kHz
             polarity=1,
             phase=1
         )
