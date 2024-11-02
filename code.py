@@ -16,35 +16,49 @@ class Constants:
     # Hardware Setup Delay
     SETUP_DELAY = 0.1
     
-    # UART MIDI Pin
-    MIDI_RX = board.GP17
+    # UART Pins
+    MIDI_TX = board.GP16  # TX for text output
+    MIDI_RX = board.GP17  # RX for MIDI input
 
-class HardwareMIDI:
-    """Handles UART MIDI input"""
+class UartHandler:
+    """Handles MIDI input on RX and text output on TX"""
     def __init__(self, midi_callback):
         self.midi_callback = midi_callback
-        print(f"Initializing UART MIDI on {Constants.MIDI_RX}")
+        print(f"Initializing UART on TX={Constants.MIDI_TX}, RX={Constants.MIDI_RX}")
         
         try:
-            # Initialize UART at MIDI baud rate
-            self.uart = busio.UART(tx=None,  # No TX needed
+            # Initialize UART at MIDI baud rate for both MIDI and text
+            self.uart = busio.UART(tx=Constants.MIDI_TX,
                                 rx=Constants.MIDI_RX,
                                 baudrate=31250,
                                 bits=8,
                                 parity=None,
                                 stop=1)
             
-            # Buffer for incomplete messages
+            # Buffer for incomplete MIDI messages
             self.buffer = bytearray()
             self.last_byte_time = time.monotonic()
-            print("UART MIDI initialization successful")
+            print("UART initialization successful")
+            
+            # Send initial hello message
+            self.send_text("hello from candide")
             
         except Exception as e:
             print(f"UART initialization error: {str(e)}")
             raise
 
+    def send_text(self, message):
+        """Send a text message via TX pin"""
+        try:
+            self.uart.write(bytes(message + "\n", 'utf-8'))
+            if Constants.DEBUG:
+                print(f"Sent text: {message}")
+        except Exception as e:
+            if str(e):  # Only print if there's an actual error message
+                print(f"Error sending text: {str(e)}")
+
     def check_for_messages(self):
-        """Check for and process any incoming MIDI messages"""
+        """Check for and process any incoming MIDI messages from RX pin"""
         try:
             current_time = time.monotonic()
             
@@ -65,15 +79,16 @@ class HardwareMIDI:
                     self.buffer.extend(new_bytes)
                     self.last_byte_time = current_time
 
-                    # Process complete messages
-                    while self._process_buffer():
+                    # Process complete MIDI messages
+                    while self._process_midi_buffer():
                         pass
 
         except Exception as e:
-            print(f"Error reading UART: {str(e)}")
+            if str(e):  # Only print if there's an actual error message
+                print(f"Error reading UART: {str(e)}")
 
-    def _process_buffer(self):
-        """Process buffer and return True if a message was handled"""
+    def _process_midi_buffer(self):
+        """Process MIDI buffer and return True if a message was handled"""
         if not self.buffer:
             return False
 
@@ -93,7 +108,7 @@ class HardwareMIDI:
                     msg = self.buffer[:3]
                     self.buffer = self.buffer[3:]
                     if Constants.DEBUG:
-                        print(f"Processing message: {[hex(b) for b in msg]}")
+                        print(f"Processing MIDI message: {[hex(b) for b in msg]}")
                     self.midi_callback(msg)
                     return True
             elif status in [0xC0, 0xD0]:  # 2-byte messages
@@ -101,19 +116,20 @@ class HardwareMIDI:
                     msg = self.buffer[:2]
                     self.buffer = self.buffer[2:]
                     if Constants.DEBUG:
-                        print(f"Processing message: {[hex(b) for b in msg]}")
+                        print(f"Processing MIDI message: {[hex(b) for b in msg]}")
                     self.midi_callback(msg)
                     return True
             else:  # Single byte or system messages
                 msg = self.buffer[:1]
                 self.buffer = self.buffer[1:]
                 if Constants.DEBUG:
-                    print(f"Processing message: {[hex(b) for b in msg]}")
+                    print(f"Processing MIDI message: {[hex(b) for b in msg]}")
                 self.midi_callback(msg)
                 return True
 
         except Exception as e:
-            print(f"Error processing buffer: {str(e)}")
+            if str(e):  # Only print if there's an actual error message
+                print(f"Error processing MIDI buffer: {str(e)}")
             self.buffer = bytearray()
             
         return False
@@ -122,9 +138,10 @@ class HardwareMIDI:
         """Clean shutdown"""
         try:
             self.uart.deinit()
-            print("UART MIDI cleaned up")
+            print("UART cleaned up")
         except Exception as e:
-            print(f"Error during cleanup: {str(e)}")
+            if str(e):  # Only print if there's an actual error message
+                print(f"Error during cleanup: {str(e)}")
 
 class Candide:
     def __init__(self):
@@ -132,13 +149,13 @@ class Candide:
         self.audio = None
         self.synth = None
         self.current_instrument = None
-        self.hw_midi = None
+        self.uart = None
         
         try:
             # Setup order matters - audio system first
             self._setup_audio()
             self._setup_synth()
-            self._setup_midi()
+            self._setup_uart()
             self._setup_initial_state()
             print("\nCandide (v1.0) is ready... (◕‿◕✿)")
         except Exception as e:
@@ -157,10 +174,10 @@ class Candide:
         self.current_instrument = Piano()  # Default instrument
         self.synth.set_instrument(self.current_instrument)
 
-    def _setup_midi(self):
-        """Initialize MIDI hardware"""
-        print("Setting up MIDI hardware...")
-        self.hw_midi = HardwareMIDI(self.process_midi_message)
+    def _setup_uart(self):
+        """Initialize UART for MIDI input and text output"""
+        print("Setting up UART...")
+        self.uart = UartHandler(self.process_midi_message)
 
     def _setup_initial_state(self):
         """Set initial state for synthesizer"""
@@ -182,6 +199,8 @@ class Candide:
                     print(f"Note On: note={note}, velocity={velocity}")
                 event = ('note_on', note, velocity, 0)
                 self.synth.process_midi_event(event)
+                # Send text notification of note on
+                self.uart.send_text(f"note_on {note} {velocity}")
                 
             elif status == 0x80:  # Note Off
                 note = data[1]
@@ -189,6 +208,8 @@ class Candide:
                     print(f"Note Off: note={note}")
                 event = ('note_off', note, 0, 0)
                 self.synth.process_midi_event(event)
+                # Send text notification of note off
+                self.uart.send_text(f"note_off {note}")
                 
             elif status == 0xB0:  # Control Change
                 cc_num = data[1]
@@ -198,6 +219,8 @@ class Candide:
                     print(f"Control Change: cc={cc_num}, value={value}")
                 event = ('control_change', cc_num, value, normalized_value)
                 self.synth.process_midi_event(event)
+                # Send text notification of control change
+                self.uart.send_text(f"cc {cc_num} {value}")
                 
         except Exception as e:
             print(f"Error processing MIDI message: {str(e)}")
@@ -205,8 +228,8 @@ class Candide:
     def update(self):
         """Main update loop"""
         try:
-            # Check for MIDI messages first
-            self.hw_midi.check_for_messages()
+            # Check for MIDI messages
+            self.uart.check_for_messages()
             
             # Update synthesis
             self.synth.update([])  # Pass empty list when no MIDI events
@@ -236,9 +259,9 @@ class Candide:
         if self.synth:
             print("Stopping synthesizer...")
             self.synth.stop()
-        if self.hw_midi:
-            print("Cleaning up MIDI...")
-            self.hw_midi.cleanup()
+        if self.uart:
+            print("Cleaning up UART...")
+            self.uart.cleanup()
         print("\nCandide goes to sleep... ( ◡_◡)ᶻ 𝗓 𐰁")
 
 def main():
