@@ -1,5 +1,6 @@
 import board
 import busio
+import digitalio
 import time
 from instruments import Piano, ElectricOrgan, BendableOrgan, Instrument
 from synthesizer import Synthesizer, SynthAudioOutputManager
@@ -19,6 +20,9 @@ class Constants:
     # UART Pins
     MIDI_TX = board.GP16  # TX for text output
     MIDI_RX = board.GP17  # RX for MIDI input
+    
+    # Detect Pin
+    DETECT_PIN = board.GP22
 
 class UartHandler:
     """Handles MIDI input on RX and text output on TX"""
@@ -150,6 +154,8 @@ class Candide:
         self.synth = None
         self.current_instrument = None
         self.uart = None
+        self.detect_pin = None
+        self.connected = False
         
         try:
             # Setup order matters - audio system first
@@ -182,7 +188,18 @@ class Candide:
     def _setup_initial_state(self):
         """Set initial state for synthesizer"""
         print("Setting up initial state...")
-        pass  # Can be expanded as needed
+        
+        # Setup detect pin as input with pull-down
+        self.detect_pin = digitalio.DigitalInOut(Constants.DETECT_PIN)
+        self.detect_pin.direction = digitalio.Direction.INPUT
+        self.detect_pin.pull = digitalio.Pull.DOWN
+        
+        # Check initial connection state
+        self.connected = self.detect_pin.value
+        if self.connected:
+            print("Connected to Bartleby")
+        else:
+            print("Not connected to Bartleby")
 
     def process_midi_message(self, data):
         """Process MIDI message"""
@@ -199,8 +216,9 @@ class Candide:
                     print(f"Note On: note={note}, velocity={velocity}")
                 event = ('note_on', note, velocity, 0)
                 self.synth.process_midi_event(event)
-                # Send text notification of note on
-                self.uart.send_text(f"note_on {note} {velocity}")
+                # Send text notification of note on if this is the greeting chord
+                if note in [60, 64, 67]:  # C, E, G notes
+                    self.uart.send_text("hello from candide")
                 
             elif status == 0x80:  # Note Off
                 note = data[1]
@@ -208,8 +226,6 @@ class Candide:
                     print(f"Note Off: note={note}")
                 event = ('note_off', note, 0, 0)
                 self.synth.process_midi_event(event)
-                # Send text notification of note off
-                self.uart.send_text(f"note_off {note}")
                 
             elif status == 0xB0:  # Control Change
                 cc_num = data[1]
@@ -219,8 +235,6 @@ class Candide:
                     print(f"Control Change: cc={cc_num}, value={value}")
                 event = ('control_change', cc_num, value, normalized_value)
                 self.synth.process_midi_event(event)
-                # Send text notification of control change
-                self.uart.send_text(f"cc {cc_num} {value}")
                 
         except Exception as e:
             print(f"Error processing MIDI message: {str(e)}")
@@ -228,11 +242,27 @@ class Candide:
     def update(self):
         """Main update loop"""
         try:
-            # Check for MIDI messages
-            self.uart.check_for_messages()
+            # Check connection state
+            current_state = self.detect_pin.value
             
-            # Update synthesis
-            self.synth.update([])  # Pass empty list when no MIDI events
+            # Handle disconnection
+            if self.connected and not current_state:
+                print("Detached from Bartleby")
+                self.connected = False
+            
+            # Handle new connection
+            elif not self.connected and current_state:
+                print("Connected to Bartleby")
+                self.connected = True
+            
+            # Only process MIDI if connected
+            if self.connected:
+                # Check for MIDI messages
+                self.uart.check_for_messages()
+                
+                # Update synthesis
+                self.synth.update([])  # Pass empty list when no MIDI events
+            
             return True
             
         except Exception as e:
@@ -262,6 +292,8 @@ class Candide:
         if self.uart:
             print("Cleaning up UART...")
             self.uart.cleanup()
+        if self.detect_pin:
+            self.detect_pin.deinit()
         print("\nCandide goes to sleep... ( ◡_◡)ᶻ 𝗓 𐰁")
 
 def main():
