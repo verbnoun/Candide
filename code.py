@@ -23,11 +23,16 @@ class Constants:
     
     # Detect Pin
     DETECT_PIN = board.GP22
+    
+    # Heartbeat timing
+    HEARTBEAT_INTERVAL = 0.5  # Send heartbeat every 0.5 seconds
+    MESSAGE_COUNTS_AS_HEARTBEAT = True  # Any message resets heartbeat timer
 
 class UartHandler:
     """Handles MIDI input on RX and text output on TX"""
-    def __init__(self, midi_callback):
+    def __init__(self, midi_callback, is_connected_callback):
         self.midi_callback = midi_callback
+        self.is_connected_callback = is_connected_callback
         print(f"Initializing UART on TX={Constants.MIDI_TX}, RX={Constants.MIDI_RX}")
         
         try:
@@ -44,9 +49,6 @@ class UartHandler:
             self.last_byte_time = time.monotonic()
             print("UART initialization successful")
             
-            # Send initial hello message
-            self.send_text("hello from candide")
-            
         except Exception as e:
             print(f"UART initialization error: {str(e)}")
             raise
@@ -57,15 +59,24 @@ class UartHandler:
             self.uart.write(bytes(message + "\n", 'utf-8'))
             if Constants.DEBUG:
                 print(f"Sent text: {message}")
+            return True
         except Exception as e:
             if str(e):  # Only print if there's an actual error message
                 print(f"Error sending text: {str(e)}")
+            return False
 
     def check_for_messages(self):
         """Check for and process any incoming MIDI messages from RX pin"""
         try:
             current_time = time.monotonic()
             
+            # If not connected, clear any waiting data and the buffer
+            if not self.is_connected_callback():
+                if self.uart.in_waiting:
+                    self.uart.read(self.uart.in_waiting)  # Clear waiting data
+                self.buffer.clear()  # Clear existing buffer
+                return
+
             # Clear buffer if too much time has passed since last byte
             if current_time - self.last_byte_time > 0.1:  # 100ms timeout
                 if self.buffer:
@@ -157,6 +168,10 @@ class Candide:
         self.detect_pin = None
         self.connected = False
         
+        # Communication state
+        self.last_message_time = 0  # Track when we last sent any message
+        self.has_sent_hello = False  # Track if we've sent initial hello
+        
         try:
             # Setup order matters - audio system first
             self._setup_audio()
@@ -183,7 +198,7 @@ class Candide:
     def _setup_uart(self):
         """Initialize UART for MIDI input and text output"""
         print("Setting up UART...")
-        self.uart = UartHandler(self.process_midi_message)
+        self.uart = UartHandler(self.process_midi_message, self.is_connected)
 
     def _setup_initial_state(self):
         """Set initial state for synthesizer"""
@@ -198,12 +213,33 @@ class Candide:
         self.connected = self.detect_pin.value
         if self.connected:
             print("Connected to Bartleby")
+            self._send_connected_messages()
         else:
             print("Not connected to Bartleby")
 
+    def is_connected(self):
+        """Helper method to check connection state"""
+        return self.connected
+
+    def _send_connected_messages(self):
+        """Send initial messages when connected"""
+        if not self.has_sent_hello:  # Only send hello once per connection
+            if self.uart.send_text("hello from candide"):
+                self.last_message_time = time.monotonic()
+                self.has_sent_hello = True
+
+    def _send_heartbeat(self):
+        """Send heartbeat message if needed"""
+        current_time = time.monotonic()
+        
+        # Only send heartbeat if we haven't sent any message recently
+        if (current_time - self.last_message_time) >= Constants.HEARTBEAT_INTERVAL:
+            if self.uart.send_text("+"):
+                self.last_message_time = current_time
+
     def process_midi_message(self, data):
         """Process MIDI message"""
-        if not data:
+        if not data or not self.connected:  # Double check connection
             return
 
         try:
@@ -216,9 +252,6 @@ class Candide:
                     print(f"Note On: note={note}, velocity={velocity}")
                 event = ('note_on', note, velocity, 0)
                 self.synth.process_midi_event(event)
-                # Send text notification of note on if this is the greeting chord
-                if note in [60, 64, 67]:  # C, E, G notes
-                    self.uart.send_text("hello from candide")
                 
             elif status == 0x80:  # Note Off
                 note = data[1]
@@ -245,20 +278,39 @@ class Candide:
             # Check connection state
             current_state = self.detect_pin.value
             
+            # Handle new connection
+            if not self.connected and current_state:
+                print("Connected to Bartleby")
+                
+                # First clear any stale MIDI data
+                while self.uart.uart.in_waiting:  # Access through uart.uart
+                    self.uart.uart.read(self.uart.uart.in_waiting)
+                self.uart.buffer = bytearray()  # Reset buffer with new empty bytearray
+                
+                # Now start fresh
+                self.connected = True
+                self.has_sent_hello = False
+                self._send_connected_messages()
+            
             # Handle disconnection
-            if self.connected and not current_state:
+            elif self.connected and not current_state:
                 print("Detached from Bartleby")
                 self.connected = False
+                self.last_message_time = 0
+                self.has_sent_hello = False
+                
+                # Clear any pending data on disconnect too
+                while self.uart.uart.in_waiting:  # Access through uart.uart
+                    self.uart.uart.read(self.uart.uart.in_waiting)
+                self.uart.buffer = bytearray()  # Reset buffer with new empty bytearray
             
-            # Handle new connection
-            elif not self.connected and current_state:
-                print("Connected to Bartleby")
-                self.connected = True
-            
-            # Only process MIDI if connected
+            # Only process MIDI and send heartbeat if connected
             if self.connected:
                 # Check for MIDI messages
                 self.uart.check_for_messages()
+                
+                # Send heartbeat if needed
+                self._send_heartbeat()
                 
                 # Update synthesis
                 self.synth.update([])  # Pass empty list when no MIDI events
