@@ -65,13 +65,13 @@ class Piano(Instrument):
             'velocity_sensitivity': 0.9
         }
         self.pots = {
-            1: {'cc': 74, 'name': 'Filter Cutoff', 'min': 500, 'max': 5000},
-            2: {'cc': 71, 'name': 'Filter Resonance', 'min': 0, 'max': 0.5},
-            3: {'cc': 94, 'name': 'Detune Amount', 'min': 0, 'max': 0.1},
-            4: {'cc': 73, 'name': 'Attack Time', 'min': 0.001, 'max': 0.02},
-            5: {'cc': 75, 'name': 'Decay Time', 'min': 0.1, 'max': 2.0},
-            6: {'cc': 76, 'name': 'Sustain Level', 'min': 0, 'max': 0},
-            7: {'cc': 72, 'name': 'Release Time', 'min': 0.2, 'max': 1.5}
+            0: {'cc': 74, 'name': 'Filter Cutoff', 'min': 500, 'max': 5000},
+            1: {'cc': 71, 'name': 'Filter Resonance', 'min': 0, 'max': 0.5},
+            2: {'cc': 94, 'name': 'Detune Amount', 'min': 0, 'max': 0.1},
+            3: {'cc': 73, 'name': 'Attack Time', 'min': 0.001, 'max': 0.02},
+            4: {'cc': 75, 'name': 'Decay Time', 'min': 0.1, 'max': 2.0},
+            5: {'cc': 76, 'name': 'Sustain Level', 'min': 0, 'max': 0},
+            6: {'cc': 72, 'name': 'Release Time', 'min': 0.2, 'max': 1.5}
         }
         self.pitch_bend = {
             'enabled': False
@@ -99,13 +99,13 @@ class ElectricOrgan(Instrument):
             'velocity_sensitivity': 0.2
         }
         self.pots = {
-            1: {'cc': 74, 'name': 'Filter Cutoff', 'min': 500, 'max': 5000},
-            2: {'cc': 71, 'name': 'Filter Resonance', 'min': 0, 'max': 1},
-            3: {'cc': 94, 'name': 'Detune Amount', 'min': 0, 'max': 0.5},
-            4: {'cc': 73, 'name': 'Attack Time', 'min': 0.001, 'max': 0.1},
-            5: {'cc': 75, 'name': 'Decay Time', 'min': 0.01, 'max': 0.5},
-            6: {'cc': 76, 'name': 'Sustain Level', 'min': 0, 'max': 1},
-            7: {'cc': 72, 'name': 'Release Time', 'min': 0.01, 'max': 1}
+            0: {'cc': 74, 'name': 'Filter Cutoff', 'min': 500, 'max': 5000},
+            1: {'cc': 71, 'name': 'Filter Resonance', 'min': 0, 'max': 1},
+            2: {'cc': 94, 'name': 'Detune Amount', 'min': 0, 'max': 0.5},
+            3: {'cc': 73, 'name': 'Attack Time', 'min': 0.001, 'max': 0.1},
+            4: {'cc': 75, 'name': 'Decay Time', 'min': 0.01, 'max': 0.5},
+            5: {'cc': 76, 'name': 'Sustain Level', 'min': 0, 'max': 1},
+            6: {'cc': 72, 'name': 'Release Time', 'min': 0.01, 'max': 1}
         }
         self.pitch_bend = {
             'enabled': False
@@ -133,15 +133,15 @@ class BendableOrgan(Instrument):
             'velocity_sensitivity': 0.2
         }
         self.pots = {
-            1: {'cc': 74, 'name': 'Filter Cutoff', 'min': 500, 'max': 5000},
-            2: {'cc': 71, 'name': 'Filter Resonance', 'min': 0, 'max': 1},
-            3: {'cc': 94, 'name': 'Detune Amount', 'min': 0, 'max': 0.5},
-            4: {'cc': 73, 'name': 'Attack Time', 'min': 0.001, 'max': 0.1},
-            5: {'cc': 75, 'name': 'Decay Time', 'min': 0.01, 'max': 0.5},
-            6: {'cc': 76, 'name': 'Sustain Level', 'min': 0, 'max': 1},
-            7: {'cc': 72, 'name': 'Release Time', 'min': 0.01, 'max': 1},
-            8: {'cc': 77, 'name': 'Bend Range', 'min': 0, 'max': 3},
-            9: {'cc': 78, 'name': 'Bend Curve', 'min': 0, 'max': 1}
+            0: {'cc': 74, 'name': 'Filter Cutoff', 'min': 500, 'max': 5000},
+            1: {'cc': 71, 'name': 'Filter Resonance', 'min': 0, 'max': 1},
+            2: {'cc': 94, 'name': 'Detune Amount', 'min': 0, 'max': 0.5},
+            3: {'cc': 73, 'name': 'Attack Time', 'min': 0.001, 'max': 0.1},
+            4: {'cc': 75, 'name': 'Decay Time', 'min': 0.01, 'max': 0.5},
+            5: {'cc': 76, 'name': 'Sustain Level', 'min': 0, 'max': 1},
+            6: {'cc': 72, 'name': 'Release Time', 'min': 0.01, 'max': 1},
+            7: {'cc': 77, 'name': 'Bend Range', 'min': 0, 'max': 3},
+            8: {'cc': 78, 'name': 'Bend Curve', 'min': 0, 'max': 1}
         }
         self.pitch_bend = {
             'enabled': True,

@@ -8,7 +8,8 @@ from hardware import RotaryEncoderHandler, VolumePotHandler, Constants as HWCons
 
 class Constants:
     # System Constants
-    DEBUG = True  
+    DEBUG = True
+    SEE_HEARTBEAT = True  
 
     # Hardware Setup Delay
     SETUP_DELAY = 0.1
@@ -53,7 +54,7 @@ class UartHandler:
         """Send a text message via TX pin"""
         try:
             self.uart.write(bytes(message + "\n", 'utf-8'))
-            if Constants.DEBUG:
+            if Constants.DEBUG and (Constants.SEE_HEARTBEAT or message != "♡"):
                 print(f"Sent text: {message}")
             return True
         except Exception as e:
@@ -261,7 +262,7 @@ class Candide:
         
         # Only send heartbeat if we haven't sent any message recently
         if (current_time - self.last_message_time) >= Constants.HEARTBEAT_INTERVAL:
-            if self.uart.send_text("+"):
+            if self.uart.send_text("♡"):
                 self.last_message_time = current_time
 
     def process_midi_message(self, data):
