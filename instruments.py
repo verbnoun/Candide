@@ -1,3 +1,7 @@
+class Constants:
+    # System Constants
+    DEBUG = False 
+
 class Instrument:
     available_instruments = []
     current_instrument_index = 0
@@ -28,6 +32,9 @@ class Instrument:
 
     @classmethod
     def handle_instrument_change(cls, direction):
+        if Constants.DEBUG:
+            print(f"Handling instrument change, direction={direction}")
+            print(f"Available instruments: {[i.name for i in cls.available_instruments]}")
         cls.current_instrument_index = (cls.current_instrument_index + direction) % len(cls.available_instruments)
         current_instrument = cls.get_current_instrument()
         return current_instrument

@@ -4,21 +4,17 @@ import digitalio
 import time
 from instruments import Piano, ElectricOrgan, BendableOrgan, Instrument
 from synthesizer import Synthesizer, SynthAudioOutputManager
+from hardware import RotaryEncoderHandler, VolumePotHandler, Constants as HWConstants
 
 class Constants:
     # System Constants
-    DEBUG = True  # Enable debug output
-    LOG_GLOBAL = True
-    LOG_HARDWARE = True
-    LOG_MIDI = True
-    LOG_SYNTH = True
-    LOG_MISC = True
+    DEBUG = True  
 
     # Hardware Setup Delay
     SETUP_DELAY = 0.1
     
     # UART Pins
-    MIDI_TX = board.GP16  # TX for text output
+    MIDI_TX = board.GP16  # TX for text output 
     MIDI_RX = board.GP17  # RX for MIDI input
     
     # Detect Pin
@@ -167,14 +163,21 @@ class Candide:
         self.uart = None
         self.detect_pin = None
         self.connected = False
+        self.encoder = None
+        self.volume_pot = None
         
         # Communication state
         self.last_message_time = 0  # Track when we last sent any message
         self.has_sent_hello = False  # Track if we've sent initial hello
         
+        # Timing state for hardware
+        self.last_encoder_scan = 0
+        self.last_volume_scan = 0
+        
         try:
-            # Setup order matters - audio system first
+            # Setup order matters - audio system first, then hardware, then synth
             self._setup_audio()
+            self._setup_hardware()
             self._setup_synth()
             self._setup_uart()
             self._setup_initial_state()
@@ -188,11 +191,35 @@ class Candide:
         print("Setting up audio...")
         self.audio = SynthAudioOutputManager()
         
+    def _setup_hardware(self):
+        """Initialize hardware components"""
+        print("Setting up hardware...")
+        self.encoder = RotaryEncoderHandler(
+            HWConstants.INSTRUMENT_ENC_CLK,
+            HWConstants.INSTRUMENT_ENC_DT
+        )
+        self.volume_pot = VolumePotHandler(HWConstants.VOLUME_POT)
+        
+        # Get and set initial volume
+        initial_volume = self.volume_pot.normalize_value(self.volume_pot.pot.value)
+        if Constants.DEBUG:
+            print(f"Initial volume: {initial_volume:.3f}")
+        self.audio.set_volume(initial_volume)
+        
     def _setup_synth(self):
         """Initialize synthesis subsystem"""
         print("Setting up synthesizer...")
         self.synth = Synthesizer(self.audio)
-        self.current_instrument = Piano()  # Default instrument
+        
+        # Create instruments (they'll auto-register themselves)
+        Piano()
+        ElectricOrgan()
+        BendableOrgan()
+        
+        if Constants.DEBUG:
+            print(f"Available instruments: {[i.name for i in Instrument.available_instruments]}")
+        
+        self.current_instrument = Instrument.get_current_instrument()
         self.synth.set_instrument(self.current_instrument)
 
     def _setup_uart(self):
@@ -272,6 +299,46 @@ class Candide:
         except Exception as e:
             print(f"Error processing MIDI message: {str(e)}")
 
+    def _check_volume(self):
+        """Check volume pot and update mixer"""
+        current_time = time.monotonic()
+        
+        # Only check at specified interval
+        if (current_time - self.last_volume_scan) >= HWConstants.UPDATE_INTERVAL:
+            new_volume = self.volume_pot.read_pot()
+            if new_volume is not None:
+                if Constants.DEBUG:
+                    print(f"Volume: {new_volume:.3f}")
+                self.audio.set_volume(new_volume)
+            self.last_volume_scan = current_time
+
+    def _check_encoder(self):
+        """Check encoder and handle any changes"""
+        current_time = time.monotonic()
+        
+        # Only check at specified interval
+        if (current_time - self.last_encoder_scan) >= HWConstants.ENCODER_SCAN_INTERVAL:
+            events = self.encoder.read_encoder()
+
+            if Constants.DEBUG and events:
+                print(f"Encoder events: {events}")
+            
+            for event_type, direction in events:
+                if event_type == 'instrument_change':
+                    # Use instrument class method to change instrument
+                    if Constants.DEBUG:
+                        print(f"Current instrument index: {Instrument.current_instrument_index}")
+                    new_instrument = Instrument.handle_instrument_change(direction)
+                    if Constants.DEBUG:
+                        print(f"New instrument index: {Instrument.current_instrument_index}")
+                    if new_instrument != self.current_instrument:
+                        print(f"Switching to instrument: {new_instrument.name}")
+                        self.current_instrument = new_instrument
+                        self.synth.set_instrument(self.current_instrument)  
+
+            
+            self.last_encoder_scan = current_time
+
     def update(self):
         """Main update loop"""
         try:
@@ -283,9 +350,9 @@ class Candide:
                 print("Connected to Bartleby")
                 
                 # First clear any stale MIDI data
-                while self.uart.uart.in_waiting:  # Access through uart.uart
+                while self.uart.uart.in_waiting:
                     self.uart.uart.read(self.uart.uart.in_waiting)
-                self.uart.buffer = bytearray()  # Reset buffer with new empty bytearray
+                self.uart.buffer = bytearray()
                 
                 # Now start fresh
                 self.connected = True
@@ -300,9 +367,13 @@ class Candide:
                 self.has_sent_hello = False
                 
                 # Clear any pending data on disconnect too
-                while self.uart.uart.in_waiting:  # Access through uart.uart
+                while self.uart.uart.in_waiting:
                     self.uart.uart.read(self.uart.uart.in_waiting)
-                self.uart.buffer = bytearray()  # Reset buffer with new empty bytearray
+                self.uart.buffer = bytearray()
+            
+            # Check encoder regardless of connection state
+            self._check_encoder()
+            self._check_volume()
             
             # Only process MIDI and send heartbeat if connected
             if self.connected:
@@ -311,9 +382,9 @@ class Candide:
                 
                 # Send heartbeat if needed
                 self._send_heartbeat()
-                
-                # Update synthesis
-                self.synth.update([])  # Pass empty list when no MIDI events
+            
+            # Always update synthesis
+            self.synth.update([])
             
             return True
             
@@ -346,6 +417,11 @@ class Candide:
             self.uart.cleanup()
         if self.detect_pin:
             self.detect_pin.deinit()
+        if self.encoder:
+            print("Cleaning up encoder...")
+            self.encoder.cleanup()
+        if self.volume_pot:
+            self.volume_pot.pot.deinit()
         print("\nCandide goes to sleep... ( ◡_◡)ᶻ 𝗓 𐰁")
 
 def main():
