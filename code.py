@@ -9,7 +9,7 @@ from hardware import RotaryEncoderHandler, VolumePotHandler, Constants as HWCons
 class Constants:
     # System Constants
     DEBUG = True
-    SEE_HEARTBEAT = True  
+    SEE_HEARTBEAT = False  
 
     # Hardware Setup Delay
     SETUP_DELAY = 0.1
@@ -24,6 +24,10 @@ class Constants:
     # Heartbeat timing
     HEARTBEAT_INTERVAL = 0.5  # Send heartbeat every 0.5 seconds
     MESSAGE_COUNTS_AS_HEARTBEAT = True  # Any message resets heartbeat timer
+
+    # MIDI Constants
+    CC_CHANNEL_PRESSURE = 74  # Standard MPE channel pressure
+    PITCH_BEND_CENTER = 8192
 
 class UartHandler:
     """Handles MIDI input on RX and text output on TX"""
@@ -77,8 +81,6 @@ class UartHandler:
             # Clear buffer if too much time has passed since last byte
             if current_time - self.last_byte_time > 0.1:  # 100ms timeout
                 if self.buffer:
-                    if Constants.DEBUG:
-                        print(f"Clearing stale buffer: {[hex(b) for b in self.buffer]}")
                     self.buffer = bytearray()
 
             # Check for available bytes
@@ -86,8 +88,6 @@ class UartHandler:
                 # Read all available bytes
                 new_bytes = self.uart.read(self.uart.in_waiting)
                 if new_bytes:
-                    if Constants.DEBUG:
-                        print(f"Received bytes: {[hex(b) for b in new_bytes]}")
                     self.buffer.extend(new_bytes)
                     self.last_byte_time = current_time
 
@@ -107,35 +107,64 @@ class UartHandler:
         try:
             # Look for status byte
             if self.buffer[0] < 0x80:
-                if Constants.DEBUG:
-                    print(f"Discarding invalid data: {[hex(b) for b in self.buffer]}")
                 self.buffer = bytearray()
                 return False
 
             status = self.buffer[0] & 0xF0  # Strip channel
+            channel = (self.buffer[0] & 0x0F) + 1  # Get channel (1-16)
+            key_id = channel - 1  # In MPE mode, channel maps to key
 
             # Determine message length
             if status in [0x80, 0x90, 0xA0, 0xB0, 0xE0]:  # 3-byte messages
                 if len(self.buffer) >= 3:
                     msg = self.buffer[:3]
                     self.buffer = self.buffer[3:]
-                    if Constants.DEBUG:
-                        print(f"Processing MIDI message: {[hex(b) for b in msg]}")
+                    
+                    if status == 0x90 and msg[2] > 0:  # Note On with velocity > 0
+                        print(f"\nKey {key_id} MIDI Events:")
+                        print(f"  Note ON:")
+                        print(f"    Channel: {channel}")
+                        print(f"    Note: {msg[1]}")
+                        print(f"    Velocity: {msg[2]}")
+                        
+                    elif status == 0x80 or (status == 0x90 and msg[2] == 0):  # Note Off
+                        print(f"\nKey {key_id} MIDI Events:")
+                        print(f"  Note OFF:")
+                        print(f"    Channel: {channel}")
+                        print(f"    Note: {msg[1]}")
+                            
+                    elif status == 0xB0:  # Control Change
+                        if msg[1] == Constants.CC_CHANNEL_PRESSURE:  # Channel Pressure
+                            print(f"\nKey {key_id} MIDI Events:")
+                            print(f"  MIDI Updates:")
+                            print(f"    Channel: {channel}")
+                            print(f"    Pressure: {msg[2]}")
+                    
+                    elif status == 0xE0:  # Pitch Bend
+                        value = (msg[2] << 7) + msg[1]
+                        normalized_bend = (value - Constants.PITCH_BEND_CENTER) / Constants.PITCH_BEND_CENTER
+                        print(f"    Pitch Bend: {normalized_bend:+.3f}")
+                        
                     self.midi_callback(msg)
                     return True
+                    
             elif status in [0xC0, 0xD0]:  # 2-byte messages
                 if len(self.buffer) >= 2:
                     msg = self.buffer[:2]
                     self.buffer = self.buffer[2:]
-                    if Constants.DEBUG:
-                        print(f"Processing MIDI message: {[hex(b) for b in msg]}")
+                    
+                    if status == 0xC0:  # Program Change
+                        print(f"Program Change - channel: {channel}, program: {msg[1]}")
+                    elif status == 0xD0:  # Channel Pressure
+                        print(f"Channel Pressure - channel: {channel}, pressure: {msg[1]}")
+                        
                     self.midi_callback(msg)
                     return True
+                    
             else:  # Single byte or system messages
                 msg = self.buffer[:1]
                 self.buffer = self.buffer[1:]
-                if Constants.DEBUG:
-                    print(f"Processing MIDI message: {[hex(b) for b in msg]}")
+                print(f"System message: {[hex(b) for b in msg]}")
                 self.midi_callback(msg)
                 return True
 
@@ -274,27 +303,16 @@ class Candide:
             status = data[0] & 0xF0  # Strip channel
             
             if status == 0x90:  # Note On
-                note = data[1]
-                velocity = data[2]
-                if Constants.DEBUG:
-                    print(f"Note On: note={note}, velocity={velocity}")
-                event = ('note_on', note, velocity, 0)
+                event = ('note_on', data[1], data[2], 0)
                 self.synth.process_midi_event(event)
                 
             elif status == 0x80:  # Note Off
-                note = data[1]
-                if Constants.DEBUG:
-                    print(f"Note Off: note={note}")
-                event = ('note_off', note, 0, 0)
+                event = ('note_off', data[1], 0, 0)
                 self.synth.process_midi_event(event)
                 
             elif status == 0xB0:  # Control Change
-                cc_num = data[1]
-                value = data[2]
-                normalized_value = value / 127.0
-                if Constants.DEBUG:
-                    print(f"Control Change: cc={cc_num}, value={value}")
-                event = ('control_change', cc_num, value, normalized_value)
+                normalized_value = data[2] / 127.0
+                event = ('control_change', data[1], data[2], normalized_value)
                 self.synth.process_midi_event(event)
                 
         except Exception as e:

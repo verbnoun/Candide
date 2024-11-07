@@ -19,11 +19,16 @@ class Instrument:
             'range': 2,  # Default range of 2 semitones
             'curve': 2   # Default quadratic curve factor
         }
+        self.pressure = {
+            'enabled': False,
+            'sensitivity': 0.5,  # Default pressure sensitivity
+            'targets': []  # List of parameters affected by pressure
+        }
         Instrument.available_instruments.append(self)
 
     def get_configuration(self):
         config = {'name': self.name}
-        for attr in ['oscillator', 'filter', 'envelope', 'midi', 'pitch_bend']:
+        for attr in ['oscillator', 'filter', 'envelope', 'midi', 'pitch_bend', 'pressure']:
             if hasattr(self, attr) and getattr(self, attr) is not None:
                 config[attr] = getattr(self, attr)
         if self.pots:
@@ -76,6 +81,11 @@ class Piano(Instrument):
         self.pitch_bend = {
             'enabled': False
         }
+        self.pressure = {
+            'enabled': False,
+            'sensitivity': 0.0,
+            'targets': []
+        }
 
 class ElectricOrgan(Instrument):
     def __init__(self):
@@ -109,6 +119,18 @@ class ElectricOrgan(Instrument):
         }
         self.pitch_bend = {
             'enabled': False
+        }
+        self.pressure = {
+            'enabled': True,
+            'sensitivity': 0.7,
+            'targets': [
+                {
+                    'param': 'envelope.sustain',  # Controls sustain level
+                    'min': 0.0,
+                    'max': 1.0,
+                    'curve': 'linear'  # Linear response for natural volume control
+                }
+            ]
         }
 
 class BendableOrgan(Instrument):
@@ -147,4 +169,16 @@ class BendableOrgan(Instrument):
             'enabled': True,
             'range': 2,
             'curve': 2
+        }
+        self.pressure = {
+            'enabled': True,
+            'sensitivity': 0.8,
+            'targets': [
+                {
+                    'param': 'envelope.sustain',  # Controls sustain level
+                    'min': 0.0,
+                    'max': 1.0,
+                    'curve': 'linear'  # Linear response for natural volume control
+                }
+            ]
         }
