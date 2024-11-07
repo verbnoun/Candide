@@ -16,17 +16,47 @@ class Constants:
     SAMPLE_RATE = 44100
     
     # MPE Constants
-    MPE_MASTER_CHANNEL = 0
-    MPE_ZONE_START = 1
-    MPE_ZONE_END = 11
+    MPE_MASTER_CHANNEL = 0  # MIDI channel 1 (zero-based)
+    MPE_ZONE_START = 1      # MIDI channel 2 (zero-based)
+    MPE_ZONE_END = 11      # MIDI channel 12 (zero-based)
+    MPE_MAX_VOICES = 12    # Maximum number of MPE voices
+    
+    # MIDI CC Numbers
     CC_CHANNEL_PRESSURE = 74
+    CC_LEFT_PRESSURE = 78
+    CC_RIGHT_PRESSURE = 79
 
 class SynthVoiceManager:
     def __init__(self):
         self.active_notes = {}  # Maps key_id to Note objects
         self.note_channels = {}  # Maps key_id to MPE channel
+        self.available_channels = list(range(
+            Constants.MPE_ZONE_START,
+            Constants.MPE_ZONE_END + 1
+        ))
 
-    def allocate_voice(self, key_id, frequency, velocity, envelope, waveform, channel=None):
+    def allocate_channel(self, key_id):
+        """Allocate an MPE channel for a new note"""
+        if key_id in self.note_channels:
+            return self.note_channels[key_id]
+            
+        if self.available_channels:
+            channel = self.available_channels.pop(0)
+            self.note_channels[key_id] = channel
+            return channel
+            
+        # If no channels available, steal oldest one
+        if self.note_channels:
+            oldest_key = min(self.note_channels.keys())
+            channel = self.note_channels[oldest_key]
+            del self.note_channels[oldest_key]
+            self.note_channels[key_id] = channel
+            return channel
+            
+        return Constants.MPE_ZONE_START  # Fallback
+
+    def allocate_voice(self, key_id, frequency, velocity, envelope, waveform):
+        """Allocate or update a voice for the given key"""
         if key_id in self.active_notes:
             note = self.active_notes[key_id]
             note.frequency = frequency
@@ -34,17 +64,17 @@ class SynthVoiceManager:
             note.envelope = envelope
             note.waveform = waveform
         else:
+            channel = self.allocate_channel(key_id)
             note = synthio.Note(
                 frequency=frequency,
                 envelope=envelope,
                 amplitude=velocity / 127.0,
                 waveform=waveform,
-                bend=0.0  # Initialize with no pitch bend
+                bend=0.0,  # Initialize with no pitch bend
+                panning=0.0  # Initialize centered
             )
             self.active_notes[key_id] = note
-            if channel is not None:
-                self.note_channels[key_id] = channel
-        
+            
         return note
 
     def change_note_waveform(self, key_id, new_waveform):
@@ -52,9 +82,13 @@ class SynthVoiceManager:
             self.active_notes[key_id].waveform = new_waveform
 
     def release_voice(self, key_id):
+        """Release a voice and its channel"""
         if key_id in self.active_notes:
             note = self.active_notes.pop(key_id)
             if key_id in self.note_channels:
+                channel = self.note_channels[key_id]
+                if channel not in self.available_channels:
+                    self.available_channels.append(channel)
                 del self.note_channels[key_id]
             return note
         return None
@@ -72,6 +106,10 @@ class SynthVoiceManager:
     def release_all_voices(self):
         self.active_notes.clear()
         self.note_channels.clear()
+        self.available_channels = list(range(
+            Constants.MPE_ZONE_START,
+            Constants.MPE_ZONE_END + 1
+        ))
 
     def get_active_note_count(self):
         return len(self.active_notes)
@@ -92,9 +130,9 @@ class SynthEngine:
         self.filter_config = {'type': 'low_pass', 'cutoff': 1000, 'resonance': 0.5}
         self.current_waveform = 'sine'
         self.pitch_bend_enabled = True  # Default to enabled for MPE
-        self.pitch_bend_range = 48  # Default MPE pitch bend range
+        self.pitch_bend_range = 48  # Default MPE pitch bend range (4 octaves)
         self.pitch_bend_curve = 2
-        self.pressure_enabled = False
+        self.pressure_enabled = True  # Enable pressure for MPE
         self.pressure_sensitivity = 0.5
         self.pressure_targets = []  # List of parameters affected by pressure
         self.current_pressure = 0.0  # Current pressure value
@@ -118,11 +156,11 @@ class SynthEngine:
                 self.pitch_bend_curve = config['pitch_bend'].get('curve', 2)
             if 'pressure' in config:
                 pressure_config = config['pressure']
-                self.pressure_enabled = pressure_config.get('enabled', False)
+                self.pressure_enabled = pressure_config.get('enabled', True)
                 self.pressure_sensitivity = pressure_config.get('sensitivity', 0.5)
                 self.pressure_targets = pressure_config.get('targets', [])
 
-    def apply_pressure(self, pressure_value):
+    def apply_pressure(self, pressure_value, key_id=None):
         """Apply pressure to all configured targets"""
         if not self.pressure_enabled:
             return
@@ -147,6 +185,12 @@ class SynthEngine:
             if param.startswith('envelope.'):
                 param_name = param.split('.')[1]
                 self.set_envelope_param(param_name, scaled_value)
+            elif param.startswith('filter.'):
+                param_name = param.split('.')[1]
+                if param_name == 'cutoff':
+                    self.set_filter_cutoff(scaled_value)
+                elif param_name == 'resonance':
+                    self.set_filter_resonance(scaled_value)
 
     def configure_oscillator(self, osc_config):
         if 'detune' in osc_config:
@@ -355,10 +399,7 @@ class Synthesizer:
         envelope = self.synth_engine.create_envelope()
         waveform = self.synth_engine.get_waveform(self.instrument.oscillator['waveform'])
         
-        # Get MPE channel from key_id
-        channel = key_id % (Constants.MPE_ZONE_END - Constants.MPE_ZONE_START + 1) + Constants.MPE_ZONE_START
-        
-        note = self.voice_manager.allocate_voice(key_id, frequency, velocity, envelope, waveform, channel)
+        note = self.voice_manager.allocate_voice(key_id, frequency, velocity, envelope, waveform)
         
         if note is not None:
             if self.synth_engine.filter:
@@ -379,11 +420,12 @@ class Synthesizer:
             note.frequency = frequency
             self._apply_amplitude_scaling()
 
-    def apply_pitch_bend(self, key_id, bend_value):
+    def apply_pitch_bend(self, lsb, msb, key_id):
         if self.synth_engine.pitch_bend_enabled:
             note = self.voice_manager.get_note_by_key_id(key_id)
             if note:
                 # Convert 14-bit MIDI pitch bend to semitones
+                bend_value = (msb << 7) + lsb
                 normalized_bend = (bend_value - 8192) / 8192.0
                 bend_range = self.synth_engine.pitch_bend_range / 12.0  # Convert semitones to octaves
                 note.bend = normalized_bend * bend_range
@@ -395,8 +437,8 @@ class Synthesizer:
         # Average the pressures
         avg_pressure = (left_pressure + right_pressure) / 2.0
         
-        # Apply pressure to synth engine parameters (including envelope sustain for organs)
-        self.synth_engine.apply_pressure(avg_pressure)
+        # Apply pressure to synth engine parameters
+        self.synth_engine.apply_pressure(avg_pressure, key_id)
         
         note = self.voice_manager.get_note_by_key_id(key_id)
         if note:
@@ -407,6 +449,10 @@ class Synthesizer:
             if left_pressure != right_pressure:
                 pressure_diff = right_pressure - left_pressure
                 note.panning = pressure_diff  # -1.0 to 1.0 for full left to right
+            
+            # Update filter based on pressure
+            if self.synth_engine.filter:
+                note.filter = self.synth_engine.filter(self.synth)
             
             self._apply_amplitude_scaling()
 
