@@ -2,9 +2,11 @@ import board
 import busio
 import digitalio
 import time
+import array
 from instruments import Piano, ElectricOrgan, BendableOrgan, Instrument
 from synthesizer import Synthesizer, SynthAudioOutputManager
 from hardware import RotaryEncoderHandler, VolumePotHandler, Constants as HWConstants
+from collections import deque
 
 class Constants:
     # System Constants
@@ -21,33 +23,103 @@ class Constants:
     # Detect Pin
     DETECT_PIN = board.GP22
     
-    # Heartbeat timing
-    HEARTBEAT_INTERVAL = 0.5  # Send heartbeat every 0.5 seconds
-    MESSAGE_COUNTS_AS_HEARTBEAT = True  # Any message resets heartbeat timer
-
     # MIDI Constants
-    CC_CHANNEL_PRESSURE = 74  # Standard MPE channel pressure
-    PITCH_BEND_CENTER = 8192
+    MIDI_BAUD_RATE = 31250
+    RUNNING_STATUS_TIMEOUT = 0.3  # Time before running status is invalidated
+    BUFFER_SIZE = 1024  # Ring buffer size
+    MESSAGE_TIMEOUT = 0.1  # Time before partial message is considered stale
+    HEARTBEAT_INTERVAL = 0.5  # Send heartbeat every 0.5 seconds
+    MESSAGE_COUNTS_AS_HEARTBEAT = True
+
+    # MIDI Message Types
+    NOTE_OFF = 0x80
+    NOTE_ON = 0x90
+    POLY_PRESSURE = 0xA0
+    CONTROL_CHANGE = 0xB0
+    PROGRAM_CHANGE = 0xC0
+    CHANNEL_PRESSURE = 0xD0
+    PITCH_BEND = 0xE0
+    SYSTEM_MESSAGE = 0xF0
+
+    # MIDI Control Numbers
+    CC_CHANNEL_PRESSURE = 74
+
+class RingBuffer:
+    """Fixed-size ring buffer for MIDI data"""
+    def __init__(self, size):
+        self.size = size
+        self.buffer = array.array('B', [0] * size)  # unsigned char array
+        self.write_idx = 0
+        self.read_idx = 0
+        
+    def write(self, data):
+        """Write byte array to buffer, returns number of bytes written"""
+        bytes_written = 0
+        for byte in data:
+            next_write = (self.write_idx + 1) % self.size
+            if next_write != self.read_idx:  # if not full
+                self.buffer[self.write_idx] = byte
+                self.write_idx = next_write
+                bytes_written += 1
+            else:
+                break
+        return bytes_written
+    
+    def read(self, size=None):
+        """Read up to size bytes from buffer, or all available if size=None"""
+        result = array.array('B')
+        available = self.available()
+        if size is None:
+            size = available
+        else:
+            size = min(size, available)
+            
+        for _ in range(size):
+            if self.read_idx != self.write_idx:
+                result.append(self.buffer[self.read_idx])
+                self.read_idx = (self.read_idx + 1) % self.size
+                
+        return result
+    
+    def peek(self, offset=0):
+        """Look at byte at read_idx + offset without removing it"""
+        if offset >= self.available():
+            return None
+        peek_idx = (self.read_idx + offset) % self.size
+        return self.buffer[peek_idx]
+    
+    def available(self):
+        """Return number of bytes available to read"""
+        if self.write_idx >= self.read_idx:
+            return self.write_idx - self.read_idx
+        return self.size - (self.read_idx - self.write_idx)
+    
+    def clear(self):
+        """Reset buffer to empty state"""
+        self.write_idx = self.read_idx = 0
 
 class UartHandler:
-    """Handles MIDI input on RX and text output on TX"""
+    """Handles MIDI input on RX and text output on TX with improved buffering"""
     def __init__(self, midi_callback, is_connected_callback):
         self.midi_callback = midi_callback
         self.is_connected_callback = is_connected_callback
         print(f"Initializing UART on TX={Constants.MIDI_TX}, RX={Constants.MIDI_RX}")
         
         try:
-            # Initialize UART at MIDI baud rate for both MIDI and text
             self.uart = busio.UART(tx=Constants.MIDI_TX,
                                 rx=Constants.MIDI_RX,
-                                baudrate=31250,
+                                baudrate=Constants.MIDI_BAUD_RATE,
                                 bits=8,
                                 parity=None,
                                 stop=1)
             
-            # Buffer for incomplete MIDI messages
-            self.buffer = bytearray()
-            self.last_byte_time = time.monotonic()
+            # Initialize state
+            self.ring_buffer = RingBuffer(Constants.BUFFER_SIZE)
+            self.last_status = None
+            self.last_status_time = 0
+            self.current_message = array.array('B')
+            self.message_start_time = 0
+            self.expected_length = 0
             print("UART initialization successful")
             
         except Exception as e:
@@ -62,118 +134,127 @@ class UartHandler:
                 print(f"Sent text: {message}")
             return True
         except Exception as e:
-            if str(e):  # Only print if there's an actual error message
+            if str(e):
                 print(f"Error sending text: {str(e)}")
             return False
 
+    def _get_message_length(self, status):
+        """Return expected message length (including status byte) for a given status byte"""
+        if status >= Constants.SYSTEM_MESSAGE:
+            return 1  # System message (we don't handle sysex yet)
+        command = status & 0xF0
+        if command in (Constants.PROGRAM_CHANGE, Constants.CHANNEL_PRESSURE):
+            return 2
+        return 3  # All other channel messages
+
+    def _process_midi_message(self, message):
+        """Process a complete MIDI message"""
+        if not message:
+            return
+            
+        try:
+            status = message[0]
+            channel = (status & 0x0F) + 1
+            command = status & 0xF0
+            key_id = channel - 1  # In MPE mode, channel maps to key
+            
+            if command == Constants.NOTE_ON and len(message) >= 3:
+                if message[2] > 0:  # Note On with velocity > 0
+                    print(f"\nKey {key_id} MIDI Events:")
+                    print(f"  Note ON:")
+                    print(f"    Channel: {channel}")
+                    print(f"    Note: {message[1]}")
+                    print(f"    Velocity: {message[2]}")
+                else:  # Note On with velocity 0 = Note Off
+                    print(f"\nKey {key_id} MIDI Events:")
+                    print(f"  Note OFF:")
+                    print(f"    Channel: {channel}")
+                    print(f"    Note: {message[1]}")
+                    
+            elif command == Constants.NOTE_OFF and len(message) >= 3:
+                print(f"\nKey {key_id} MIDI Events:")
+                print(f"  Note OFF:")
+                print(f"    Channel: {channel}")
+                print(f"    Note: {message[1]}")
+                    
+            elif command == Constants.CONTROL_CHANGE and len(message) >= 3:
+                if message[1] == Constants.CC_CHANNEL_PRESSURE:
+                    print(f"\nKey {key_id} MIDI Events:")
+                    print(f"  MIDI Updates:")
+                    print(f"    Channel: {channel}")
+                    print(f"    Pressure: {message[2]}")
+                    
+            elif command == Constants.PITCH_BEND and len(message) >= 3:
+                value = (message[2] << 7) + message[1]
+                normalized_bend = (value - 8192) / 8192.0
+                print(f"    Pitch Bend: {normalized_bend:+.3f}")
+                
+            self.midi_callback(message)
+            
+        except Exception as e:
+            if str(e):
+                print(f"Error processing MIDI message: {str(e)}")
+
     def check_for_messages(self):
-        """Check for and process any incoming MIDI messages from RX pin"""
+        """Check for and process any incoming MIDI messages"""
         try:
             current_time = time.monotonic()
             
-            # If not connected, clear any waiting data and the buffer
+            # If not connected, clear buffers
             if not self.is_connected_callback():
                 if self.uart.in_waiting:
-                    self.uart.read(self.uart.in_waiting)  # Clear waiting data
-                self.buffer.clear()  # Clear existing buffer
+                    self.uart.read(self.uart.in_waiting)
+                self.ring_buffer.clear()
+                self.current_message = array.array('B')
+                self.last_status = None
                 return
 
-            # Clear buffer if too much time has passed since last byte
-            if current_time - self.last_byte_time > 0.1:  # 100ms timeout
-                if self.buffer:
-                    self.buffer = bytearray()
-
-            # Check for available bytes
+            # Read any available bytes into ring buffer
             if self.uart.in_waiting:
-                # Read all available bytes
                 new_bytes = self.uart.read(self.uart.in_waiting)
                 if new_bytes:
-                    self.buffer.extend(new_bytes)
-                    self.last_byte_time = current_time
-
-                    # Process complete MIDI messages
-                    while self._process_midi_buffer():
-                        pass
-
+                    self.ring_buffer.write(new_bytes)
+                    
+            # Process bytes in ring buffer
+            while self.ring_buffer.available():
+                # Start new message if needed
+                if not self.current_message:
+                    byte = self.ring_buffer.peek()
+                    
+                    # Handle running status
+                    if byte < 0x80:  # Data byte
+                        if self.last_status and \
+                           (current_time - self.last_status_time) < Constants.RUNNING_STATUS_TIMEOUT:
+                            self.current_message.append(self.last_status)
+                        else:
+                            self.ring_buffer.read(1)  # Discard invalid data byte
+                            continue
+                    else:  # Status byte
+                        self.last_status = byte
+                        self.last_status_time = current_time
+                    
+                    self.message_start_time = current_time
+                    self.expected_length = self._get_message_length(self.last_status)
+                
+                # Add bytes to current message
+                while len(self.current_message) < self.expected_length and self.ring_buffer.available():
+                    self.current_message.append(self.ring_buffer.read(1)[0])
+                
+                # Process complete message
+                if len(self.current_message) == self.expected_length:
+                    self._process_midi_message(self.current_message)
+                    self.current_message = array.array('B')
+                    continue
+                    
+                # Check for message timeout
+                if (current_time - self.message_start_time) > Constants.MESSAGE_TIMEOUT:
+                    self.current_message = array.array('B')
+                
+                break  # Exit loop if we need more bytes
+                
         except Exception as e:
-            if str(e):  # Only print if there's an actual error message
+            if str(e):
                 print(f"Error reading UART: {str(e)}")
-
-    def _process_midi_buffer(self):
-        """Process MIDI buffer and return True if a message was handled"""
-        if not self.buffer:
-            return False
-
-        try:
-            # Look for status byte
-            if self.buffer[0] < 0x80:
-                self.buffer = bytearray()
-                return False
-
-            status = self.buffer[0] & 0xF0  # Strip channel
-            channel = (self.buffer[0] & 0x0F) + 1  # Get channel (1-16)
-            key_id = channel - 1  # In MPE mode, channel maps to key
-
-            # Determine message length
-            if status in [0x80, 0x90, 0xA0, 0xB0, 0xE0]:  # 3-byte messages
-                if len(self.buffer) >= 3:
-                    msg = self.buffer[:3]
-                    self.buffer = self.buffer[3:]
-                    
-                    if status == 0x90 and msg[2] > 0:  # Note On with velocity > 0
-                        print(f"\nKey {key_id} MIDI Events:")
-                        print(f"  Note ON:")
-                        print(f"    Channel: {channel}")
-                        print(f"    Note: {msg[1]}")
-                        print(f"    Velocity: {msg[2]}")
-                        
-                    elif status == 0x80 or (status == 0x90 and msg[2] == 0):  # Note Off
-                        print(f"\nKey {key_id} MIDI Events:")
-                        print(f"  Note OFF:")
-                        print(f"    Channel: {channel}")
-                        print(f"    Note: {msg[1]}")
-                            
-                    elif status == 0xB0:  # Control Change
-                        if msg[1] == Constants.CC_CHANNEL_PRESSURE:  # Channel Pressure
-                            print(f"\nKey {key_id} MIDI Events:")
-                            print(f"  MIDI Updates:")
-                            print(f"    Channel: {channel}")
-                            print(f"    Pressure: {msg[2]}")
-                    
-                    elif status == 0xE0:  # Pitch Bend
-                        value = (msg[2] << 7) + msg[1]
-                        normalized_bend = (value - Constants.PITCH_BEND_CENTER) / Constants.PITCH_BEND_CENTER
-                        print(f"    Pitch Bend: {normalized_bend:+.3f}")
-                        
-                    self.midi_callback(msg)
-                    return True
-                    
-            elif status in [0xC0, 0xD0]:  # 2-byte messages
-                if len(self.buffer) >= 2:
-                    msg = self.buffer[:2]
-                    self.buffer = self.buffer[2:]
-                    
-                    if status == 0xC0:  # Program Change
-                        print(f"Program Change - channel: {channel}, program: {msg[1]}")
-                    elif status == 0xD0:  # Channel Pressure
-                        print(f"Channel Pressure - channel: {channel}, pressure: {msg[1]}")
-                        
-                    self.midi_callback(msg)
-                    return True
-                    
-            else:  # Single byte or system messages
-                msg = self.buffer[:1]
-                self.buffer = self.buffer[1:]
-                print(f"System message: {[hex(b) for b in msg]}")
-                self.midi_callback(msg)
-                return True
-
-        except Exception as e:
-            if str(e):  # Only print if there's an actual error message
-                print(f"Error processing MIDI buffer: {str(e)}")
-            self.buffer = bytearray()
-            
-        return False
 
     def cleanup(self):
         """Clean shutdown"""
@@ -181,7 +262,7 @@ class UartHandler:
             self.uart.deinit()
             print("UART cleaned up")
         except Exception as e:
-            if str(e):  # Only print if there's an actual error message
+            if str(e):
                 print(f"Error during cleanup: {str(e)}")
 
 class Candide:
@@ -197,15 +278,14 @@ class Candide:
         self.volume_pot = None
         
         # Communication state
-        self.last_message_time = 0  # Track when we last sent any message
-        self.has_sent_hello = False  # Track if we've sent initial hello
+        self.last_message_time = 0
+        self.has_sent_hello = False
         
-        # Timing state for hardware
+        # Timing state
         self.last_encoder_scan = 0
         self.last_volume_scan = 0
         
         try:
-            # Setup order matters - audio system first, then hardware, then synth
             self._setup_audio()
             self._setup_hardware()
             self._setup_synth()
@@ -296,23 +376,30 @@ class Candide:
 
     def process_midi_message(self, data):
         """Process MIDI message"""
-        if not data or not self.connected:  # Double check connection
+        if not data or not self.connected:
             return
 
         try:
             status = data[0] & 0xF0  # Strip channel
+            channel = (data[0] & 0x0F) + 1  # Get channel (1-16)
             
-            if status == 0x90:  # Note On
-                event = ('note_on', data[1], data[2], 0)
+            if status == Constants.NOTE_ON and data[2] > 0:  # Note On with velocity > 0
+                event = ('note_on', data[1], data[2], channel-1)
                 self.synth.process_midi_event(event)
                 
-            elif status == 0x80:  # Note Off
-                event = ('note_off', data[1], 0, 0)
+            elif status == Constants.NOTE_OFF or (status == Constants.NOTE_ON and data[2] == 0):
+                event = ('note_off', data[1], 0, channel-1)
                 self.synth.process_midi_event(event)
                 
-            elif status == 0xB0:  # Control Change
-                normalized_value = data[2] / 127.0
-                event = ('control_change', data[1], data[2], normalized_value)
+            elif status == Constants.CONTROL_CHANGE:
+                if data[1] == Constants.CC_CHANNEL_PRESSURE:
+                    normalized_value = data[2] / 127.0
+                    event = ('control_change', data[1], data[2], normalized_value)
+                    self.synth.process_midi_event(event)
+                    
+            elif status == Constants.PITCH_BEND:
+                value = (data[2] << 7) + data[1]
+                event = ('pitch_bend', data[1], data[2], channel-1)
                 self.synth.process_midi_event(event)
                 
         except Exception as e:
@@ -322,7 +409,6 @@ class Candide:
         """Check volume pot and update mixer"""
         current_time = time.monotonic()
         
-        # Only check at specified interval
         if (current_time - self.last_volume_scan) >= HWConstants.UPDATE_INTERVAL:
             new_volume = self.volume_pot.read_pot()
             if new_volume is not None:
@@ -335,26 +421,19 @@ class Candide:
         """Check encoder and handle any changes"""
         current_time = time.monotonic()
         
-        # Only check at specified interval
         if (current_time - self.last_encoder_scan) >= HWConstants.ENCODER_SCAN_INTERVAL:
             events = self.encoder.read_encoder()
-
+            
             if Constants.DEBUG and events:
                 print(f"Encoder events: {events}")
             
             for event_type, direction in events:
                 if event_type == 'instrument_change':
-                    # Use instrument class method to change instrument
-                    if Constants.DEBUG:
-                        print(f"Current instrument index: {Instrument.current_instrument_index}")
                     new_instrument = Instrument.handle_instrument_change(direction)
-                    if Constants.DEBUG:
-                        print(f"New instrument index: {Instrument.current_instrument_index}")
                     if new_instrument != self.current_instrument:
                         print(f"Switching to instrument: {new_instrument.name}")
                         self.current_instrument = new_instrument
-                        self.synth.set_instrument(self.current_instrument)  
-
+                        self.synth.set_instrument(self.current_instrument)
             
             self.last_encoder_scan = current_time
 
@@ -371,7 +450,6 @@ class Candide:
                 # First clear any stale MIDI data
                 while self.uart.uart.in_waiting:
                     self.uart.uart.read(self.uart.uart.in_waiting)
-                self.uart.buffer = bytearray()
                 
                 # Now start fresh
                 self.connected = True
@@ -384,11 +462,6 @@ class Candide:
                 self.connected = False
                 self.last_message_time = 0
                 self.has_sent_hello = False
-                
-                # Clear any pending data on disconnect too
-                while self.uart.uart.in_waiting:
-                    self.uart.uart.read(self.uart.uart.in_waiting)
-                self.uart.buffer = bytearray()
             
             # Check encoder regardless of connection state
             self._check_encoder()
