@@ -25,11 +25,16 @@ class Constants:
     
     # MIDI Constants
     MIDI_BAUD_RATE = 31250
-    RUNNING_STATUS_TIMEOUT = 0.3  # Time before running status is invalidated
-    BUFFER_SIZE = 1024  # Ring buffer size
-    MESSAGE_TIMEOUT = 0.1  # Time before partial message is considered stale
-    HEARTBEAT_INTERVAL = 0.5  # Send heartbeat every 0.5 seconds
+    RUNNING_STATUS_TIMEOUT = 0.1  # Reduced from 0.3
+    BUFFER_SIZE = 256  # Reduced from 1024 for lower latency
+    MESSAGE_TIMEOUT = 0.01  # Reduced from 0.1 for faster processing
+    HEARTBEAT_INTERVAL = 0.5
     MESSAGE_COUNTS_AS_HEARTBEAT = True
+    CONFIG_SEND_DELAY = 0.05
+
+    # Audio Constants
+    AUDIO_BUFFER_SIZE = 4096
+    SAMPLE_RATE = 44100
 
     # MIDI Message Types
     NOTE_OFF = 0x80
@@ -42,6 +47,14 @@ class Constants:
     SYSTEM_MESSAGE = 0xF0
 
     # MIDI Control Numbers
+    CC_MODULATION = 1
+    CC_VOLUME = 7
+    CC_FILTER_RESONANCE = 71
+    CC_RELEASE_TIME = 72
+    CC_ATTACK_TIME = 73
+    CC_FILTER_CUTOFF = 74
+    CC_DECAY_TIME = 75
+    CC_SUSTAIN_LEVEL = 76
     CC_CHANNEL_PRESSURE = 74
 
 class RingBuffer:
@@ -99,7 +112,7 @@ class RingBuffer:
         self.write_idx = self.read_idx = 0
 
 class UartHandler:
-    """Handles MIDI input on RX and text output on TX with improved buffering"""
+    """Handles MIDI input on RX and text output on TX with improved buffering and CC handling"""
     def __init__(self, midi_callback, is_connected_callback):
         self.midi_callback = midi_callback
         self.is_connected_callback = is_connected_callback
@@ -148,7 +161,7 @@ class UartHandler:
         return 3  # All other channel messages
 
     def _process_midi_message(self, message):
-        """Process a complete MIDI message"""
+        """Process a complete MIDI message with improved CC handling"""
         if not message:
             return
             
@@ -178,11 +191,11 @@ class UartHandler:
                 print(f"    Note: {message[1]}")
                     
             elif command == Constants.CONTROL_CHANGE and len(message) >= 3:
-                if message[1] == Constants.CC_CHANNEL_PRESSURE:
-                    print(f"\nKey {key_id} MIDI Events:")
-                    print(f"  MIDI Updates:")
-                    print(f"    Channel: {channel}")
-                    print(f"    Pressure: {message[2]}")
+                # Process all CC messages, not just CC_CHANNEL_PRESSURE
+                print(f"\nControl Change:")
+                print(f"  Channel: {channel}")
+                print(f"  CC Number: {message[1]}")
+                print(f"  Value: {message[2]}")
                     
             elif command == Constants.PITCH_BEND and len(message) >= 3:
                 value = (message[2] << 7) + message[1]
@@ -196,7 +209,7 @@ class UartHandler:
                 print(f"Error processing MIDI message: {str(e)}")
 
     def check_for_messages(self):
-        """Check for and process any incoming MIDI messages"""
+        """Check for and process any incoming MIDI messages with improved timing"""
         try:
             current_time = time.monotonic()
             
@@ -209,8 +222,8 @@ class UartHandler:
                 self.last_status = None
                 return
 
-            # Read any available bytes into ring buffer
-            if self.uart.in_waiting:
+            # Process all available bytes immediately
+            while self.uart.in_waiting:
                 new_bytes = self.uart.read(self.uart.in_waiting)
                 if new_bytes:
                     self.ring_buffer.write(new_bytes)
@@ -221,7 +234,7 @@ class UartHandler:
                 if not self.current_message:
                     byte = self.ring_buffer.peek()
                     
-                    # Handle running status
+                    # Handle running status with shorter timeout
                     if byte < 0x80:  # Data byte
                         if self.last_status and \
                            (current_time - self.last_status_time) < Constants.RUNNING_STATUS_TIMEOUT:
@@ -240,13 +253,13 @@ class UartHandler:
                 while len(self.current_message) < self.expected_length and self.ring_buffer.available():
                     self.current_message.append(self.ring_buffer.read(1)[0])
                 
-                # Process complete message
+                # Process complete message immediately
                 if len(self.current_message) == self.expected_length:
                     self._process_midi_message(self.current_message)
                     self.current_message = array.array('B')
                     continue
                     
-                # Check for message timeout
+                # Check for message timeout with shorter duration
                 if (current_time - self.message_start_time) > Constants.MESSAGE_TIMEOUT:
                     self.current_message = array.array('B')
                 
@@ -280,6 +293,7 @@ class Candide:
         # Communication state
         self.last_message_time = 0
         self.has_sent_hello = False
+        self.last_config_time = 0
         
         # Timing state
         self.last_encoder_scan = 0
@@ -295,7 +309,7 @@ class Candide:
         except Exception as e:
             print(f"Initialization error: {str(e)}")
             raise
-        
+
     def _setup_audio(self):
         """Initialize audio subsystem"""
         print("Setting up audio...")
@@ -354,16 +368,20 @@ class Candide:
         else:
             print("Not connected to Bartleby")
 
-    def is_connected(self):
-        """Helper method to check connection state"""
-        return self.connected
-
     def _send_connected_messages(self):
-        """Send initial messages when connected"""
-        if not self.has_sent_hello:  # Only send hello once per connection
+        """Send initial messages when connected, including CC configuration"""
+        if not self.has_sent_hello:
             if self.uart.send_text("hello from candide"):
-                self.last_message_time = time.monotonic()
-                self.has_sent_hello = True
+                time.sleep(Constants.CONFIG_SEND_DELAY)  # Give Bartleby time to process
+                
+                # Send initial instrument config
+                config_string = self.current_instrument.generate_cc_config()
+                if config_string and self.uart.send_text(config_string):
+                    if Constants.DEBUG:
+                        print(f"Sent initial config: {config_string}")
+                    self.last_config_time = time.monotonic()
+                    self.last_message_time = self.last_config_time
+                    self.has_sent_hello = True
 
     def _send_heartbeat(self):
         """Send heartbeat message if needed"""
@@ -373,6 +391,22 @@ class Candide:
         if (current_time - self.last_message_time) >= Constants.HEARTBEAT_INTERVAL:
             if self.uart.send_text("♡"):
                 self.last_message_time = current_time
+
+    def _send_instrument_config(self):
+        """Send current instrument's CC configuration"""
+        if self.connected:
+            config_string = self.current_instrument.generate_cc_config()
+            if config_string and self.uart.send_text(config_string):
+                if Constants.DEBUG:
+                    print(f"Sent instrument config: {config_string}")
+                self.last_config_time = time.monotonic()
+                self.last_message_time = self.last_config_time
+                return True
+        return False
+
+    def is_connected(self):
+        """Helper method to check connection state"""
+        return self.connected
 
     def process_midi_message(self, data):
         """Process MIDI message"""
@@ -392,10 +426,10 @@ class Candide:
                 self.synth.process_midi_event(event)
                 
             elif status == Constants.CONTROL_CHANGE:
-                if data[1] == Constants.CC_CHANNEL_PRESSURE:
-                    normalized_value = data[2] / 127.0
-                    event = ('control_change', data[1], data[2], normalized_value)
-                    self.synth.process_midi_event(event)
+                # Process all CC messages, not just channel pressure
+                normalized_value = data[2] / 127.0
+                event = ('control_change', data[1], data[2], normalized_value)
+                self.synth.process_midi_event(event)
                     
             elif status == Constants.PITCH_BEND:
                 value = (data[2] << 7) + data[1]
@@ -434,6 +468,9 @@ class Candide:
                         print(f"Switching to instrument: {new_instrument.name}")
                         self.current_instrument = new_instrument
                         self.synth.set_instrument(self.current_instrument)
+                        # Send new instrument's CC config
+                        if self.connected:
+                            self._send_instrument_config()
             
             self.last_encoder_scan = current_time
 

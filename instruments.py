@@ -5,6 +5,10 @@ class Constants:
     # MPE Constants
     DEFAULT_MPE_PITCH_BEND_RANGE = 48  # Default 48 semitones for MPE
     DEFAULT_PRESSURE_SENSITIVITY = 0.7
+    
+    # MIDI CC Range
+    MIN_CC = 0
+    MAX_CC = 127
 
 class Instrument:
     available_instruments = []
@@ -52,6 +56,39 @@ class Instrument:
             config['pots'] = self.pots
         return config
 
+    def generate_cc_config(self):
+        """Generate CC configuration string in format expected by Bartleby.
+        Returns string in format: cc:0=74,1=71,2=73,...
+        Validates CC numbers are in valid range.
+        """
+        try:
+            cc_mappings = []
+            for pot_num, pot_config in sorted(self.pots.items()):
+                cc_num = pot_config['cc']
+                # Validate CC number range
+                if not Constants.MIN_CC <= cc_num <= Constants.MAX_CC:
+                    if Constants.DEBUG:
+                        print(f"Warning: Invalid CC number {cc_num} for pot {pot_num}")
+                    continue
+                cc_mappings.append(f"{pot_num}={cc_num}")
+            
+            if not cc_mappings:
+                if Constants.DEBUG:
+                    print("Warning: No valid CC mappings found")
+                return None
+                
+            config_string = "cc: " + ",".join(cc_mappings)
+            
+            if Constants.DEBUG:
+                print(f"Generated config for {self.name}: {config_string}")
+                
+            return config_string
+            
+        except Exception as e:
+            if Constants.DEBUG:
+                print(f"Error generating CC config: {str(e)}")
+            return None
+
     @classmethod
     def handle_instrument_change(cls, direction):
         if Constants.DEBUG:
@@ -64,6 +101,7 @@ class Instrument:
     @classmethod
     def get_current_instrument(cls):
         return cls.available_instruments[cls.current_instrument_index]
+
 
 class Piano(Instrument):
     def __init__(self):
@@ -121,11 +159,12 @@ class Piano(Instrument):
             ]
         }
 
+
 class ElectricOrgan(Instrument):
     def __init__(self):
         super().__init__("MPE Organ")
         self.oscillator = {
-            'waveform': 'saw',
+            'waveform': 'saw', 
             'detune': 0.2
         }
         self.filter = {
@@ -135,9 +174,9 @@ class ElectricOrgan(Instrument):
         }
         self.envelope = {
             'attack': 0.01,
-            'decay': 0.1,
+            'decay': 0.1, 
             'sustain': 0.8,
-            'release': 0.2
+            'release': 0.01  # Very short release
         }
         self.midi = {
             'velocity_sensitivity': 0.7
@@ -160,22 +199,17 @@ class ElectricOrgan(Instrument):
         }
         self.pressure = {
             'enabled': True,
-            'sensitivity': 0.8,
+            'sensitivity': 1.0,  # Full sensitivity for direct control
             'targets': [
                 {
-                    'param': 'filter.cutoff',
-                    'min': 800,
-                    'max': 6000,
-                    'curve': 'exponential'
-                },
-                {
                     'param': 'envelope.sustain',
-                    'min': 0.4,
+                    'min': 0.0,  # Full range
                     'max': 1.0,
                     'curve': 'linear'
                 }
             ]
         }
+
 
 class BendableOrgan(Instrument):
     def __init__(self):

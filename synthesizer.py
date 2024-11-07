@@ -230,6 +230,8 @@ class Synthesizer:
         self.active_notes = {}  # {midi_note: note}
 
     def set_instrument(self, instrument):
+        print(f"\nSetting instrument to {instrument.name}")
+        print(f"CC Mappings: {instrument.pots}")
         self.instrument = instrument
         self.synth_engine.set_instrument(instrument)
         self._configure_synthesizer()
@@ -238,37 +240,57 @@ class Synthesizer:
     def _configure_synthesizer(self):
         if self.instrument:
             config = self.instrument.get_configuration()
+            print(f"Configuring synth with: {config}")
             if 'oscillator' in config:
                 self.synth_engine.configure_oscillator(config['oscillator'])
             if 'filter' in config:
                 self.synth_engine.set_filter(config['filter'])
 
     def _re_evaluate_midi_values(self):
+        print(f"Re-evaluating MIDI values: {self.current_midi_values}")
         for cc_number, midi_value in self.current_midi_values.items():
             self.handle_control_change(cc_number, midi_value, midi_value / 127.0)
 
     def process_midi_event(self, event):
         event_type, *params = event
-        if event_type == 'note_on':
-            midi_note, velocity, key_id = params
-            self.play_note(midi_note, velocity)
-        elif event_type == 'note_off':
-            midi_note, velocity, key_id = params
-            self.stop_note(midi_note)
-        elif event_type == 'note_update':
-            midi_note, velocity, key_id = params
-            self.update_note(midi_note, velocity)
-        elif event_type == 'pitch_bend':
-            lsb, msb, key_id = params
-            self.apply_pitch_bend(lsb, msb)
-        elif event_type == 'control_change':
-            cc_number, midi_value, normalized_value = params
-            self.handle_control_change(cc_number, midi_value, normalized_value)
-        elif event_type == 'pressure_update':
-            key_id, left_pressure, right_pressure = params
-            self.handle_pressure_update(left_pressure, right_pressure)
+        
+        print(f"\nProcessing MIDI event: {event_type}")
+        print(f"Parameters: {params}")
+        
+        try:
+            if event_type == 'note_on':
+                midi_note, velocity, key_id = params
+                self.play_note(midi_note, velocity)
+            elif event_type == 'note_off':
+                midi_note, velocity, key_id = params
+                self.stop_note(midi_note)
+            elif event_type == 'control_change':
+                cc_number = params[0]
+                midi_value = params[1]
+                
+                # Calculate normalized value
+                if len(params) >= 3 and isinstance(params[2], float):
+                    normalized_value = params[2]  # Use provided normalized value if available
+                else:
+                    normalized_value = midi_value / 127.0  # Calculate if not provided
+                    
+                print(f"Processing CC {cc_number} with value {midi_value}, normalized: {normalized_value}")
+                self.handle_control_change(cc_number, midi_value, normalized_value)
+            elif event_type == 'pitch_bend':
+                lsb, msb, key_id = params
+                self.apply_pitch_bend(lsb, msb)
+            elif event_type == 'pressure_update':
+                key_id, left_pressure, right_pressure = params
+                self.handle_pressure_update(left_pressure, right_pressure)
+            else:
+                print(f"Unknown event type: {event_type}")
+        except Exception as e:
+            print(f"Error processing MIDI event: {str(e)}\n")
+            import traceback
+            traceback.print_exc()
 
     def play_note(self, midi_note, velocity):
+        print(f"\nPlaying note: {midi_note} with velocity: {velocity}")
         frequency = self._fractional_midi_to_hz(midi_note)
         envelope = self.synth_engine.create_envelope()
         waveform = self.synth_engine.get_waveform(self.instrument.oscillator['waveform'])
@@ -292,38 +314,86 @@ class Synthesizer:
             
         self.active_notes[midi_note] = note
         self.synth.press([note])
+        print(f"Note active with frequency: {frequency}Hz")
 
     def stop_note(self, midi_note):
+        print(f"\nStopping note: {midi_note}")
         if midi_note in self.active_notes:
             note = self.active_notes[midi_note]
             self.synth.release([note])
             del self.active_notes[midi_note]
 
-    def update_note(self, midi_note, velocity):
-        if midi_note in self.active_notes:
-            note = self.active_notes[midi_note]
-            note.frequency = self._fractional_midi_to_hz(midi_note)
-
-    def apply_pitch_bend(self, lsb, msb):
-        if not self.synth_engine.pitch_bend_enabled:
+    def handle_control_change(self, cc_number, midi_value, normalized_value):
+        print(f"\nHandling CC {cc_number}:")
+        
+        if not self.instrument:
+            print("- No instrument loaded")
             return
             
-        bend_value = (msb << 7) + lsb
-        normalized_bend = (bend_value - 8192) / 8192.0
-        bend_range = self.synth_engine.pitch_bend_range / 12.0
+        print(f"- Current instrument: {self.instrument.name}")
+        print(f"- MIDI value: {midi_value}, Normalized: {normalized_value:.3f}")
         
-        # Apply pitch bend to all active notes
-        for note in self.active_notes.values():
-            note.bend = normalized_bend * bend_range
+        self.current_midi_values[cc_number] = midi_value
+        found_parameter = False
+        
+        print(f"- Checking pot mappings for CC {cc_number}:")
+        for pot_index, pot_config in self.instrument.pots.items():
+            print(f"  - Checking pot {pot_index}: CC {pot_config['cc']} ({pot_config['name']})")
+            if pot_config['cc'] == cc_number:
+                found_parameter = True
+                param_name = pot_config['name']
+                min_val = pot_config['min']
+                max_val = pot_config['max']
+                scaled_value = min_val + normalized_value * (max_val - min_val)
+                
+                print(f"  - Found mapping! Pot {pot_index}")
+                print(f"  - Parameter: {param_name}")
+                print(f"  - Value range: {min_val} to {max_val}")
+                print(f"  - Scaled value: {scaled_value:.3f}")
+
+                if param_name == 'Filter Cutoff':
+                    print("  - Setting filter cutoff")
+                    self.synth_engine.set_filter_cutoff(scaled_value)
+                elif param_name == 'Filter Resonance':
+                    print("  - Setting filter resonance")
+                    self.synth_engine.set_filter_resonance(scaled_value)
+                elif param_name == 'Detune Amount':
+                    print("  - Setting detune")
+                    self.synth_engine.set_detune(scaled_value)
+                elif param_name == 'Attack Time':
+                    print("  - Setting attack time")
+                    self.synth_engine.set_envelope_param('attack', scaled_value)
+                elif param_name == 'Decay Time':
+                    print("  - Setting decay time")
+                    self.synth_engine.set_envelope_param('decay', scaled_value)
+                elif param_name == 'Sustain Level':
+                    print("  - Setting sustain level")
+                    self.synth_engine.set_envelope_param('sustain', scaled_value)
+                elif param_name == 'Release Time':
+                    print("  - Setting release time")
+                    self.synth_engine.set_envelope_param('release', scaled_value)
+                elif param_name == 'Bend Range':
+                    print("  - Setting bend range")
+                    self.synth_engine.pitch_bend_range = scaled_value
+                elif param_name == 'Bend Curve':
+                    print("  - Setting bend curve")
+                    self.synth_engine.pitch_bend_curve = scaled_value
+                
+                print("  - Updating active notes")
+                self._update_active_notes()
+                break
+                
+        if not found_parameter:
+            print(f"- No mapping found for CC {cc_number}")
 
     def handle_pressure_update(self, left_pressure, right_pressure):
+        print(f"\nHandling pressure update: L={left_pressure:.3f}, R={right_pressure:.3f}")
         if not self.synth_engine.pressure_enabled:
             return
             
         avg_pressure = (left_pressure + right_pressure) / 2.0
         self.synth_engine.apply_pressure(avg_pressure)
         
-        # Update all active notes
         for note in self.active_notes.values():
             note.envelope = self.synth_engine.create_envelope()
             
@@ -334,44 +404,25 @@ class Synthesizer:
             if self.synth_engine.filter:
                 note.filter = self.synth_engine.filter(self.synth)
 
-    def handle_control_change(self, cc_number, midi_value, normalized_value):
-        self.current_midi_values[cc_number] = midi_value
-        pots_config = self.instrument.pots
-        for pot_index, pot_config in pots_config.items():
-            if pot_config['cc'] == cc_number:
-                param_name = pot_config['name']
-                min_val = pot_config['min']
-                max_val = pot_config['max']
-                scaled_value = min_val + normalized_value * (max_val - min_val)
-                
-                print(f"P{pot_index}: {param_name}: {self.current_midi_values.get(cc_number, 0)/127.0:.2f} -> {normalized_value:.2f}")
-
-                if param_name == 'Filter Cutoff':
-                    self.synth_engine.set_filter_cutoff(scaled_value)
-                elif param_name == 'Filter Resonance':
-                    self.synth_engine.set_filter_resonance(scaled_value)
-                elif param_name == 'Detune Amount':
-                    self.synth_engine.set_detune(scaled_value)
-                elif param_name == 'Attack Time':
-                    self.synth_engine.set_envelope_param('attack', scaled_value)
-                    self._update_active_notes()
-                elif param_name == 'Decay Time':
-                    self.synth_engine.set_envelope_param('decay', scaled_value)
-                    self._update_active_notes()
-                elif param_name == 'Sustain Level':
-                    self.synth_engine.set_envelope_param('sustain', scaled_value)
-                    self._update_active_notes()
-                elif param_name == 'Release Time':
-                    self.synth_engine.set_envelope_param('release', scaled_value)
-                    self._update_active_notes()
-                elif param_name == 'Bend Range':
-                    self.synth_engine.pitch_bend_range = scaled_value
-                elif param_name == 'Bend Curve':
-                    self.synth_engine.pitch_bend_curve = scaled_value
-                
-                break
+    def apply_pitch_bend(self, lsb, msb):
+        print(f"\nApplying pitch bend: LSB={lsb}, MSB={msb}")
+        if not self.synth_engine.pitch_bend_enabled:
+            return
+            
+        bend_value = (msb << 7) + lsb
+        normalized_bend = (bend_value - 8192) / 8192.0
+        bend_range = self.synth_engine.pitch_bend_range / 12.0
+        
+        print(f"Bend value: {bend_value}, normalized: {normalized_bend:.3f}, range: {bend_range}")
+        for note in self.active_notes.values():
+            note.bend = normalized_bend * bend_range
 
     def _update_active_notes(self):
+        if not self.active_notes:
+            print("No active notes to update")
+            return
+            
+        print(f"Updating {len(self.active_notes)} active notes with new parameters")
         new_envelope = self.synth_engine.create_envelope()
         for note in self.active_notes.values():
             note.envelope = new_envelope
@@ -383,6 +434,7 @@ class Synthesizer:
             self.process_midi_event(event)
 
     def stop(self):
+        print("\nStopping synthesizer")
         if self.active_notes:
             self.synth.release(list(self.active_notes.values()))
             self.active_notes.clear()
