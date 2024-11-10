@@ -6,13 +6,14 @@ import array
 import audiomixer
 
 class Constants:
+    DEBUG = True
     # Audio Pins (PCM5102A DAC)
     I2S_BIT_CLOCK = board.GP1
     I2S_WORD_SELECT = board.GP2
     I2S_DATA = board.GP0
 
     # Synthesizer Constants
-    AUDIO_BUFFER_SIZE = 4096
+    AUDIO_BUFFER_SIZE = 8192 #4096
     SAMPLE_RATE = 44100
 
 class SynthEngine:
@@ -230,8 +231,10 @@ class Synthesizer:
         self.active_notes = {}  # {midi_note: note}
 
     def set_instrument(self, instrument):
-        print(f"\nSetting instrument to {instrument.name}")
-        print(f"CC Mappings: {instrument.pots}")
+        if Constants.DEBUG:
+            print(f"\nSetting instrument to {instrument.name}")
+            print(f"CC Mappings: {instrument.pots}")
+
         self.instrument = instrument
         self.synth_engine.set_instrument(instrument)
         self._configure_synthesizer()
@@ -240,22 +243,25 @@ class Synthesizer:
     def _configure_synthesizer(self):
         if self.instrument:
             config = self.instrument.get_configuration()
-            print(f"Configuring synth with: {config}")
+            if Constants.DEBUG:
+                print(f"Configuring synth with: {config}")
+
             if 'oscillator' in config:
                 self.synth_engine.configure_oscillator(config['oscillator'])
             if 'filter' in config:
                 self.synth_engine.set_filter(config['filter'])
 
     def _re_evaluate_midi_values(self):
-        print(f"Re-evaluating MIDI values: {self.current_midi_values}")
+        if Constants.DEBUG:
+            print(f"Re-evaluating MIDI values: {self.current_midi_values}")
         for cc_number, midi_value in self.current_midi_values.items():
             self.handle_control_change(cc_number, midi_value, midi_value / 127.0)
 
     def process_midi_event(self, event):
         event_type, *params = event
-        
-        print(f"\nProcessing MIDI event: {event_type}")
-        print(f"Parameters: {params}")
+        if Constants.DEBUG:
+            print(f"\nProcessing MIDI event: {event_type}")
+            print(f"Parameters: {params}")
         
         try:
             if event_type == 'note_on':
@@ -273,8 +279,10 @@ class Synthesizer:
                     normalized_value = params[2]  # Use provided normalized value if available
                 else:
                     normalized_value = midi_value / 127.0  # Calculate if not provided
-                    
-                print(f"Processing CC {cc_number} with value {midi_value}, normalized: {normalized_value}")
+                
+                if Constants.DEBUG:                    
+                    print(f"Processing CC {cc_number} with value {midi_value}, normalized: {normalized_value}")
+
                 self.handle_control_change(cc_number, midi_value, normalized_value)
             elif event_type == 'pitch_bend':
                 lsb, msb, key_id = params
@@ -290,7 +298,9 @@ class Synthesizer:
             traceback.print_exc()
 
     def play_note(self, midi_note, velocity):
-        print(f"\nPlaying note: {midi_note} with velocity: {velocity}")
+        if Constants.DEBUG:
+            print(f"\nPlaying note: {midi_note} with velocity: {velocity}")
+
         frequency = self._fractional_midi_to_hz(midi_note)
         envelope = self.synth_engine.create_envelope()
         waveform = self.synth_engine.get_waveform(self.instrument.oscillator['waveform'])
@@ -314,31 +324,41 @@ class Synthesizer:
             
         self.active_notes[midi_note] = note
         self.synth.press([note])
-        print(f"Note active with frequency: {frequency}Hz")
+
+        if Constants.DEBUG:
+            print(f"Note active with frequency: {frequency}Hz")
 
     def stop_note(self, midi_note):
-        print(f"\nStopping note: {midi_note}")
+        if Constants.DEBUG:
+            print(f"\nStopping note: {midi_note}")
+
         if midi_note in self.active_notes:
             note = self.active_notes[midi_note]
             self.synth.release([note])
             del self.active_notes[midi_note]
 
     def handle_control_change(self, cc_number, midi_value, normalized_value):
-        print(f"\nHandling CC {cc_number}:")
+        if Constants.DEBUG:
+            print(f"\nHandling CC {cc_number}:")
         
         if not self.instrument:
             print("- No instrument loaded")
             return
-            
-        print(f"- Current instrument: {self.instrument.name}")
-        print(f"- MIDI value: {midi_value}, Normalized: {normalized_value:.3f}")
+        
+        if Constants.DEBUG:    
+            print(f"- Current instrument: {self.instrument.name}")
+            print(f"- MIDI value: {midi_value}, Normalized: {normalized_value:.3f}")
         
         self.current_midi_values[cc_number] = midi_value
         found_parameter = False
-        
-        print(f"- Checking pot mappings for CC {cc_number}:")
+
+        if Constants.DEBUG:
+            print(f"- Checking pot mappings for CC {cc_number}:")
+
         for pot_index, pot_config in self.instrument.pots.items():
-            print(f"  - Checking pot {pot_index}: CC {pot_config['cc']} ({pot_config['name']})")
+            if Constants.DEBUG:
+                print(f"  - Checking pot {pot_index}: CC {pot_config['cc']} ({pot_config['name']})")
+
             if pot_config['cc'] == cc_number:
                 found_parameter = True
                 param_name = pot_config['name']
@@ -346,40 +366,52 @@ class Synthesizer:
                 max_val = pot_config['max']
                 scaled_value = min_val + normalized_value * (max_val - min_val)
                 
-                print(f"  - Found mapping! Pot {pot_index}")
-                print(f"  - Parameter: {param_name}")
-                print(f"  - Value range: {min_val} to {max_val}")
-                print(f"  - Scaled value: {scaled_value:.3f}")
+                if Constants.DEBUG:
+                    print(f"  - Found mapping! Pot {pot_index}")
+                    print(f"  - Parameter: {param_name}")
+                    print(f"  - Value range: {min_val} to {max_val}")
+                    print(f"  - Scaled value: {scaled_value:.3f}")
 
                 if param_name == 'Filter Cutoff':
-                    print("  - Setting filter cutoff")
+                    if Constants.DEBUG:
+                        print("  - Setting filter cutoff")
                     self.synth_engine.set_filter_cutoff(scaled_value)
                 elif param_name == 'Filter Resonance':
-                    print("  - Setting filter resonance")
+                    if Constants.DEBUG:
+                        print("  - Setting filter resonance")
                     self.synth_engine.set_filter_resonance(scaled_value)
                 elif param_name == 'Detune Amount':
-                    print("  - Setting detune")
+                    if Constants.DEBUG:
+                        print("  - Setting detune")
                     self.synth_engine.set_detune(scaled_value)
                 elif param_name == 'Attack Time':
-                    print("  - Setting attack time")
+                    if Constants.DEBUG:
+                        print("  - Setting attack time")
                     self.synth_engine.set_envelope_param('attack', scaled_value)
                 elif param_name == 'Decay Time':
-                    print("  - Setting decay time")
+                    if Constants.DEBUG:
+                        print("  - Setting decay time")
                     self.synth_engine.set_envelope_param('decay', scaled_value)
                 elif param_name == 'Sustain Level':
-                    print("  - Setting sustain level")
+                    if Constants.DEBUG:
+                        print("  - Setting sustain level")
                     self.synth_engine.set_envelope_param('sustain', scaled_value)
                 elif param_name == 'Release Time':
-                    print("  - Setting release time")
+                    if Constants.DEBUG:
+                        print("  - Setting release time")
                     self.synth_engine.set_envelope_param('release', scaled_value)
                 elif param_name == 'Bend Range':
-                    print("  - Setting bend range")
+                    if Constants.DEBUG:
+                        print("  - Setting bend range")
                     self.synth_engine.pitch_bend_range = scaled_value
                 elif param_name == 'Bend Curve':
-                    print("  - Setting bend curve")
+                    if Constants.DEBUG:
+                        print("  - Setting bend curve")
                     self.synth_engine.pitch_bend_curve = scaled_value
                 
-                print("  - Updating active notes")
+                if Constants.DEBUG:
+                    print("  - Updating active notes")
+                
                 self._update_active_notes()
                 break
                 
@@ -387,25 +419,46 @@ class Synthesizer:
             print(f"- No mapping found for CC {cc_number}")
 
     def handle_pressure_update(self, left_pressure, right_pressure):
-        print(f"\nHandling pressure update: L={left_pressure:.3f}, R={right_pressure:.3f}")
+        """Handle pressure update with improved debugging"""
+        if Constants.DEBUG:
+            print(f"\nHandling pressure update: L={left_pressure:.3f}, R={right_pressure:.3f}")
+
         if not self.synth_engine.pressure_enabled:
+            if Constants.DEBUG:
+                print("Pressure modulation disabled")
             return
-            
+                
         avg_pressure = (left_pressure + right_pressure) / 2.0
-        self.synth_engine.apply_pressure(avg_pressure)
+        if Constants.DEBUG:
+            print(f"Average pressure: {avg_pressure:.3f}")
         
+        self.synth_engine.apply_pressure(avg_pressure)
+        if Constants.DEBUG: 
+            print("Applied pressure to synth engine")
+        
+        # Update all active notes with new pressure settings
         for note in self.active_notes.values():
+            # Update envelope based on current pressure
             note.envelope = self.synth_engine.create_envelope()
-            
+            if Constants.DEBUG:
+                print("Updated note envelope")
+                
             if left_pressure != right_pressure:
                 pressure_diff = right_pressure - left_pressure
                 note.panning = pressure_diff
-            
+                if Constants.DEBUG:
+                    print(f"Updated note panning: {pressure_diff:.3f}")
+                
+            # Update filter if one exists
             if self.synth_engine.filter:
                 note.filter = self.synth_engine.filter(self.synth)
+                if Constants.DEBUG:
+                    print("Updated note filter")
 
     def apply_pitch_bend(self, lsb, msb):
-        print(f"\nApplying pitch bend: LSB={lsb}, MSB={msb}")
+        if Constants.DEBUG:
+            print(f"\nApplying pitch bend: LSB={lsb}, MSB={msb}")
+        
         if not self.synth_engine.pitch_bend_enabled:
             return
             
@@ -413,16 +466,21 @@ class Synthesizer:
         normalized_bend = (bend_value - 8192) / 8192.0
         bend_range = self.synth_engine.pitch_bend_range / 12.0
         
-        print(f"Bend value: {bend_value}, normalized: {normalized_bend:.3f}, range: {bend_range}")
+        if Constants.DEBUG:
+            print(f"Bend value: {bend_value}, normalized: {normalized_bend:.3f}, range: {bend_range}")
+        
         for note in self.active_notes.values():
             note.bend = normalized_bend * bend_range
 
     def _update_active_notes(self):
         if not self.active_notes:
-            print("No active notes to update")
+            if Constants.DEBUG:
+                print("No active notes to update")
             return
-            
-        print(f"Updating {len(self.active_notes)} active notes with new parameters")
+        
+        if Constants.DEBUG:    
+            print(f"Updating {len(self.active_notes)} active notes with new parameters")
+
         new_envelope = self.synth_engine.create_envelope()
         for note in self.active_notes.values():
             note.envelope = new_envelope

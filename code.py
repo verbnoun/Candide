@@ -3,13 +3,12 @@ import busio
 import digitalio
 import time
 import array
-from instruments import Piano, ElectricOrgan, BendableOrgan, Instrument
+from instruments import Piano, Organ, Womp, WindChime, Instrument
 from synthesizer import Synthesizer, SynthAudioOutputManager
 from hardware import RotaryEncoderHandler, VolumePotHandler, Constants as HWConstants
 from collections import deque
 
 class Constants:
-    # System Constants
     DEBUG = True
     SEE_HEARTBEAT = False  
 
@@ -112,7 +111,7 @@ class RingBuffer:
         self.write_idx = self.read_idx = 0
 
 class UartHandler:
-    """Handles MIDI input on RX and text output on TX with improved buffering and CC handling"""
+    """Handles MIDI input on RX and text output on TX with improved MPE and buffering"""
     def __init__(self, midi_callback, is_connected_callback):
         self.midi_callback = midi_callback
         self.is_connected_callback = is_connected_callback
@@ -154,14 +153,14 @@ class UartHandler:
     def _get_message_length(self, status):
         """Return expected message length (including status byte) for a given status byte"""
         if status >= Constants.SYSTEM_MESSAGE:
-            return 1  # System message (we don't handle sysex yet)
+            return 1  # System message
         command = status & 0xF0
         if command in (Constants.PROGRAM_CHANGE, Constants.CHANNEL_PRESSURE):
             return 2
-        return 3  # All other channel messages
+        return 3
 
     def _process_midi_message(self, message):
-        """Process a complete MIDI message with improved CC handling"""
+        """Process a complete MIDI message with improved MPE handling"""
         if not message:
             return
             
@@ -170,37 +169,6 @@ class UartHandler:
             channel = (status & 0x0F) + 1
             command = status & 0xF0
             key_id = channel - 1  # In MPE mode, channel maps to key
-            
-            if command == Constants.NOTE_ON and len(message) >= 3:
-                if message[2] > 0:  # Note On with velocity > 0
-                    print(f"\nKey {key_id} MIDI Events:")
-                    print(f"  Note ON:")
-                    print(f"    Channel: {channel}")
-                    print(f"    Note: {message[1]}")
-                    print(f"    Velocity: {message[2]}")
-                else:  # Note On with velocity 0 = Note Off
-                    print(f"\nKey {key_id} MIDI Events:")
-                    print(f"  Note OFF:")
-                    print(f"    Channel: {channel}")
-                    print(f"    Note: {message[1]}")
-                    
-            elif command == Constants.NOTE_OFF and len(message) >= 3:
-                print(f"\nKey {key_id} MIDI Events:")
-                print(f"  Note OFF:")
-                print(f"    Channel: {channel}")
-                print(f"    Note: {message[1]}")
-                    
-            elif command == Constants.CONTROL_CHANGE and len(message) >= 3:
-                # Process all CC messages, not just CC_CHANNEL_PRESSURE
-                print(f"\nControl Change:")
-                print(f"  Channel: {channel}")
-                print(f"  CC Number: {message[1]}")
-                print(f"  Value: {message[2]}")
-                    
-            elif command == Constants.PITCH_BEND and len(message) >= 3:
-                value = (message[2] << 7) + message[1]
-                normalized_bend = (value - 8192) / 8192.0
-                print(f"    Pitch Bend: {normalized_bend:+.3f}")
                 
             self.midi_callback(message)
             
@@ -234,7 +202,7 @@ class UartHandler:
                 if not self.current_message:
                     byte = self.ring_buffer.peek()
                     
-                    # Handle running status with shorter timeout
+                    # Handle running status
                     if byte < 0x80:  # Data byte
                         if self.last_status and \
                            (current_time - self.last_status_time) < Constants.RUNNING_STATUS_TIMEOUT:
@@ -259,7 +227,7 @@ class UartHandler:
                     self.current_message = array.array('B')
                     continue
                     
-                # Check for message timeout with shorter duration
+                # Check for message timeout
                 if (current_time - self.message_start_time) > Constants.MESSAGE_TIMEOUT:
                     self.current_message = array.array('B')
                 
@@ -280,7 +248,7 @@ class UartHandler:
 
 class Candide:
     def __init__(self):
-        print("\nInitializing Candide...")
+        print("\nWakeup Candide!")
         self.audio = None
         self.synth = None
         self.current_instrument = None
@@ -337,8 +305,9 @@ class Candide:
         
         # Create instruments (they'll auto-register themselves)
         Piano()
-        ElectricOrgan()
-        BendableOrgan()
+        Organ()
+        Womp()
+        WindChime()
         
         if Constants.DEBUG:
             print(f"Available instruments: {[i.name for i in Instrument.available_instruments]}")
@@ -377,8 +346,7 @@ class Candide:
                 # Send initial instrument config
                 config_string = self.current_instrument.generate_cc_config()
                 if config_string and self.uart.send_text(config_string):
-                    if Constants.DEBUG:
-                        print(f"Sent initial config: {config_string}")
+                    print(f"Sent initial config: {config_string}")
                     self.last_config_time = time.monotonic()
                     self.last_message_time = self.last_config_time
                     self.has_sent_hello = True
@@ -426,7 +394,7 @@ class Candide:
                 self.synth.process_midi_event(event)
                 
             elif status == Constants.CONTROL_CHANGE:
-                # Process all CC messages, not just channel pressure
+                # Process all CC messages
                 normalized_value = data[2] / 127.0
                 event = ('control_change', data[1], data[2], normalized_value)
                 self.synth.process_midi_event(event)
@@ -434,6 +402,12 @@ class Candide:
             elif status == Constants.PITCH_BEND:
                 value = (data[2] << 7) + data[1]
                 event = ('pitch_bend', data[1], data[2], channel-1)
+                self.synth.process_midi_event(event)
+
+            elif status == Constants.CHANNEL_PRESSURE:
+                # Handle aftertouch/channel pressure
+                normalized_pressure = data[1] / 127.0  # Convert 0-127 to 0.0-1.0
+                event = ('pressure_update', channel-1, normalized_pressure, normalized_pressure)
                 self.synth.process_midi_event(event)
                 
         except Exception as e:

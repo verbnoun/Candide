@@ -5,7 +5,7 @@ import analogio
 import rotaryio
 
 class Constants:
-    DEBUG = False
+    DEBUG = True
 
     # Encoder GPIO Pins
     INSTRUMENT_ENC_CLK = board.GP20
