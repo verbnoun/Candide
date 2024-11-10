@@ -205,7 +205,8 @@ class UartHandler:
                     # Handle running status
                     if byte < 0x80:  # Data byte
                         if self.last_status and \
-                           (current_time - self.last_status_time) < Constants.RUNNING_STATUS_TIMEOUT:
+                        (current_time - self.last_status_time) < Constants.RUNNING_STATUS_TIMEOUT:
+                            # Add last status byte for running status messages
                             self.current_message.append(self.last_status)
                         else:
                             self.ring_buffer.read(1)  # Discard invalid data byte
@@ -213,6 +214,8 @@ class UartHandler:
                     else:  # Status byte
                         self.last_status = byte
                         self.last_status_time = current_time
+                        self.ring_buffer.read(1)  # Remove status byte from buffer
+                        self.current_message.append(byte)  # Add to current message
                     
                     self.message_start_time = current_time
                     self.expected_length = self._get_message_length(self.last_status)
@@ -223,7 +226,7 @@ class UartHandler:
                 
                 # Process complete message immediately
                 if len(self.current_message) == self.expected_length:
-                    self._process_midi_message(self.current_message)
+                    self.midi_callback(self.current_message)
                     self.current_message = array.array('B')
                     continue
                     
@@ -377,7 +380,7 @@ class Candide:
         return self.connected
 
     def process_midi_message(self, data):
-        """Process MIDI message"""
+        """Process MPE MIDI message"""
         if not data or not self.connected:
             return
 
@@ -385,31 +388,74 @@ class Candide:
             status = data[0] & 0xF0  # Strip channel
             channel = (data[0] & 0x0F) + 1  # Get channel (1-16)
             
-            if status == Constants.NOTE_ON and data[2] > 0:  # Note On with velocity > 0
+            # Master channel is 1, Member channels are 2-16
+            is_master_channel = (channel == 1)
+            
+            if Constants.DEBUG:
+                print(f"\nMPE Message:")
+                print(f"  Channel: {channel} ({'Master' if is_master_channel else 'Member'})")
+                print(f"  Status: 0x{status:02X}")
+
+            if status == Constants.NOTE_ON and data[2] > 0:
+                if Constants.DEBUG:
+                    print(f"  Note On:")
+                    print(f"    Channel: {channel}")
+                    print(f"    Note: {data[1]}")
+                    print(f"    Velocity: {data[2]}")
+                    if not is_master_channel:
+                        print("    Type: MPE Member Channel Note")
                 event = ('note_on', data[1], data[2], channel-1)
                 self.synth.process_midi_event(event)
-                
+                    
             elif status == Constants.NOTE_OFF or (status == Constants.NOTE_ON and data[2] == 0):
+                if Constants.DEBUG:
+                    print(f"  Note Off:")
+                    print(f"    Channel: {channel}")
+                    print(f"    Note: {data[1]}")
+                    if not is_master_channel:
+                        print("    Type: MPE Member Channel Note")
                 event = ('note_off', data[1], 0, channel-1)
                 self.synth.process_midi_event(event)
-                
+                    
             elif status == Constants.CONTROL_CHANGE:
-                # Process all CC messages
                 normalized_value = data[2] / 127.0
+                if Constants.DEBUG:
+                    print(f"  Control Change:")
+                    print(f"    Channel: {channel}")
+                    print(f"    Controller: {data[1]}")
+                    print(f"    Value: {data[2]} ({normalized_value:.3f})")
+                    if not is_master_channel:
+                        print("    Type: MPE Member Channel CC")
                 event = ('control_change', data[1], data[2], normalized_value)
                 self.synth.process_midi_event(event)
-                    
+                        
             elif status == Constants.PITCH_BEND:
-                value = (data[2] << 7) + data[1]
-                event = ('pitch_bend', data[1], data[2], channel-1)
+                lsb = data[1]
+                msb = data[2]
+                bend_value = (msb << 7) + lsb
+                normalized_bend = (bend_value - 8192) / 8192.0
+                if Constants.DEBUG:
+                    print(f"  Pitch Bend:")
+                    print(f"    Channel: {channel}")
+                    print(f"    LSB: {lsb}, MSB: {msb}")
+                    print(f"    Combined Value: {bend_value}")
+                    print(f"    Normalized: {normalized_bend:+.3f}")
+                    if not is_master_channel:
+                        print("    Type: MPE Member Channel Pitch Bend")
+                event = ('pitch_bend', channel-1, normalized_bend)
                 self.synth.process_midi_event(event)
 
             elif status == Constants.CHANNEL_PRESSURE:
-                # Handle aftertouch/channel pressure
-                normalized_pressure = data[1] / 127.0  # Convert 0-127 to 0.0-1.0
-                event = ('pressure_update', channel-1, normalized_pressure, normalized_pressure)
+                normalized_pressure = data[1] / 127.0
+                if Constants.DEBUG:
+                    print(f"  Channel Pressure:")
+                    print(f"    Channel: {channel}")
+                    print(f"    Value: {data[1]} ({normalized_pressure:.3f})")
+                    if not is_master_channel:
+                        print("    Type: MPE Member Channel Pressure")
+                event = ('pressure', channel-1, normalized_pressure)
                 self.synth.process_midi_event(event)
-                
+                    
         except Exception as e:
             print(f"Error processing MIDI message: {str(e)}")
 
@@ -420,8 +466,8 @@ class Candide:
         if (current_time - self.last_volume_scan) >= HWConstants.UPDATE_INTERVAL:
             new_volume = self.volume_pot.read_pot()
             if new_volume is not None:
-                if Constants.DEBUG:
-                    print(f"Volume: {new_volume:.3f}")
+                # if Constants.DEBUG:
+                #     print(f"Volume: {new_volume:.3f}")
                 self.audio.set_volume(new_volume)
             self.last_volume_scan = current_time
 
