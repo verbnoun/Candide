@@ -24,9 +24,9 @@ class Constants:
     
     # MIDI Constants
     MIDI_BAUD_RATE = 31250
-    RUNNING_STATUS_TIMEOUT = 0.1  # Reduced from 0.3
-    BUFFER_SIZE = 256  # Reduced from 1024 for lower latency
-    MESSAGE_TIMEOUT = 0.01  # Reduced from 0.1 for faster processing
+    RUNNING_STATUS_TIMEOUT = 0.2  # More lenient for continuous control
+    BUFFER_SIZE = 4096        # Increased for MPE bandwidth
+    MESSAGE_TIMEOUT = 0.05    # More time for message assembly    
     HEARTBEAT_INTERVAL = 0.5
     MESSAGE_COUNTS_AS_HEARTBEAT = True
     CONFIG_SEND_DELAY = 0.05
@@ -57,7 +57,7 @@ class Constants:
     CC_CHANNEL_PRESSURE = 74
 
 class RingBuffer:
-    """Fixed-size ring buffer for MIDI data"""
+    """Optimized ring buffer for high-bandwidth MPE MIDI data"""
     def __init__(self, size):
         self.size = size
         self.buffer = array.array('B', [0] * size)  # unsigned char array
@@ -65,32 +65,76 @@ class RingBuffer:
         self.read_idx = 0
         
     def write(self, data):
-        """Write byte array to buffer, returns number of bytes written"""
+        """Write byte array to buffer with overflow protection"""
         bytes_written = 0
-        for byte in data:
-            next_write = (self.write_idx + 1) % self.size
-            if next_write != self.read_idx:  # if not full
-                self.buffer[self.write_idx] = byte
-                self.write_idx = next_write
-                bytes_written += 1
-            else:
-                break
-        return bytes_written
+        data_len = len(data)
+        
+        # Fast path for small writes
+        if data_len <= 3:  # Typical MIDI message size
+            for byte in data:
+                next_write = (self.write_idx + 1) % self.size
+                if next_write != self.read_idx:
+                    self.buffer[self.write_idx] = byte
+                    self.write_idx = next_write
+                    bytes_written += 1
+                else:
+                    break
+            return bytes_written
+            
+        # Bulk write path
+        space_available = self.size - self.available() - 1
+        write_size = min(data_len, space_available)
+        
+        # Calculate continuous space to end of buffer
+        to_end = self.size - self.write_idx
+        
+        if write_size <= to_end:
+            # Single copy case
+            self.buffer[self.write_idx:self.write_idx + write_size] = data[:write_size]
+            self.write_idx = (self.write_idx + write_size) % self.size
+            return write_size
+            
+        # Split copy case
+        first_chunk = data[:to_end]
+        second_chunk = data[to_end:write_size]
+        
+        self.buffer[self.write_idx:] = first_chunk
+        self.buffer[:len(second_chunk)] = second_chunk
+        self.write_idx = len(second_chunk)
+        
+        return write_size
     
     def read(self, size=None):
-        """Read up to size bytes from buffer, or all available if size=None"""
-        result = array.array('B')
+        """Optimized read with preallocated array"""
         available = self.available()
         if size is None:
             size = available
         else:
             size = min(size, available)
             
-        for _ in range(size):
-            if self.read_idx != self.write_idx:
-                result.append(self.buffer[self.read_idx])
-                self.read_idx = (self.read_idx + 1) % self.size
-                
+        if size == 0:
+            return array.array('B')
+            
+        result = array.array('B', [0] * size)
+        read_count = 0
+        
+        # Calculate continuous data to end of buffer
+        to_end = self.size - self.read_idx
+        
+        if size <= to_end:
+            # Single copy case
+            result[0:size] = self.buffer[self.read_idx:self.read_idx + size]
+            self.read_idx = (self.read_idx + size) % self.size
+            return result
+            
+        # Split copy case
+        first_chunk_size = to_end
+        second_chunk_size = size - to_end
+        
+        result[0:first_chunk_size] = self.buffer[self.read_idx:self.read_idx + first_chunk_size]
+        result[first_chunk_size:size] = self.buffer[0:second_chunk_size]
+        
+        self.read_idx = second_chunk_size
         return result
     
     def peek(self, offset=0):
@@ -111,19 +155,22 @@ class RingBuffer:
         self.write_idx = self.read_idx = 0
 
 class UartHandler:
-    """Handles MIDI input on RX and text output on TX with improved MPE and buffering"""
+    """Optimized UART handler for high-bandwidth MPE MIDI"""
     def __init__(self, midi_callback, is_connected_callback):
         self.midi_callback = midi_callback
         self.is_connected_callback = is_connected_callback
         print(f"Initializing UART on TX={Constants.MIDI_TX}, RX={Constants.MIDI_RX}")
         
         try:
-            self.uart = busio.UART(tx=Constants.MIDI_TX,
-                                rx=Constants.MIDI_RX,
-                                baudrate=Constants.MIDI_BAUD_RATE,
-                                bits=8,
-                                parity=None,
-                                stop=1)
+            self.uart = busio.UART(
+                tx=Constants.MIDI_TX,
+                rx=Constants.MIDI_RX,
+                baudrate=Constants.MIDI_BAUD_RATE,
+                bits=8,
+                parity=None,
+                stop=1,
+                timeout=0.001  # Short timeout for non-blocking reads
+            )
             
             # Initialize state
             self.ring_buffer = RingBuffer(Constants.BUFFER_SIZE)
@@ -132,6 +179,7 @@ class UartHandler:
             self.current_message = array.array('B')
             self.message_start_time = 0
             self.expected_length = 0
+            self.temp_buffer = bytearray(32)  # Preallocated temp buffer for UART reads
             print("UART initialization successful")
             
         except Exception as e:
@@ -151,13 +199,10 @@ class UartHandler:
             return False
 
     def _get_message_length(self, status):
-        """Return expected message length (including status byte) for a given status byte"""
+        """Fast message length lookup using status byte"""
         if status >= Constants.SYSTEM_MESSAGE:
-            return 1  # System message
-        command = status & 0xF0
-        if command in (Constants.PROGRAM_CHANGE, Constants.CHANNEL_PRESSURE):
-            return 2
-        return 3
+            return 1
+        return 3 if (status & 0xF0) not in (Constants.PROGRAM_CHANGE, Constants.CHANNEL_PRESSURE) else 2
 
     def _process_midi_message(self, message):
         """Process a complete MIDI message with improved MPE handling"""
@@ -177,11 +222,10 @@ class UartHandler:
                 print(f"Error processing MIDI message: {str(e)}")
 
     def check_for_messages(self):
-        """Check for and process any incoming MIDI messages with improved timing"""
+        """Optimized MIDI message processing"""
         try:
             current_time = time.monotonic()
             
-            # If not connected, clear buffers
             if not self.is_connected_callback():
                 if self.uart.in_waiting:
                     self.uart.read(self.uart.in_waiting)
@@ -190,51 +234,46 @@ class UartHandler:
                 self.last_status = None
                 return
 
-            # Process all available bytes immediately
+            # Read available bytes in chunks
             while self.uart.in_waiting:
-                new_bytes = self.uart.read(self.uart.in_waiting)
-                if new_bytes:
-                    self.ring_buffer.write(new_bytes)
+                bytes_read = self.uart.readinto(self.temp_buffer)
+                if bytes_read:
+                    self.ring_buffer.write(memoryview(self.temp_buffer)[:bytes_read])
                     
-            # Process bytes in ring buffer
+            # Process messages
             while self.ring_buffer.available():
-                # Start new message if needed
                 if not self.current_message:
                     byte = self.ring_buffer.peek()
                     
-                    # Handle running status
                     if byte < 0x80:  # Data byte
                         if self.last_status and \
-                        (current_time - self.last_status_time) < Constants.RUNNING_STATUS_TIMEOUT:
-                            # Add last status byte for running status messages
+                           (current_time - self.last_status_time) < Constants.RUNNING_STATUS_TIMEOUT:
                             self.current_message.append(self.last_status)
                         else:
-                            self.ring_buffer.read(1)  # Discard invalid data byte
+                            self.ring_buffer.read(1)
                             continue
                     else:  # Status byte
                         self.last_status = byte
                         self.last_status_time = current_time
-                        self.ring_buffer.read(1)  # Remove status byte from buffer
-                        self.current_message.append(byte)  # Add to current message
+                        self.ring_buffer.read(1)
+                        self.current_message.append(byte)
                     
                     self.message_start_time = current_time
                     self.expected_length = self._get_message_length(self.last_status)
                 
-                # Add bytes to current message
+                # Complete message assembly
                 while len(self.current_message) < self.expected_length and self.ring_buffer.available():
                     self.current_message.append(self.ring_buffer.read(1)[0])
                 
-                # Process complete message immediately
                 if len(self.current_message) == self.expected_length:
-                    self.midi_callback(self.current_message)
+                    self._process_midi_message(bytes(self.current_message))
                     self.current_message = array.array('B')
                     continue
                     
-                # Check for message timeout
                 if (current_time - self.message_start_time) > Constants.MESSAGE_TIMEOUT:
                     self.current_message = array.array('B')
                 
-                break  # Exit loop if we need more bytes
+                break
                 
         except Exception as e:
             if str(e):
