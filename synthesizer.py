@@ -16,6 +16,15 @@ class Constants:
     AUDIO_BUFFER_SIZE = 8192 #4096
     SAMPLE_RATE = 44100
 
+class Voice:
+    def __init__(self, note, channel, velocity=1.0):
+        self.note = note
+        self.channel = channel
+        self.velocity = velocity
+        self.pressure = 0.0
+        self.pitch_bend = 0.0
+        self.synth_note = None  # Will hold the synthio.Note instance
+
 class SynthEngine:
     def __init__(self):
         self.envelope_settings = {}
@@ -183,6 +192,10 @@ class SynthEngine:
                  else (2 - 2 * i / sample_size) - 1) * 32767) 
              for i in range(sample_size)])
 
+    def update(self):
+        # Any continuous updates needed for the synth engine
+        pass
+
 class SynthAudioOutputManager:
     def __init__(self):
         self.mixer = audiomixer.Mixer(
@@ -228,7 +241,7 @@ class Synthesizer:
         self.max_amplitude = 0.9
         self.instrument = None
         self.current_midi_values = {}
-        self.active_notes = {}  # {midi_note: note}
+        self.active_voices = {}  # {channel: Voice}
 
     def set_instrument(self, instrument):
         if Constants.DEBUG:
@@ -255,101 +268,118 @@ class Synthesizer:
         if Constants.DEBUG:
             print(f"Re-evaluating MIDI values: {self.current_midi_values}")
         for cc_number, midi_value in self.current_midi_values.items():
-            self.handle_control_change(cc_number, midi_value, midi_value / 127.0)
+            self._handle_cc(0, cc_number, midi_value)  # Use channel 0 for global CCs
 
-    def process_midi_event(self, event):
-        event_type, *params = event
-        if Constants.DEBUG:
-            print(f"\nProcessing MIDI event: {event_type}")
-            print(f"Parameters: {params}")
-        
-        try:
+    def process_mpe_events(self, events):
+        """Process MPE events in new format"""
+        for event in events:
+            event_type = event['type']
+            channel = event['channel']
+            data = event['data']
+            
             if event_type == 'note_on':
-                midi_note, velocity, key_id = params
-                self.play_note(midi_note, velocity)
+                self._handle_note_on(channel, data['note'], data['velocity'])
             elif event_type == 'note_off':
-                midi_note, velocity, key_id = params
-                self.stop_note(midi_note)
-            elif event_type == 'control_change':
-                cc_number = params[0]
-                midi_value = params[1]
-                
-                # Calculate normalized value
-                if len(params) >= 3 and isinstance(params[2], float):
-                    normalized_value = params[2]  # Use provided normalized value if available
-                else:
-                    normalized_value = midi_value / 127.0  # Calculate if not provided
-                
-                if Constants.DEBUG:                    
-                    print(f"Processing CC {cc_number} with value {midi_value}, normalized: {normalized_value}")
-
-                self.handle_control_change(cc_number, midi_value, normalized_value)
+                self._handle_note_off(channel, data['note'])
+            elif event_type == 'pressure':
+                self._handle_pressure(channel, data['value'])
             elif event_type == 'pitch_bend':
-                lsb, msb, key_id = params
-                self.apply_pitch_bend(lsb, msb)
-            elif event_type == 'pressure_update':
-                key_id, left_pressure, right_pressure = params
-                self.handle_pressure_update(left_pressure, right_pressure)
-            else:
-                print(f"Unknown event type: {event_type}")
-        except Exception as e:
-            print(f"Error processing MIDI event: {str(e)}\n")
-            import traceback
-            traceback.print_exc()
+                self._handle_pitch_bend(channel, data['value'])
+            elif event_type == 'cc':
+                self._handle_cc(channel, data['number'], data['value'])
 
-    def play_note(self, midi_note, velocity):
+    def _handle_note_on(self, channel, note, velocity):
+        """Handle MPE note-on event"""
         if Constants.DEBUG:
-            print(f"\nPlaying note: {midi_note} with velocity: {velocity}")
-
-        frequency = self._fractional_midi_to_hz(midi_note)
+            print(f"\nMPE Note On - Channel: {channel}, Note: {note}, Velocity: {velocity}")
+        
+        # Normalize velocity
+        norm_velocity = velocity / 127.0
+        
+        # Create new voice
+        voice = Voice(note, channel, norm_velocity)
+        
+        # Create synthio note
+        frequency = self._fractional_midi_to_hz(note)
         envelope = self.synth_engine.create_envelope()
         waveform = self.synth_engine.get_waveform(self.instrument.oscillator['waveform'])
         
-        # First release any existing note for this midi_note
-        if midi_note in self.active_notes:
-            old_note = self.active_notes[midi_note]
-            self.synth.release([old_note])
-        
-        note = synthio.Note(
+        synth_note = synthio.Note(
             frequency=frequency,
             envelope=envelope,
-            amplitude=velocity / 127.0,
+            amplitude=norm_velocity,
             waveform=waveform,
             bend=0.0,
             panning=0.0
         )
         
         if self.synth_engine.filter:
-            note.filter = self.synth_engine.filter(self.synth)
+            synth_note.filter = self.synth_engine.filter(self.synth)
             
-        self.active_notes[midi_note] = note
-        self.synth.press([note])
+        voice.synth_note = synth_note
+        self.active_voices[channel] = voice
+        self.synth.press([synth_note])
 
+    def _handle_note_off(self, channel, note):
+        """Handle MPE note-off event"""
         if Constants.DEBUG:
-            print(f"Note active with frequency: {frequency}Hz")
+            print(f"\nMPE Note Off - Channel: {channel}, Note: {note}")
+            
+        if channel in self.active_voices:
+            voice = self.active_voices[channel]
+            if voice.note == note:  # Verify correct note
+                self.synth.release([voice.synth_note])
+                del self.active_voices[channel]
 
-    def stop_note(self, midi_note):
-        if Constants.DEBUG:
-            print(f"\nStopping note: {midi_note}")
-
-        if midi_note in self.active_notes:
-            note = self.active_notes[midi_note]
-            self.synth.release([note])
-            del self.active_notes[midi_note]
-
-    def handle_control_change(self, cc_number, midi_value, normalized_value):
-        if Constants.DEBUG:
-            print(f"\nHandling CC {cc_number}:")
-        
-        if not self.instrument:
-            print("- No instrument loaded")
+    def _handle_pressure(self, channel, pressure_value):
+        """Handle per-channel pressure"""
+        if not self.synth_engine.pressure_enabled:
             return
+            
+        if Constants.DEBUG:
+            print(f"\nMPE Pressure - Channel: {channel}, Value: {pressure_value}")
+            
+        if channel in self.active_voices:
+            voice = self.active_voices[channel]
+            norm_pressure = pressure_value / 127.0
+            voice.pressure = norm_pressure
+            
+            # Apply pressure modulation from instrument config
+            self.synth_engine.apply_pressure(norm_pressure)
+            
+            # Update voice parameters
+            voice.synth_note.envelope = self.synth_engine.create_envelope()
+            if self.synth_engine.filter:
+                voice.synth_note.filter = self.synth_engine.filter(self.synth)
+
+    def _handle_pitch_bend(self, channel, bend_value):
+        """Handle per-channel pitch bend"""
+        if not self.synth_engine.pitch_bend_enabled:
+            return
+            
+        if Constants.DEBUG:
+            print(f"\nMPE Pitch Bend - Channel: {channel}, Value: {bend_value}")
+            
+        if channel in self.active_voices:
+            voice = self.active_voices[channel]
+            # Normalize to -1.0 to 1.0 range
+            norm_bend = (bend_value - 8192) / 8192.0
+            # Scale by semitone range and convert to frequency ratio
+            bend_range = self.synth_engine.pitch_bend_range / 12.0
+            voice.pitch_bend = norm_bend
+            voice.synth_note.bend = norm_bend * bend_range
+
+    def _handle_cc(self, channel, cc_number, value):
+        """Handle MIDI CC messages"""
+        if Constants.DEBUG:
+            print(f"\nMPE CC - Channel: {channel}, CC: {cc_number}, Value: {value}")
+            
+        # Normalize value
+        norm_value = value / 127.0
         
-        if Constants.DEBUG:    
-            print(f"- Current instrument: {self.instrument.name}")
-            print(f"- MIDI value: {midi_value}, Normalized: {normalized_value:.3f}")
+        # Store for recall
+        self.current_midi_values[cc_number] = value
         
-        self.current_midi_values[cc_number] = midi_value
         found_parameter = False
 
         if Constants.DEBUG:
@@ -364,7 +394,7 @@ class Synthesizer:
                 param_name = pot_config['name']
                 min_val = pot_config['min']
                 max_val = pot_config['max']
-                scaled_value = min_val + normalized_value * (max_val - min_val)
+                scaled_value = min_val + norm_value * (max_val - min_val)
                 
                 if Constants.DEBUG:
                     print(f"  - Found mapping! Pot {pot_index}")
@@ -410,93 +440,52 @@ class Synthesizer:
                     self.synth_engine.pitch_bend_curve = scaled_value
                 
                 if Constants.DEBUG:
-                    print("  - Updating active notes")
+                    print("  - Updating active voices")
                 
-                self._update_active_notes()
+                self._update_active_voices()
                 break
                 
-        if not found_parameter:
+        if not found_parameter and Constants.DEBUG:
             print(f"- No mapping found for CC {cc_number}")
 
-    def handle_pressure_update(self, left_pressure, right_pressure):
-        """Handle pressure update with improved debugging"""
-        if Constants.DEBUG:
-            print(f"\nHandling pressure update: L={left_pressure:.3f}, R={right_pressure:.3f}")
-
-        if not self.synth_engine.pressure_enabled:
+    def _update_active_voices(self):
+        """Update all active voices with current synth engine settings"""
+        if not self.active_voices:
             if Constants.DEBUG:
-                print("Pressure modulation disabled")
-            return
-                
-        avg_pressure = (left_pressure + right_pressure) / 2.0
-        if Constants.DEBUG:
-            print(f"Average pressure: {avg_pressure:.3f}")
-        
-        self.synth_engine.apply_pressure(avg_pressure)
-        if Constants.DEBUG: 
-            print("Applied pressure to synth engine")
-        
-        # Update all active notes with new pressure settings
-        for note in self.active_notes.values():
-            # Update envelope based on current pressure
-            note.envelope = self.synth_engine.create_envelope()
-            if Constants.DEBUG:
-                print("Updated note envelope")
-                
-            if left_pressure != right_pressure:
-                pressure_diff = right_pressure - left_pressure
-                note.panning = pressure_diff
-                if Constants.DEBUG:
-                    print(f"Updated note panning: {pressure_diff:.3f}")
-                
-            # Update filter if one exists
-            if self.synth_engine.filter:
-                note.filter = self.synth_engine.filter(self.synth)
-                if Constants.DEBUG:
-                    print("Updated note filter")
-
-    def apply_pitch_bend(self, lsb, msb):
-        if Constants.DEBUG:
-            print(f"\nApplying pitch bend: LSB={lsb}, MSB={msb}")
-        
-        if not self.synth_engine.pitch_bend_enabled:
-            return
-            
-        bend_value = (msb << 7) + lsb
-        normalized_bend = (bend_value - 8192) / 8192.0
-        bend_range = self.synth_engine.pitch_bend_range / 12.0
-        
-        if Constants.DEBUG:
-            print(f"Bend value: {bend_value}, normalized: {normalized_bend:.3f}, range: {bend_range}")
-        
-        for note in self.active_notes.values():
-            note.bend = normalized_bend * bend_range
-
-    def _update_active_notes(self):
-        if not self.active_notes:
-            if Constants.DEBUG:
-                print("No active notes to update")
+                print("No active voices to update")
             return
         
         if Constants.DEBUG:    
-            print(f"Updating {len(self.active_notes)} active notes with new parameters")
+            print(f"Updating {len(self.active_voices)} active voices with new parameters")
 
         new_envelope = self.synth_engine.create_envelope()
-        for note in self.active_notes.values():
-            note.envelope = new_envelope
+        for voice in self.active_voices.values():
+            voice.synth_note.envelope = new_envelope
             if self.synth_engine.filter:
-                note.filter = self.synth_engine.filter(self.synth)
+                voice.synth_note.filter = self.synth_engine.filter(self.synth)
 
-    def update(self, midi_events):
-        for event in midi_events:
-            self.process_midi_event(event)
+    def update(self):
+        """Main update loop for synth engine"""
+        # Update synthesis engine
+        self.synth_engine.update()
+        
+        # Update all active voices
+        for voice in list(self.active_voices.values()):
+            # Re-apply current modulations
+            if voice.pressure > 0:
+                self._handle_pressure(voice.channel, int(voice.pressure * 127))
+            if voice.pitch_bend != 0:
+                self._handle_pitch_bend(voice.channel, int((voice.pitch_bend * 8192) + 8192))
 
     def stop(self):
+        """Clean shutdown"""
         print("\nStopping synthesizer")
-        if self.active_notes:
-            self.synth.release(list(self.active_notes.values()))
-            self.active_notes.clear()
+        if self.active_voices:
+            notes = [voice.synth_note for voice in self.active_voices.values()]
+            self.synth.release(notes)
+            self.active_voices.clear()
         self.audio_output_manager.stop()
 
     def _fractional_midi_to_hz(self, midi_note):
+        """Convert MIDI note number to frequency in Hz"""
         return 440 * (2 ** ((midi_note - 69) / 12))
