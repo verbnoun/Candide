@@ -1,11 +1,9 @@
 import busio
-import usb_midi
 import time
 from collections import deque
 
 class Constants:
     DEBUG = False
-    
     
     # UART/MIDI Settings
     BAUDRATE = 31250
@@ -90,23 +88,13 @@ class MPEVoiceState:
         self.received_initial_pressure = False
         self.received_initial_timbre = False
 
-class MPEVoiceManager:
-    """Manages MPE voice allocation and tracking"""
+class ZoneManager:
+    """Manages MPE zones"""
     def __init__(self):
-        # Zone management
         self.lower_zone = MPEZone(is_lower_zone=True)
         self.upper_zone = MPEZone(is_lower_zone=False)
-        
-        # Default to lower zone only with all available channels
         self.lower_zone.configure(Constants.DEFAULT_ZONE_MEMBER_COUNT)
-        
-        # Voice tracking
-        self.active_voices = {}  # (channel, note): MPEVoiceState
-        self.channel_notes = {}  # channel: set of active notes
-        
-        # Controller state tracking for each member channel
-        self.channel_states = {}  # channel: dict of controller states
-        
+
     def get_zone_for_channel(self, channel):
         """Determine which zone a channel belongs to"""
         if channel == self.lower_zone.manager_channel and self.lower_zone.active:
@@ -121,11 +109,19 @@ class MPEVoiceManager:
             
         return None
 
-    def allocate_channel(self, note, zone=None):
+    def reset_zone(self, zone):
+        """Reset all state for a zone"""
+        zone.active = False
+        zone.member_channels = []
+
+class VoiceManager:
+    """Manages MPE voice allocation and tracking"""
+    def __init__(self):
+        self.active_voices = {}  # (channel, note): MPEVoiceState
+        self.channel_notes = {}  # channel: set of active notes
+
+    def allocate_channel(self, note, zone):
         """Get next available channel for a new note"""
-        if zone is None:
-            zone = self.lower_zone if self.lower_zone.active else self.upper_zone
-            
         if not zone.active:
             return None
             
@@ -149,18 +145,8 @@ class MPEVoiceManager:
     def add_voice(self, channel, note):
         """Add new voice to tracking"""
         voice = MPEVoiceState(channel, note)
-        
-        # Initialize with current channel controller states
-        if channel in self.channel_states:
-            states = self.channel_states[channel]
-            voice.pitch_bend = states.get('pitch_bend', 8192)
-            voice.pressure = states.get('pressure', 0)
-            voice.timbre = states.get('timbre', 64)
-        
-        # Track the voice
         self.active_voices[(channel, note)] = voice
         
-        # Track notes per channel
         if channel not in self.channel_notes:
             self.channel_notes[channel] = set()
         self.channel_notes[channel].add(note)
@@ -171,13 +157,9 @@ class MPEVoiceManager:
         """Release voice and clean up tracking"""
         voice_key = (channel, note)
         if voice_key in self.active_voices:
-            # Remove from voice tracking
             del self.active_voices[voice_key]
-            
-            # Remove from channel note tracking
             if channel in self.channel_notes:
                 self.channel_notes[channel].discard(note)
-                
             return True
         return False
 
@@ -185,20 +167,22 @@ class MPEVoiceManager:
         """Get voice state for channel and note"""
         return self.active_voices.get((channel, note))
 
-    def update_controller(self, channel, controller_type, value):
+class ControllerManager:
+    """Manages controller states for channels"""
+    def __init__(self):
+        self.channel_states = {}  # channel: dict of controller states
+
+    def update_controller(self, channel, controller_type, value, zone_manager):
         """Update controller state for a channel"""
         if channel not in self.channel_states:
             self.channel_states[channel] = {}
             
-        # Update channel state
         self.channel_states[channel][controller_type] = value
         
-        # Get the zone for combining manager controls
-        zone = self.get_zone_for_channel(channel)
+        zone = zone_manager.get_zone_for_channel(channel)
         if not zone:
             return
             
-        # If this is a manager channel, update zone manager state
         if channel == zone.manager_channel:
             if controller_type == 'pitch_bend':
                 zone.manager_pitch_bend = value
@@ -207,102 +191,232 @@ class MPEVoiceManager:
             elif controller_type == 'timbre':
                 zone.manager_timbre = value
 
+class ConfigurationManager:
+    """Handles MPE configuration"""
+    def __init__(self, zone_manager):
+        self.zone_manager = zone_manager
+
     def handle_mpe_config(self, channel, member_count):
         """Handle MPE Configuration Message"""
         if channel == Constants.LOWER_ZONE_MANAGER:
-            self.lower_zone.configure(member_count)
+            self.zone_manager.lower_zone.configure(member_count)
             if Constants.DEBUG:
                 print(f"Configured Lower Zone with {member_count} members")
         elif channel == Constants.UPPER_ZONE_MANAGER:
-            self.upper_zone.configure(member_count)
+            self.zone_manager.upper_zone.configure(member_count)
             if Constants.DEBUG:
                 print(f"Configured Upper Zone with {member_count} members")
 
-    def reset_zone(self, zone):
-        """Reset all state for a zone"""
-        for channel in zone.member_channels:
-            if channel in self.channel_states:
-                del self.channel_states[channel]
-                
-        # Clear any voices in the zone
-        for (chan, note) in list(self.active_voices.keys()):
-            if chan in zone.member_channels:
-                self.release_voice(chan, note)
-
-class MidiLogic:
-    def __init__(self, midi_tx, midi_rx, text_callback):
-        """Initialize MIDI and text communication"""
-        print("Initializing MIDI Transport")
-        self.text_callback = text_callback
-        self.voice_manager = MPEVoiceManager()
-        
-        # Communication state
+class MidiUart:
+    """Handles low-level UART communication and buffering"""
+    def __init__(self, midi_tx, midi_rx):
         self.uart = busio.UART(
             tx=midi_tx,
             rx=midi_rx,
             baudrate=Constants.BAUDRATE,
             timeout=Constants.UART_TIMEOUT
         )
+        self.message_buffer = []
         self.last_status = None
         self.last_status_time = 0
-        self.message_buffer = []
         print("UART initialized")
+
+    def read_byte(self):
+        """Read a single byte from UART if available"""
+        if self.uart.in_waiting:
+            return self.uart.read(1)[0]
+        return None
+
+    def write(self, data):
+        """Write data to UART"""
+        return self.uart.write(data)
+
+    @property
+    def in_waiting(self):
+        """Number of bytes waiting to be read"""
+        return self.uart.in_waiting
+
+    def cleanup(self):
+        """Clean shutdown of UART"""
+        if self.uart:
+            self.uart.deinit()
+
+class MidiParser:
+    """Parses raw MIDI bytes into structured messages"""
+    def __init__(self):
+        self.message_buffer = []
+        self.last_status = None
+        self.last_status_time = 0
+
+    def process_byte(self, byte, current_time):
+        """Process a single MIDI byte and return a complete message if available"""
+        if byte is None:
+            return None
+
+        # Status byte
+        if byte & 0x80:
+            self.last_status = byte
+            self.last_status_time = current_time
+            self.message_buffer = [byte]
+            return None
+
+        # Data byte
+        if (self.last_status and 
+            current_time - self.last_status_time < Constants.RUNNING_STATUS_TIMEOUT):
+            if not self.message_buffer:
+                self.message_buffer = [self.last_status]
+        
+        self.message_buffer.append(byte)
+
+        # Check if we have a complete message
+        if self._is_complete_message():
+            message = self._parse_message()
+            self.message_buffer = []
+            return message
+
+        # Check for message timeout
+        if current_time - self.last_status_time > Constants.MESSAGE_TIMEOUT:
+            self.message_buffer = []
+
+        return None
+
+    def _is_complete_message(self):
+        """Check if buffer contains complete MIDI message"""
+        if not self.message_buffer:
+            return False
+            
+        status = self.message_buffer[0]
+        if status & 0x80 != 0x80:
+            return False
+            
+        message_type = status & 0xF0
+        expected_length = 3
+        if message_type in (Constants.PROGRAM_CHANGE, Constants.CHANNEL_PRESSURE):
+            expected_length = 2
+        elif message_type == Constants.SYSTEM_MESSAGE:
+            expected_length = 1
+            
+        return len(self.message_buffer) == expected_length
+
+    def _parse_message(self):
+        """Parse complete MIDI message from buffer"""
+        if not self._is_complete_message():
+            return None
+
+        status = self.message_buffer[0]
+        message_type = status & 0xF0
+        channel = status & 0x0F
+
+        event = {
+            'type': None,
+            'channel': channel,
+            'data': {}
+        }
+
+        if message_type == Constants.NOTE_ON:
+            velocity = self.message_buffer[2]
+            if velocity > 0:
+                event['type'] = 'note_on'
+                event['data'] = {
+                    'note': self.message_buffer[1],
+                    'velocity': velocity
+                }
+            else:
+                event['type'] = 'note_off'
+                event['data'] = {
+                    'note': self.message_buffer[1],
+                    'velocity': 0
+                }
+
+        elif message_type == Constants.NOTE_OFF:
+            event['type'] = 'note_off'
+            event['data'] = {
+                'note': self.message_buffer[1],
+                'velocity': self.message_buffer[2]
+            }
+
+        elif message_type == Constants.CHANNEL_PRESSURE:
+            event['type'] = 'pressure'
+            event['data'] = {'value': self.message_buffer[1]}
+
+        elif message_type == Constants.PITCH_BEND:
+            event['type'] = 'pitch_bend'
+            lsb = self.message_buffer[1]
+            msb = self.message_buffer[2]
+            value = (msb << 7) | lsb
+            event['data'] = {
+                'lsb': lsb,
+                'msb': msb,
+                'value': value
+            }
+
+        elif message_type == Constants.CONTROL_CHANGE:
+            event['type'] = 'cc'
+            event['data'] = {
+                'number': self.message_buffer[1],
+                'value': self.message_buffer[2]
+            }
+
+        return event
+
+class MidiLogic:
+    """Main MIDI handling class that coordinates components"""
+    def __init__(self, midi_tx, midi_rx, text_callback):
+        """Initialize MIDI and text communication"""
+        print("Initializing MIDI Transport")
+        self.text_callback = text_callback
+        self.zone_manager = ZoneManager()
+        self.voice_manager = VoiceManager()
+        self.controller_manager = ControllerManager()
+        self.config_manager = ConfigurationManager(self.zone_manager)
+        
+        # Initialize components
+        self.uart = MidiUart(midi_tx, midi_rx)
+        self.parser = MidiParser()
+        self.text_buffer = []
 
     def check_for_messages(self):
         """Check for both MIDI and text messages"""
         events = []
         try:
-            while self.uart.in_waiting:
-                byte = self.uart.read(1)[0]
-                
+            while True:
+                byte = self.uart.read_byte()
+                if byte is None:
+                    break
+
                 # Check for text message
                 if byte == ord('\n'):
-                    if self.message_buffer:
+                    if self.text_buffer:
                         try:
-                            text = bytes(self.message_buffer).decode('utf-8')
-                            self.message_buffer = []
+                            text = bytes(self.text_buffer).decode('utf-8')
+                            self.text_buffer = []
                             if self.text_callback:
                                 self.text_callback(text)
                             return True
                         except UnicodeDecodeError:
-                            self.message_buffer = []
+                            self.text_buffer = []
                     continue
 
+                # Process MIDI byte
                 current_time = time.monotonic()
+                event = self.parser.process_byte(byte, current_time)
                 
-                # Status byte
-                if byte & 0x80:
-                    if self.message_buffer and not self._is_midi_message(self.message_buffer):
-                        try:
-                            text = bytes(self.message_buffer).decode('utf-8')
-                            if self.text_callback:
-                                self.text_callback(text)
-                        except UnicodeDecodeError:
-                            pass
+                if event:
+                    # Update voice manager state based on the event
+                    if event['type'] == 'note_on':
+                        zone = self.zone_manager.get_zone_for_channel(event['channel'])
+                        if zone:
+                            channel = self.voice_manager.allocate_channel(event['data']['note'], zone)
+                            if channel is not None:
+                                self.voice_manager.add_voice(channel, event['data']['note'])
+                    elif event['type'] == 'note_off':
+                        self.voice_manager.release_voice(event['channel'], event['data']['note'])
+                    elif event['type'] in ('pressure', 'pitch_bend'):
+                        self.controller_manager.update_controller(event['channel'], event['type'], event['data']['value'], self.zone_manager)
+                    elif event['type'] == 'cc' and event['data']['number'] == Constants.CC_TIMBRE:
+                        self.controller_manager.update_controller(event['channel'], 'timbre', event['data']['value'], self.zone_manager)
                     
-                    self.last_status = byte
-                    self.last_status_time = current_time
-                    self.message_buffer = [byte]
-                
-                # Data byte
-                else:
-                    if (self.last_status and 
-                        current_time - self.last_status_time < Constants.RUNNING_STATUS_TIMEOUT and
-                        self._is_midi_message(self.message_buffer)):
-                        if not self.message_buffer:
-                            self.message_buffer = [self.last_status]
-                    
-                    self.message_buffer.append(byte)
-                
-                # Process complete MIDI message
-                if self._is_midi_message(self.message_buffer):
-                    event = self._process_midi_buffer()
-                    if event:
-                        events.append(event)
-                
-                # Check for message timeout
-                if current_time - self.last_status_time > Constants.MESSAGE_TIMEOUT:
-                    self.message_buffer = []
+                    events.append(event)
 
         except Exception as e:
             if str(e):
@@ -310,99 +424,6 @@ class MidiLogic:
         
         return events if events else False
 
-    def _is_midi_message(self, buffer):
-        """Check if buffer contains complete MIDI message"""
-        if not buffer:
-            return False
-        return buffer[0] & 0x80 == 0x80
-
-    def _process_midi_buffer(self):
-        """Process complete MIDI message from buffer"""
-        if not self.message_buffer:
-            return None
-
-        status = self.message_buffer[0]
-        message_type = status & 0xF0
-        channel = status & 0x0F
-
-        # Get expected message length
-        expected_length = 3
-        if message_type in (Constants.PROGRAM_CHANGE, Constants.CHANNEL_PRESSURE):
-            expected_length = 2
-        elif message_type == Constants.SYSTEM_MESSAGE:
-            expected_length = 1
-
-        # Process if complete
-        if len(self.message_buffer) == expected_length:
-            event = {
-                'type': None,
-                'channel': channel,
-                'data': {}
-            }
-
-            if message_type == Constants.NOTE_ON:
-                velocity = self.message_buffer[2]
-                if velocity > 0:
-                    event['type'] = 'note_on'
-                    event['data'] = {
-                        'note': self.message_buffer[1],
-                        'velocity': velocity
-                    }
-                    self.voice_manager.add_voice(channel, self.message_buffer[1])
-                else:
-                    # Note-on with velocity 0 is note-off
-                    event['type'] = 'note_off'
-                    event['data'] = {
-                        'note': self.message_buffer[1],
-                        'velocity': 0
-                    }
-                    self.voice_manager.release_voice(channel, self.message_buffer[1])
-
-            elif message_type == Constants.NOTE_OFF:
-                event['type'] = 'note_off'
-                event['data'] = {
-                    'note': self.message_buffer[1],
-                    'velocity': self.message_buffer[2]
-                }
-                self.voice_manager.release_voice(channel, self.message_buffer[1])
-
-            elif message_type == Constants.CHANNEL_PRESSURE:
-                event['type'] = 'pressure'
-                value = self.message_buffer[1]
-                event['data'] = {'value': value}
-                self.voice_manager.update_controller(channel, 'pressure', value)
-
-            elif message_type == Constants.PITCH_BEND:
-                event['type'] = 'pitch_bend'
-                lsb = self.message_buffer[1]
-                msb = self.message_buffer[2]
-                value = (msb << 7) | lsb
-                event['data'] = {
-                    'lsb': lsb,
-                    'msb': msb,
-                    'value': value
-                }
-                self.voice_manager.update_controller(channel, 'pitch_bend', value)
-
-            elif message_type == Constants.CONTROL_CHANGE:
-                cc_num = self.message_buffer[1]
-                value = self.message_buffer[2]
-                event['type'] = 'cc'
-                event['data'] = {
-                    'number': cc_num,
-                    'value': value
-                }
-                
-                # Handle MPE-specific CCs
-                if cc_num == Constants.CC_TIMBRE:
-                    self.voice_manager.update_controller(channel, 'timbre', value)
-
-            self.message_buffer = []
-            return event
-
-        return None
-
     def cleanup(self):
         """Clean shutdown"""
-        if self.uart:
-            self.uart.deinit()
+        self.uart.cleanup()
