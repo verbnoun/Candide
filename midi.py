@@ -4,7 +4,8 @@ import time
 from collections import deque
 
 class Constants:
-    DEBUG = True
+    DEBUG = False
+    
     
     # UART/MIDI Settings
     BAUDRATE = 31250
