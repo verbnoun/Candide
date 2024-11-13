@@ -5,7 +5,6 @@ from collections import deque
 
 class Constants:
     DEBUG = True
-    SEE_HEARTBEAT = False
     
     # UART/MIDI Settings
     BAUDRATE = 31250

@@ -1,5 +1,5 @@
 class Constants:
-    DEBUG = True
+    DEBUG = False
     
     # MPE Constants
     DEFAULT_MPE_PITCH_BEND_RANGE = 48  # Default 48 semitones for MPE

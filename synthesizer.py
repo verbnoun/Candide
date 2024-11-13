@@ -6,7 +6,7 @@ import array
 import audiomixer
 
 class Constants:
-    DEBUG = True
+    DEBUG = False
     # Audio Pins (PCM5102A DAC)
     I2S_BIT_CLOCK = board.GP1
     I2S_WORD_SELECT = board.GP2
