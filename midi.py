@@ -3,7 +3,7 @@ import time
 from collections import deque
 
 class Constants:
-    DEBUG = True
+    DEBUG = False
     
     # UART/MIDI Settings
     MIDI_BAUDRATE = 31250  # Aligned with Bartleby

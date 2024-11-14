@@ -241,7 +241,7 @@ class Synthesizer:
         self.max_amplitude = 0.9
         self.instrument = None
         self.current_midi_values = {}
-        self.active_voices = {}  # {channel: Voice}
+        self.active_voices = {}  # {(channel, note): Voice}
 
     def set_instrument(self, instrument):
         if Constants.DEBUG:
@@ -317,7 +317,7 @@ class Synthesizer:
             synth_note.filter = self.synth_engine.filter(self.synth)
             
         voice.synth_note = synth_note
-        self.active_voices[channel] = voice
+        self.active_voices[(channel, note)] = voice
         self.synth.press([synth_note])
 
     def _handle_note_off(self, channel, note):
@@ -325,11 +325,11 @@ class Synthesizer:
         if Constants.DEBUG:
             print(f"\nMPE Note Off - Channel: {channel}, Note: {note}")
             
-        if channel in self.active_voices:
-            voice = self.active_voices[channel]
-            if voice.note == note:  # Verify correct note
-                self.synth.release([voice.synth_note])
-                del self.active_voices[channel]
+        voice_key = (channel, note)
+        if voice_key in self.active_voices:
+            voice = self.active_voices[voice_key]
+            self.synth.release([voice.synth_note])
+            del self.active_voices[voice_key]
 
     def _handle_pressure(self, channel, pressure_value):
         """Handle per-channel pressure"""
@@ -339,18 +339,18 @@ class Synthesizer:
         if Constants.DEBUG:
             print(f"\nMPE Pressure - Channel: {channel}, Value: {pressure_value}")
             
-        if channel in self.active_voices:
-            voice = self.active_voices[channel]
-            norm_pressure = pressure_value / 127.0
-            voice.pressure = norm_pressure
-            
-            # Apply pressure modulation from instrument config
-            self.synth_engine.apply_pressure(norm_pressure)
-            
-            # Update voice parameters
-            voice.synth_note.envelope = self.synth_engine.create_envelope()
-            if self.synth_engine.filter:
-                voice.synth_note.filter = self.synth_engine.filter(self.synth)
+        for (ch, note), voice in self.active_voices.items():
+            if ch == channel:
+                norm_pressure = pressure_value / 127.0
+                voice.pressure = norm_pressure
+                
+                # Apply pressure modulation from instrument config
+                self.synth_engine.apply_pressure(norm_pressure)
+                
+                # Update voice parameters
+                voice.synth_note.envelope = self.synth_engine.create_envelope()
+                if self.synth_engine.filter:
+                    voice.synth_note.filter = self.synth_engine.filter(self.synth)
 
     def _handle_pitch_bend(self, channel, bend_value):
         """Handle per-channel pitch bend"""
@@ -360,14 +360,14 @@ class Synthesizer:
         if Constants.DEBUG:
             print(f"\nMPE Pitch Bend - Channel: {channel}, Value: {bend_value}")
             
-        if channel in self.active_voices:
-            voice = self.active_voices[channel]
-            # Normalize to -1.0 to 1.0 range
-            norm_bend = (bend_value - 8192) / 8192.0
-            # Scale by semitone range and convert to frequency ratio
-            bend_range = self.synth_engine.pitch_bend_range / 12.0
-            voice.pitch_bend = norm_bend
-            voice.synth_note.bend = norm_bend * bend_range
+        for (ch, note), voice in self.active_voices.items():
+            if ch == channel:
+                # Normalize to -1.0 to 1.0 range
+                norm_bend = (bend_value - 8192) / 8192.0
+                # Scale by semitone range and convert to frequency ratio
+                bend_range = self.synth_engine.pitch_bend_range / 12.0
+                voice.pitch_bend = norm_bend
+                voice.synth_note.bend = norm_bend * bend_range
 
     def _handle_cc(self, channel, cc_number, value):
         """Handle MIDI CC messages"""
@@ -470,12 +470,12 @@ class Synthesizer:
         self.synth_engine.update()
         
         # Update all active voices
-        for voice in list(self.active_voices.values()):
+        for (channel, note), voice in list(self.active_voices.items()):
             # Re-apply current modulations
             if voice.pressure > 0:
-                self._handle_pressure(voice.channel, int(voice.pressure * 127))
+                self._handle_pressure(channel, int(voice.pressure * 127))
             if voice.pitch_bend != 0:
-                self._handle_pitch_bend(voice.channel, int((voice.pitch_bend * 8192) + 8192))
+                self._handle_pitch_bend(channel, int((voice.pitch_bend * 8192) + 8192))
 
     def stop(self):
         """Clean shutdown"""
