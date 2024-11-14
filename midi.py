@@ -255,6 +255,8 @@ class MidiParser:
 
         # Status byte
         if byte & 0x80:
+            if Constants.DEBUG:
+                print(f"MIDI Status: 0x{byte:02X}")
             self.last_status = byte
             self.last_status_time = current_time
             self.message_buffer = [byte]
@@ -266,11 +268,15 @@ class MidiParser:
             if not self.message_buffer:
                 self.message_buffer = [self.last_status]
         
+        if Constants.DEBUG:
+            print(f"MIDI Data: 0x{byte:02X}")
         self.message_buffer.append(byte)
 
         # Check if we have a complete message
         if self._is_complete_message():
             message = self._parse_message()
+            if Constants.DEBUG and message:
+                print(f"Complete MIDI Message: {message}")
             self.message_buffer = []
             return message
 
@@ -364,7 +370,6 @@ class MidiLogic:
     def __init__(self, midi_tx, midi_rx, text_callback):
         """Initialize MIDI and text communication"""
         print("Initializing MIDI Transport")
-        self.text_callback = text_callback
         self.zone_manager = ZoneManager()
         self.voice_manager = VoiceManager()
         self.controller_manager = ControllerManager()
@@ -373,29 +378,15 @@ class MidiLogic:
         # Initialize components
         self.uart = MidiUart(midi_tx, midi_rx)
         self.parser = MidiParser()
-        self.text_buffer = []
 
     def check_for_messages(self):
-        """Check for both MIDI and text messages"""
+        """Check for MIDI messages"""
         events = []
         try:
             while True:
                 byte = self.uart.read_byte()
                 if byte is None:
                     break
-
-                # Check for text message
-                if byte == ord('\n'):
-                    if self.text_buffer:
-                        try:
-                            text = bytes(self.text_buffer).decode('utf-8')
-                            self.text_buffer = []
-                            if self.text_callback:
-                                self.text_callback(text)
-                            return True
-                        except UnicodeDecodeError:
-                            self.text_buffer = []
-                    continue
 
                 # Process MIDI byte
                 current_time = time.monotonic()
