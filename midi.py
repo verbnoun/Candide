@@ -369,16 +369,16 @@ class MidiParser:
 
 class MidiLogic:
     """Main MIDI handling class that coordinates components"""
-    def __init__(self, midi_tx, midi_rx, text_callback):
-        """Initialize MIDI and text communication"""
-        print("Initializing MIDI Transport")
+    def __init__(self, uart, text_callback):
+        """Initialize MIDI with shared UART"""
+        print("Initializing MIDI Logic")
         self.zone_manager = ZoneManager()
         self.voice_manager = VoiceManager()
         self.controller_manager = ControllerManager()
         self.config_manager = ConfigurationManager(self.zone_manager)
         
-        # Initialize components
-        self.uart = MidiUart(midi_tx, midi_rx)
+        # Use provided UART
+        self.uart = uart
         self.parser = MidiParser()
 
     def check_for_messages(self):
@@ -386,8 +386,9 @@ class MidiLogic:
         events = []
         try:
             while True:
-                byte = self.uart.read_byte()
-                if byte is None:
+                if self.uart.in_waiting:
+                    byte = self.uart.read(1)[0]
+                else:
                     break
 
                 # Handle MIDI byte
@@ -427,6 +428,38 @@ class MidiLogic:
         
         return events if events else False
 
+    def handle_config_message(self, message):
+        return self.control_processor.handle_config_message(message)
+
+    def reset_controller_defaults(self):  # Renamed from reset_cc_defaults
+        self.control_processor.reset_to_defaults()
+
+    def update(self, changed_keys, changed_pots, config):
+        if not self.message_sender.ready_for_midi:
+            return []
+            
+        midi_events = []
+        
+        if changed_keys:
+            midi_events.extend(self.note_processor.process_key_changes(changed_keys, config))
+        
+        if changed_pots:
+            midi_events.extend(self.control_processor.process_controller_changes(changed_pots))  # Updated method name
+        
+        for event in midi_events:
+            self.event_router.handle_event(event)  # Updated method name
+            
+        return midi_events
+
+    def handle_octave_shift(self, direction):
+        if not self.message_sender.ready_for_midi:
+            return []
+        return self.note_processor.handle_octave_shift(direction)
+
+    def reset_cc_defaults(self):
+        pass
+
     def cleanup(self):
-        """Clean shutdown"""
-        self.uart.cleanup()
+        """Clean shutdown - no need to cleanup UART as it's shared"""
+        if Constants.DEBUG:
+            print("\nCleaning up MIDI system...")
