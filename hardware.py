@@ -5,23 +5,26 @@ import analogio
 import rotaryio
 
 class Constants:
+    # Debug Settings
     DEBUG = False
-
-
-    # Encoder GPIO Pins
+    
+    # ADC Constants
+    ADC_MAX = 65535
+    ADC_MIN = 1
+    
+    # Pin Definitions
     INSTRUMENT_ENC_CLK = board.GP20
     INSTRUMENT_ENC_DT = board.GP21
-    # Volume Pot Pin
     VOLUME_POT = board.GP26
+    
+    # Timing Intervals
     UPDATE_INTERVAL = 0.01
+    ENCODER_SCAN_INTERVAL = 0.001
+    
+    # Potentiometer Constants
     POT_THRESHOLD = 800
     POT_LOWER_TRIM = 0.05
     POT_UPPER_TRIM = 0.0
-    ADC_MAX = 65535
-    ADC_MIN = 1
-
-    # Encoder timing/thresholds
-    ENCODER_SCAN_INTERVAL = 0.001  # Time between encoder scans
 
 class VolumePotHandler:
     def __init__(self, pin):
@@ -30,6 +33,7 @@ class VolumePotHandler:
         self.is_active = False
     
     def normalize_value(self, value):
+        """Convert ADC value to normalized range (0.0-1.0)"""
         clamped_value = max(min(value, Constants.ADC_MAX), Constants.ADC_MIN)
         normalized = (clamped_value - Constants.ADC_MIN) / (Constants.ADC_MAX - Constants.ADC_MIN)
         
@@ -43,6 +47,7 @@ class VolumePotHandler:
         return round(normalized, 5)
 
     def read_pot(self):
+        """Read and process potentiometer value"""
         raw_value = self.pot.value
         change = abs(raw_value - self.last_value)
 
@@ -93,7 +98,6 @@ class RotaryEncoderHandler:
 
             if Constants.DEBUG:
                 print(f"Encoder movement: pos={current_raw_position}, last={self.last_position}, dir={direction}")
-    
             
             # Add event with direction
             events.append(('instrument_change', direction))

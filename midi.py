@@ -3,23 +3,24 @@ import time
 from collections import deque
 
 class Constants:
-    DEBUG = False
+    DEBUG = True
     
     # UART/MIDI Settings
-    BAUDRATE = 31250
+    MIDI_BAUDRATE = 31250  # Aligned with Bartleby
     UART_TIMEOUT = 0.001
     RUNNING_STATUS_TIMEOUT = 0.2
     MESSAGE_TIMEOUT = 0.05
     BUFFER_SIZE = 4096
     
     # MPE Configuration
-    LOWER_ZONE_MANAGER = 0      # MIDI channel 1 (zero-based)
-    UPPER_ZONE_MANAGER = 15     # MIDI channel 16 (zero-based)
+    ZONE_MANAGER = 0       # MIDI channel 1 (zero-based) - aligned with Bartleby
+    ZONE_START = 1        # First member channel
+    ZONE_END = 15        # Last member channel
     DEFAULT_ZONE_MEMBER_COUNT = 15
     
-    # Default MPE Pitch Bend Ranges
-    MANAGER_PITCH_BEND_RANGE = 2    # ±2 semitones default for Manager Channel
-    MEMBER_PITCH_BEND_RANGE = 48    # ±48 semitones default for Member Channels
+    # Default MPE Pitch Bend Ranges - aligned with Bartleby
+    MPE_MASTER_PITCH_BEND_RANGE = 2    # ±2 semitones default for Manager Channel
+    MPE_MEMBER_PITCH_BEND_RANGE = 48   # ±48 semitones default for Member Channels
     
     # MIDI Message Types
     NOTE_OFF = 0x80
@@ -31,18 +32,19 @@ class Constants:
     PITCH_BEND = 0xE0
     SYSTEM_MESSAGE = 0xF0
     
-    # MPE Control Change Numbers
+    # MPE Control Change Numbers - aligned with Bartleby
     CC_TIMBRE = 74
     
-    # RPN Messages
-    RPN_PITCH_BEND_RANGE = 0x0000
-    RPN_MPE_CONFIGURATION = 0x0006
+    # RPN Messages - aligned with Bartleby
+    RPN_MSB = 0
+    RPN_LSB_MPE = 6
+    RPN_LSB_PITCH = 0
 
 class MPEZone:
     """Represents an MPE Zone (Lower or Upper) with its channel assignments"""
     def __init__(self, is_lower_zone):
         self.is_lower_zone = is_lower_zone
-        self.manager_channel = Constants.LOWER_ZONE_MANAGER if is_lower_zone else Constants.UPPER_ZONE_MANAGER
+        self.manager_channel = Constants.ZONE_MANAGER if is_lower_zone else Constants.ZONE_END
         self.member_channels = []
         self.active = False
         
@@ -52,7 +54,7 @@ class MPEZone:
         self.manager_timbre = 64  # Center for CC74
         
         # Configuration
-        self.pitch_bend_range = Constants.MANAGER_PITCH_BEND_RANGE
+        self.pitch_bend_range = Constants.MPE_MASTER_PITCH_BEND_RANGE
         
     def configure(self, member_count):
         """Configure zone with specified number of member channels"""
@@ -63,10 +65,10 @@ class MPEZone:
             
         if self.is_lower_zone:
             # Channels 2-N for lower zone
-            self.member_channels = list(range(1, 1 + member_count))
+            self.member_channels = list(range(Constants.ZONE_START, Constants.ZONE_START + member_count))
         else:
             # Channels N-15 for upper zone
-            self.member_channels = list(range(15 - member_count + 1, 16))
+            self.member_channels = list(range(Constants.ZONE_END - member_count + 1, Constants.ZONE_END + 1))
 
 class MPEVoiceState:
     """Tracks the state of an active MPE voice with all its control values"""
@@ -172,8 +174,8 @@ class ControllerManager:
     def __init__(self):
         self.channel_states = {}  # channel: dict of controller states
 
-    def update_controller(self, channel, controller_type, value, zone_manager):
-        """Update controller state for a channel"""
+    def handle_controller_update(self, channel, controller_type, value, zone_manager):
+        """Handle controller state update for a channel"""
         if channel not in self.channel_states:
             self.channel_states[channel] = {}
             
@@ -198,11 +200,11 @@ class ConfigurationManager:
 
     def handle_mpe_config(self, channel, member_count):
         """Handle MPE Configuration Message"""
-        if channel == Constants.LOWER_ZONE_MANAGER:
+        if channel == Constants.ZONE_MANAGER:
             self.zone_manager.lower_zone.configure(member_count)
             if Constants.DEBUG:
                 print(f"Configured Lower Zone with {member_count} members")
-        elif channel == Constants.UPPER_ZONE_MANAGER:
+        elif channel == Constants.ZONE_END:
             self.zone_manager.upper_zone.configure(member_count)
             if Constants.DEBUG:
                 print(f"Configured Upper Zone with {member_count} members")
@@ -213,7 +215,7 @@ class MidiUart:
         self.uart = busio.UART(
             tx=midi_tx,
             rx=midi_rx,
-            baudrate=Constants.BAUDRATE,
+            baudrate=Constants.MIDI_BAUDRATE,
             timeout=Constants.UART_TIMEOUT
         )
         self.message_buffer = []
@@ -248,8 +250,8 @@ class MidiParser:
         self.last_status = None
         self.last_status_time = 0
 
-    def process_byte(self, byte, current_time):
-        """Process a single MIDI byte and return a complete message if available"""
+    def handle_byte(self, byte, current_time):
+        """Handle a single MIDI byte and return a complete message if available"""
         if byte is None:
             return None
 
@@ -388,9 +390,9 @@ class MidiLogic:
                 if byte is None:
                     break
 
-                # Process MIDI byte
+                # Handle MIDI byte
                 current_time = time.monotonic()
-                event = self.parser.process_byte(byte, current_time)
+                event = self.parser.handle_byte(byte, current_time)
                 
                 if event:
                     # Update voice manager state based on the event
@@ -403,9 +405,19 @@ class MidiLogic:
                     elif event['type'] == 'note_off':
                         self.voice_manager.release_voice(event['channel'], event['data']['note'])
                     elif event['type'] in ('pressure', 'pitch_bend'):
-                        self.controller_manager.update_controller(event['channel'], event['type'], event['data']['value'], self.zone_manager)
+                        self.controller_manager.handle_controller_update(
+                            event['channel'], 
+                            event['type'], 
+                            event['data']['value'], 
+                            self.zone_manager
+                        )
                     elif event['type'] == 'cc' and event['data']['number'] == Constants.CC_TIMBRE:
-                        self.controller_manager.update_controller(event['channel'], 'timbre', event['data']['value'], self.zone_manager)
+                        self.controller_manager.handle_controller_update(
+                            event['channel'], 
+                            'timbre', 
+                            event['data']['value'], 
+                            self.zone_manager
+                        )
                     
                     events.append(event)
 

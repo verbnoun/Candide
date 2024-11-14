@@ -7,25 +7,26 @@ from instruments import Piano, Organ, Womp, WindChime, Instrument
 from midi import MidiLogic
 
 class Constants:
-    DEBUG = False  
+    # Debug Settings
+    DEBUG = False
     SEE_HEARTBEAT = False
-
-    # Hardware Setup Delay
+    
+    # Hardware Setup
     SETUP_DELAY = 0.1
     
     # UART/MIDI Pins
     UART_TX = board.GP16
     UART_RX = board.GP17
     
-    # Detect Pin
+    # Connection
     DETECT_PIN = board.GP22
+    CONNECTION_TIMEOUT = 2.0
     
-    # Communication Timing
+    # Timing Intervals
     HEARTBEAT_INTERVAL = 0.25
     MESSAGE_TIMEOUT = 0.05
     CONFIG_SEND_DELAY = 0.05
-    INITIAL_PAUSE = 0.5  # Added pause before sending config
-    MESSAGE_COUNTS_AS_HEARTBEAT = True
+    INITIAL_PAUSE = 0.5
 
 class AudioManager:
     def __init__(self):
@@ -167,7 +168,7 @@ class ConnectionManager:
             if self.midi_manager.write("hello\n"):
                 print("Sent hello...")
                 self.has_sent_hello = True
-                time.sleep(Constants.INITIAL_PAUSE)  # Pause before sending config
+                time.sleep(Constants.INITIAL_PAUSE)
                 self._send_instrument_config()
 
     def _send_heartbeat(self):
