@@ -104,54 +104,50 @@ class Piano(Instrument):
     def __init__(self):
         super().__init__("Piano")
         self.oscillator = {
-            'waveform': 'triangle',
-            'detune': 0.05
+            'waveform': 'triangle',  # Base waveform for piano-like harmonics
+            'detune': 0.002  # Subtle detuning for natural string behavior
         }
         self.filter = {
             'type': 'low_pass',
-            'cutoff': 3000,
-            'resonance': 0.1
+            'cutoff': 5000,  # Higher cutoff for brighter piano tone
+            'resonance': 0.2  # Low resonance for natural sound
         }
         self.envelope = {
-            'attack': 0.002,
-            'decay': 0.15,
-            'sustain': 0.6,
-            'release': 0.4
+            'attack': 0.001,  # Very fast attack for hammer strike
+            'decay': 0.8,    # Longer decay for natural piano resonance
+            'sustain': 0.4,  # Lower sustain level like a real piano
+            'release': 0.6   # Natural string decay
         }
         self.midi = {
-            'velocity_sensitivity': 0.9
+            'velocity_sensitivity': 1.0  # Full velocity sensitivity for dynamics
         }
         self.pots = {
-            0: {'cc': 74, 'name': 'Filter Cutoff', 'min': 500, 'max': 8000},
-            1: {'cc': 71, 'name': 'Filter Resonance', 'min': 0, 'max': 0.5},
-            2: {'cc': 94, 'name': 'Detune Amount', 'min': 0, 'max': 0.1},
-            3: {'cc': 73, 'name': 'Attack Time', 'min': 0.001, 'max': 0.02},
-            4: {'cc': 75, 'name': 'Decay Time', 'min': 0.1, 'max': 2.0},
-            5: {'cc': 76, 'name': 'Sustain Level', 'min': 0.3, 'max': 1.0},
-            6: {'cc': 72, 'name': 'Release Time', 'min': 0.2, 'max': 1.5},
-            7: {'cc': 77, 'name': 'Bend Range', 'min': 2, 'max': 48},
-            8: {'cc': 78, 'name': 'Bend Curve', 'min': 1, 'max': 4}
+            0: {'cc': 74, 'name': 'Brightness', 'min': 3000, 'max': 8000},  # Filter cutoff for tone control
+            1: {'cc': 71, 'name': 'Resonance', 'min': 0.1, 'max': 0.4},     # Subtle resonance control
+            2: {'cc': 73, 'name': 'Attack Time', 'min': 0.001, 'max': 0.01}, # Very short attack range
+            3: {'cc': 75, 'name': 'Decay Time', 'min': 0.6, 'max': 1.2},     # Natural decay range
+            4: {'cc': 72, 'name': 'Release Time', 'min': 0.1, 'max': 0.5}    # Natural release range
         }
         self.pitch_bend = {
-            'enabled': True,
-            'range': Constants.DEFAULT_MPE_PITCH_BEND_RANGE,
-            'curve': 2
+            'enabled': False,  # Pianos don't have pitch bend
+            'range': 0,
+            'curve': 1
         }
         self.pressure = {
             'enabled': True,
-            'sensitivity': 0.8,
+            'sensitivity': 1.0,  # Full sensitivity for dynamic control
             'targets': [
                 {
-                    'param': 'filter.cutoff',
-                    'min': 1000,
-                    'max': 8000,
+                    'param': 'filter.cutoff',  # Pressure affects brightness
+                    'min': 3000,
+                    'max': 7000,
                     'curve': 'exponential'
                 },
                 {
-                    'param': 'envelope.sustain',
-                    'min': 0.3,
-                    'max': 0.9,
-                    'curve': 'exponential'
+                    'param': 'envelope.decay',  # Pressure affects string resonance
+                    'min': 0.6,
+                    'max': 1.0,
+                    'curve': 'linear'
                 }
             ]
         }
