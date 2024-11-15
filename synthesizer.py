@@ -4,6 +4,7 @@ import audiobusio
 import math
 import array
 import audiomixer
+import supervisor  # Added for ticks_ms()
 
 class Constants:
     DEBUG = False
@@ -15,6 +16,10 @@ class Constants:
     # Synthesizer Constants
     AUDIO_BUFFER_SIZE = 8192 #4096
     SAMPLE_RATE = 44100
+    
+    # Note Management Constants
+    MAX_ACTIVE_NOTES = 8  # Maximum simultaneous voices
+    NOTE_TIMEOUT_MS = 5000  # 5 seconds in milliseconds before force note-off
 
 class Voice:
     def __init__(self, note, channel, velocity=1.0):
@@ -24,6 +29,11 @@ class Voice:
         self.pressure = 0.0
         self.pitch_bend = 0.0
         self.synth_note = None  # Will hold the synthio.Note instance
+        self.timestamp = supervisor.ticks_ms()  # Added timestamp field
+
+    def refresh_timestamp(self):
+        """Update the timestamp to current time"""
+        self.timestamp = supervisor.ticks_ms()
 
 class SynthEngine:
     def __init__(self):
@@ -282,6 +292,11 @@ class Synthesizer:
             data = event['data']
             
             if event_type == 'note_on':
+                # Check if we're at the voice limit
+                if len(self.active_voices) >= Constants.MAX_ACTIVE_NOTES:
+                    if Constants.DEBUG:
+                        print(f"Reached maximum voices ({Constants.MAX_ACTIVE_NOTES}), ignoring note")
+                    continue
                 self._handle_note_on(channel, data['note'], data['velocity'])
             elif event_type == 'note_off':
                 self._handle_note_off(channel, data['note'])
@@ -347,6 +362,7 @@ class Synthesizer:
             if ch == channel:
                 norm_pressure = pressure_value / 127.0
                 voice.pressure = norm_pressure
+                voice.refresh_timestamp()  # Refresh timestamp on pressure activity
                 
                 # Apply pressure modulation from instrument config
                 self.synth_engine.apply_pressure(norm_pressure)
@@ -372,6 +388,7 @@ class Synthesizer:
                 bend_range = self.synth_engine.pitch_bend_range / 12.0
                 voice.pitch_bend = norm_bend
                 voice.synth_note.bend = norm_bend * bend_range
+                voice.refresh_timestamp()  # Refresh timestamp on pitch bend activity
 
     def _handle_cc(self, channel, cc_number, value):
         """Handle MIDI CC messages"""
@@ -470,6 +487,14 @@ class Synthesizer:
 
     def update(self):
         """Main update loop for synth engine"""
+        # Check for note timeouts
+        current_time = supervisor.ticks_ms()
+        for (channel, note), voice in list(self.active_voices.items()):
+            if current_time - voice.timestamp >= Constants.NOTE_TIMEOUT_MS:
+                if Constants.DEBUG:
+                    print(f"Note timeout: Channel {channel}, Note {note}")
+                self._handle_note_off(channel, note)
+        
         # Update synthesis engine
         self.synth_engine.update()
         

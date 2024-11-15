@@ -3,7 +3,7 @@ import time
 from collections import deque
 
 class Constants:
-    DEBUG = False
+    DEBUG = True
     
     # UART/MIDI Settings
     MIDI_BAUDRATE = 31250  # Aligned with Bartleby
@@ -39,6 +39,45 @@ class Constants:
     RPN_MSB = 0
     RPN_LSB_MPE = 6
     RPN_LSB_PITCH = 0
+    
+    # Expression Message Timing
+    CC_RELEASE_WINDOW = 0.05  # 50ms window for CC messages after note-off
+
+class MPEVoiceState:
+    """Tracks the state of an active MPE voice with all its control values"""
+    def __init__(self, channel, note):
+        self.channel = channel
+        self.note = note
+        self.active = True
+        
+        # Control states - initialize to defaults
+        self.pitch_bend = 8192  # Center position
+        self.pressure = 0
+        self.timbre = 64  # CC74 center position
+        
+        # Timing
+        self.note_on_time = time.monotonic()
+        self.last_cc_time = self.note_on_time  # Track last CC message time
+        self.release_time = None  # Set when note is released
+        
+        # Track initial states received before note-on
+        self.received_initial_pitch = False
+        self.received_initial_pressure = False
+        self.received_initial_timbre = False
+    
+    def release(self):
+        """Mark voice as released and record timing"""
+        self.active = False
+        self.release_time = time.monotonic()
+    
+    def can_process_cc(self):
+        """Check if CC messages should still be processed"""
+        if self.active:
+            return True
+        if self.release_time is None:
+            return False
+        # Allow CC processing within release window
+        return (time.monotonic() - self.release_time) <= Constants.CC_RELEASE_WINDOW
 
 class MPEZone:
     """Represents an MPE Zone (Lower or Upper) with its channel assignments"""
@@ -69,26 +108,6 @@ class MPEZone:
         else:
             # Channels N-15 for upper zone
             self.member_channels = list(range(Constants.ZONE_END - member_count + 1, Constants.ZONE_END + 1))
-
-class MPEVoiceState:
-    """Tracks the state of an active MPE voice with all its control values"""
-    def __init__(self, channel, note):
-        self.channel = channel
-        self.note = note
-        self.active = True
-        
-        # Control states - initialize to defaults
-        self.pitch_bend = 8192  # Center position
-        self.pressure = 0
-        self.timbre = 64  # CC74 center position
-        
-        # Timing
-        self.note_on_time = time.monotonic()
-        
-        # Track initial states received before note-on
-        self.received_initial_pitch = False
-        self.received_initial_pressure = False
-        self.received_initial_timbre = False
 
 class ZoneManager:
     """Manages MPE zones"""
@@ -121,28 +140,54 @@ class VoiceManager:
     def __init__(self):
         self.active_voices = {}  # (channel, note): MPEVoiceState
         self.channel_notes = {}  # channel: set of active notes
+        self.channel_history = {}  # channel: last_use_time
 
     def allocate_channel(self, note, zone):
         """Get next available channel for a new note"""
         if not zone.active:
             return None
             
-        # Find least recently used available channel
+        current_time = time.monotonic()
+        
+        # First try to find a completely free channel
         for channel in zone.member_channels:
             if channel not in self.channel_notes or not self.channel_notes[channel]:
+                self.channel_history[channel] = current_time
                 return channel
-                
-        # If all channels are in use, find one with fewest active notes
-        min_notes = float('inf')
-        best_channel = None
+        
+        # Then try to find a channel with notes in release phase
+        for channel in zone.member_channels:
+            if channel in self.channel_notes:
+                all_released = True
+                for note_key in list(self.active_voices.keys()):
+                    if note_key[0] == channel:
+                        voice = self.active_voices[note_key]
+                        if voice.active:
+                            all_released = False
+                            break
+                if all_released:
+                    if Constants.DEBUG:
+                        print(f"Reclaiming channel {channel} with released notes")
+                    self.channel_history[channel] = current_time
+                    return channel
+        
+        # If all channels are in use, find the oldest one
+        oldest_time = current_time
+        oldest_channel = None
         
         for channel in zone.member_channels:
-            note_count = len(self.channel_notes.get(channel, set()))
-            if note_count < min_notes:
-                min_notes = note_count
-                best_channel = channel
+            channel_time = self.channel_history.get(channel, 0)
+            if channel_time < oldest_time:
+                oldest_time = channel_time
+                oldest_channel = channel
+        
+        if oldest_channel is not None:
+            if Constants.DEBUG:
+                print(f"Dropping oldest channel {oldest_channel} for new note")
+            self.channel_history[oldest_channel] = current_time
+            return oldest_channel
                 
-        return best_channel
+        return None
 
     def add_voice(self, channel, note):
         """Add new voice to tracking"""
@@ -159,7 +204,8 @@ class VoiceManager:
         """Release voice and clean up tracking"""
         voice_key = (channel, note)
         if voice_key in self.active_voices:
-            del self.active_voices[voice_key]
+            voice = self.active_voices[voice_key]
+            voice.release()  # Mark as released and record timing
             if channel in self.channel_notes:
                 self.channel_notes[channel].discard(note)
             return True
@@ -169,13 +215,46 @@ class VoiceManager:
         """Get voice state for channel and note"""
         return self.active_voices.get((channel, note))
 
+    def cleanup_released_voices(self):
+        """Remove voices that are past their CC release window"""
+        current_time = time.monotonic()
+        for voice_key in list(self.active_voices.keys()):
+            voice = self.active_voices[voice_key]
+            if (not voice.active and voice.release_time is not None and 
+                (current_time - voice.release_time) > Constants.CC_RELEASE_WINDOW):
+                del self.active_voices[voice_key]
+
 class ControllerManager:
     """Manages controller states for channels"""
     def __init__(self):
         self.channel_states = {}  # channel: dict of controller states
+        self.cached_cc_states = {}  # channel: dict of last valid CC values
 
-    def handle_controller_update(self, channel, controller_type, value, zone_manager):
+    def handle_controller_update(self, channel, controller_type, value, zone_manager, voice_manager):
         """Handle controller state update for a channel"""
+        current_time = time.monotonic()
+        
+        # Always update channel state cache
+        if channel not in self.cached_cc_states:
+            self.cached_cc_states[channel] = {}
+        self.cached_cc_states[channel][controller_type] = value
+        
+        # Check if we should process this CC message
+        can_process = False
+        for voice_key in voice_manager.active_voices:
+            if voice_key[0] == channel:
+                voice = voice_manager.active_voices[voice_key]
+                if voice.can_process_cc():
+                    can_process = True
+                    voice.last_cc_time = current_time
+                    break
+        
+        if not can_process:
+            if Constants.DEBUG:
+                print(f"Dropping {controller_type} message for channel {channel} - no active voice")
+            return
+            
+        # Process the controller update
         if channel not in self.channel_states:
             self.channel_states[channel] = {}
             
@@ -192,6 +271,10 @@ class ControllerManager:
                 zone.manager_pressure = value
             elif controller_type == 'timbre':
                 zone.manager_timbre = value
+    
+    def get_cached_state(self, channel, controller_type):
+        """Get last known good value for a controller"""
+        return self.cached_cc_states.get(channel, {}).get(controller_type)
 
 class ConfigurationManager:
     """Handles MPE configuration"""
@@ -400,13 +483,24 @@ class MidiLogic:
                     if self.text_callback:
                         self.text_callback(event)
 
+                    # Clean up any fully released voices
+                    self.voice_manager.cleanup_released_voices()
+
                     # Update voice manager state based on the event
                     if event['type'] == 'note_on':
                         zone = self.zone_manager.get_zone_for_channel(event['channel'])
                         if zone:
                             channel = self.voice_manager.allocate_channel(event['data']['note'], zone)
                             if channel is not None:
-                                self.voice_manager.add_voice(channel, event['data']['note'])
+                                voice = self.voice_manager.add_voice(channel, event['data']['note'])
+                                # Apply cached CC states to new voice
+                                cached_states = self.controller_manager.cached_cc_states.get(channel, {})
+                                if 'pitch_bend' in cached_states:
+                                    voice.pitch_bend = cached_states['pitch_bend']
+                                if 'pressure' in cached_states:
+                                    voice.pressure = cached_states['pressure']
+                                if 'timbre' in cached_states:
+                                    voice.timbre = cached_states['timbre']
                     elif event['type'] == 'note_off':
                         self.voice_manager.release_voice(event['channel'], event['data']['note'])
                     elif event['type'] in ('pressure', 'pitch_bend'):
@@ -414,78 +508,21 @@ class MidiLogic:
                             event['channel'], 
                             event['type'], 
                             event['data']['value'], 
-                            self.zone_manager
+                            self.zone_manager,
+                            self.voice_manager
                         )
                     elif event['type'] == 'cc' and event['data']['number'] == Constants.CC_TIMBRE:
                         self.controller_manager.handle_controller_update(
                             event['channel'], 
                             'timbre', 
                             event['data']['value'], 
-                            self.zone_manager
+                            self.zone_manager,
+                            self.voice_manager
                         )
 
         except Exception as e:
             if str(e):
                 print(f"Error reading UART: {str(e)}")
-
-    def handle_config_message(self, message):
-        return self.control_processor.handle_config_message(message)
-
-    def reset_controller_defaults(self):
-        self.control_processor.reset_to_defaults()
-
-    def update(self, changed_keys, changed_pots, config):
-        if not self.message_sender.ready_for_midi:
-            return []
-            
-        midi_events = []
-        
-        if changed_keys:
-            midi_events.extend(self.note_processor.process_key_changes(changed_keys, config))
-        
-        if changed_pots:
-            midi_events.extend(self.control_processor.process_controller_changes(changed_pots))
-        
-        for event in midi_events:
-            self.event_router.handle_event(event)
-            
-        return midi_events
-
-    def handle_octave_shift(self, direction):
-        if not self.message_sender.ready_for_midi:
-            return []
-        return self.note_processor.handle_octave_shift(direction)
-        
-    def play_greeting(self):
-        """Play greeting chime using MPE"""
-        if Constants.DEBUG:
-            print("Playing MPE greeting sequence")
-            
-        base_key_id = -1
-        base_pressure = 0.75
-        
-        greeting_notes = [60, 64, 67, 72]
-        velocities = [0.6, 0.7, 0.8, 0.9]
-        durations = [0.2, 0.2, 0.2, 0.4]
-        
-        for idx, (note, velocity, duration) in enumerate(zip(greeting_notes, velocities, durations)):
-            key_id = base_key_id - idx
-            channel = self.channel_manager.allocate_channel(key_id)
-            note_state = self.channel_manager.add_note(key_id, note, channel, int(velocity * 127))
-            
-            # Send in MPE order: CC74 → Pressure → Pitch Bend → Note On
-            self.message_sender.send_message([0xB0 | channel, Constants.CC_TIMBRE, Constants.TIMBRE_CENTER])
-            self.message_sender.send_message([0xD0 | channel, int(base_pressure * 127)])
-            self.message_sender.send_message([0xE0 | channel, 0x00, 0x40])  # Center pitch bend
-            self.message_sender.send_message([0x90 | channel, note, int(velocity * 127)])
-            
-            time.sleep(duration)
-            
-            self.message_sender.send_message([0xD0 | channel, 0])  # Zero pressure
-            self.message_sender.send_message([0x80 | channel, note, 0])
-            self.channel_manager.release_note(key_id)
-            
-            time.sleep(0.05)
 
     def cleanup(self):
         """Clean shutdown - no need to cleanup UART as it's shared"""
