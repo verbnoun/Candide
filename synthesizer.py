@@ -203,11 +203,7 @@ class SynthAudioOutputManager:
             buffer_size=Constants.AUDIO_BUFFER_SIZE,
             channel_count=2
         )
-        self.audio = audiobusio.I2SOut(
-            bit_clock=Constants.I2S_BIT_CLOCK,
-            word_select=Constants.I2S_WORD_SELECT,
-            data=Constants.I2S_DATA
-        )
+        self.audio = None
         self.synth = synthio.Synthesizer(
             sample_rate=Constants.SAMPLE_RATE,
             channel_count=2
@@ -216,6 +212,14 @@ class SynthAudioOutputManager:
         self._setup_audio()
 
     def _setup_audio(self):
+        if self.audio is not None:
+            self.audio.deinit()  # Deinitialize the audio output if it was previously initialized
+
+        self.audio = audiobusio.I2SOut(
+            bit_clock=Constants.I2S_BIT_CLOCK,
+            word_select=Constants.I2S_WORD_SELECT,
+            data=Constants.I2S_DATA
+        )
         self.audio.play(self.mixer)
         self.mixer.voice[0].play(self.synth)
         self.set_volume(self.volume)

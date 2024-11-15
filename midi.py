@@ -377,13 +377,13 @@ class MidiLogic:
         self.controller_manager = ControllerManager()
         self.config_manager = ConfigurationManager(self.zone_manager)
         
-        # Use provided UART
+        # Use provided UART and store callback
         self.uart = uart
+        self.text_callback = text_callback
         self.parser = MidiParser()
 
     def check_for_messages(self):
-        """Check for MIDI messages"""
-        events = []
+        """Check for MIDI messages and invoke callbacks"""
         try:
             while True:
                 if self.uart.in_waiting:
@@ -396,6 +396,10 @@ class MidiLogic:
                 event = self.parser.handle_byte(byte, current_time)
                 
                 if event:
+                    # Immediately invoke callback with parsed event
+                    if self.text_callback:
+                        self.text_callback(event)
+
                     # Update voice manager state based on the event
                     if event['type'] == 'note_on':
                         zone = self.zone_manager.get_zone_for_channel(event['channel'])
@@ -419,19 +423,15 @@ class MidiLogic:
                             event['data']['value'], 
                             self.zone_manager
                         )
-                    
-                    events.append(event)
 
         except Exception as e:
             if str(e):
                 print(f"Error reading UART: {str(e)}")
-        
-        return events if events else False
 
     def handle_config_message(self, message):
         return self.control_processor.handle_config_message(message)
 
-    def reset_controller_defaults(self):  # Renamed from reset_cc_defaults
+    def reset_controller_defaults(self):
         self.control_processor.reset_to_defaults()
 
     def update(self, changed_keys, changed_pots, config):
@@ -444,10 +444,10 @@ class MidiLogic:
             midi_events.extend(self.note_processor.process_key_changes(changed_keys, config))
         
         if changed_pots:
-            midi_events.extend(self.control_processor.process_controller_changes(changed_pots))  # Updated method name
+            midi_events.extend(self.control_processor.process_controller_changes(changed_pots))
         
         for event in midi_events:
-            self.event_router.handle_event(event)  # Updated method name
+            self.event_router.handle_event(event)
             
         return midi_events
 
@@ -455,9 +455,37 @@ class MidiLogic:
         if not self.message_sender.ready_for_midi:
             return []
         return self.note_processor.handle_octave_shift(direction)
-
-    def reset_cc_defaults(self):
-        pass
+        
+    def play_greeting(self):
+        """Play greeting chime using MPE"""
+        if Constants.DEBUG:
+            print("Playing MPE greeting sequence")
+            
+        base_key_id = -1
+        base_pressure = 0.75
+        
+        greeting_notes = [60, 64, 67, 72]
+        velocities = [0.6, 0.7, 0.8, 0.9]
+        durations = [0.2, 0.2, 0.2, 0.4]
+        
+        for idx, (note, velocity, duration) in enumerate(zip(greeting_notes, velocities, durations)):
+            key_id = base_key_id - idx
+            channel = self.channel_manager.allocate_channel(key_id)
+            note_state = self.channel_manager.add_note(key_id, note, channel, int(velocity * 127))
+            
+            # Send in MPE order: CC74 → Pressure → Pitch Bend → Note On
+            self.message_sender.send_message([0xB0 | channel, Constants.CC_TIMBRE, Constants.TIMBRE_CENTER])
+            self.message_sender.send_message([0xD0 | channel, int(base_pressure * 127)])
+            self.message_sender.send_message([0xE0 | channel, 0x00, 0x40])  # Center pitch bend
+            self.message_sender.send_message([0x90 | channel, note, int(velocity * 127)])
+            
+            time.sleep(duration)
+            
+            self.message_sender.send_message([0xD0 | channel, 0])  # Zero pressure
+            self.message_sender.send_message([0x80 | channel, note, 0])
+            self.channel_manager.release_note(key_id)
+            
+            time.sleep(0.05)
 
     def cleanup(self):
         """Clean shutdown - no need to cleanup UART as it's shared"""
