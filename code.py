@@ -9,7 +9,7 @@ from midi import MidiLogic
 
 class Constants:
     # Debug Settings
-    DEBUG = True
+    DEBUG = False
     
     # Hardware Setup
     SETUP_DELAY = 0.1
