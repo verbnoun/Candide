@@ -1,6 +1,11 @@
 import busio
 import time
-from collections import deque
+from adafruit_midi import MIDI
+from adafruit_midi.note_on import NoteOn
+from adafruit_midi.note_off import NoteOff
+from adafruit_midi.control_change import ControlChange
+from adafruit_midi.pitch_bend import PitchBend
+from adafruit_midi.channel_pressure import ChannelPressure
 
 class Constants:
     DEBUG = True
@@ -301,9 +306,7 @@ class MidiUart:
             baudrate=Constants.MIDI_BAUDRATE,
             timeout=Constants.UART_TIMEOUT
         )
-        self.message_buffer = []
-        self.last_status = None
-        self.last_status_time = 0
+        self.midi = MIDI(midi_in=self.uart, in_channel=0)
         print("UART initialized")
 
     def read_byte(self):
@@ -326,130 +329,6 @@ class MidiUart:
         if self.uart:
             self.uart.deinit()
 
-class MidiParser:
-    """Parses raw MIDI bytes into structured messages"""
-    def __init__(self):
-        self.message_buffer = []
-        self.last_status = None
-        self.last_status_time = 0
-
-    def handle_byte(self, byte, current_time):
-        """Handle a single MIDI byte and return a complete message if available"""
-        if byte is None:
-            return None
-
-        # Status byte
-        if byte & 0x80:
-            if Constants.DEBUG:
-                print(f"MIDI Status: 0x{byte:02X}")
-            self.last_status = byte
-            self.last_status_time = current_time
-            self.message_buffer = [byte]
-            return None
-
-        # Data byte
-        if (self.last_status and 
-            current_time - self.last_status_time < Constants.RUNNING_STATUS_TIMEOUT):
-            if not self.message_buffer:
-                self.message_buffer = [self.last_status]
-        
-        if Constants.DEBUG:
-            print(f"MIDI Data: 0x{byte:02X}")
-        self.message_buffer.append(byte)
-
-        # Check if we have a complete message
-        if self._is_complete_message():
-            message = self._parse_message()
-            if Constants.DEBUG and message:
-                print(f"Complete MIDI Message: {message}")
-            self.message_buffer = []
-            return message
-
-        # Check for message timeout
-        if current_time - self.last_status_time > Constants.MESSAGE_TIMEOUT:
-            self.message_buffer = []
-
-        return None
-
-    def _is_complete_message(self):
-        """Check if buffer contains complete MIDI message"""
-        if not self.message_buffer:
-            return False
-            
-        status = self.message_buffer[0]
-        if status & 0x80 != 0x80:
-            return False
-            
-        message_type = status & 0xF0
-        expected_length = 3
-        if message_type in (Constants.PROGRAM_CHANGE, Constants.CHANNEL_PRESSURE):
-            expected_length = 2
-        elif message_type == Constants.SYSTEM_MESSAGE:
-            expected_length = 1
-            
-        return len(self.message_buffer) == expected_length
-
-    def _parse_message(self):
-        """Parse complete MIDI message from buffer"""
-        if not self._is_complete_message():
-            return None
-
-        status = self.message_buffer[0]
-        message_type = status & 0xF0
-        channel = status & 0x0F
-
-        event = {
-            'type': None,
-            'channel': channel,
-            'data': {}
-        }
-
-        if message_type == Constants.NOTE_ON:
-            velocity = self.message_buffer[2]
-            if velocity > 0:
-                event['type'] = 'note_on'
-                event['data'] = {
-                    'note': self.message_buffer[1],
-                    'velocity': velocity
-                }
-            else:
-                event['type'] = 'note_off'
-                event['data'] = {
-                    'note': self.message_buffer[1],
-                    'velocity': 0
-                }
-
-        elif message_type == Constants.NOTE_OFF:
-            event['type'] = 'note_off'
-            event['data'] = {
-                'note': self.message_buffer[1],
-                'velocity': self.message_buffer[2]
-            }
-
-        elif message_type == Constants.CHANNEL_PRESSURE:
-            event['type'] = 'pressure'
-            event['data'] = {'value': self.message_buffer[1]}
-
-        elif message_type == Constants.PITCH_BEND:
-            event['type'] = 'pitch_bend'
-            lsb = self.message_buffer[1]
-            msb = self.message_buffer[2]
-            value = (msb << 7) | lsb
-            event['data'] = {
-                'lsb': lsb,
-                'msb': msb,
-                'value': value
-            }
-
-        elif message_type == Constants.CONTROL_CHANGE:
-            event['type'] = 'cc'
-            event['data'] = {
-                'number': self.message_buffer[1],
-                'value': self.message_buffer[2]
-            }
-
-        return event
-
 class MidiLogic:
     """Main MIDI handling class that coordinates components"""
     def __init__(self, uart, text_callback):
@@ -463,20 +342,19 @@ class MidiLogic:
         # Use provided UART and store callback
         self.uart = uart
         self.text_callback = text_callback
-        self.parser = MidiParser()
+        self.midi = MIDI(midi_in=self.uart, in_channel=0)
 
     def check_for_messages(self):
         """Check for MIDI messages and invoke callbacks"""
         try:
             while True:
-                if self.uart.in_waiting:
-                    byte = self.uart.read(1)[0]
-                else:
+                msg = self.midi.receive()
+                if not msg:
                     break
 
-                # Handle MIDI byte
+                # Handle MIDI message
                 current_time = time.monotonic()
-                event = self.parser.handle_byte(byte, current_time)
+                event = self._parse_message(msg, current_time)
                 
                 if event:
                     # Immediately invoke callback with parsed event
@@ -523,6 +401,43 @@ class MidiLogic:
         except Exception as e:
             if str(e):
                 print(f"Error reading UART: {str(e)}")
+
+    def _parse_message(self, msg, current_time):
+        """Parse MIDI message into event"""
+        event = {
+            'type': None,
+            'channel': msg.channel,
+            'data': {}
+        }
+
+        if isinstance(msg, NoteOn):
+            event['type'] = 'note_on'
+            event['data'] = {
+                'note': msg.note,
+                'velocity': msg.velocity
+            }
+        elif isinstance(msg, NoteOff):
+            event['type'] = 'note_off'
+            event['data'] = {
+                'note': msg.note,
+                'velocity': msg.velocity
+            }
+        elif isinstance(msg, ChannelPressure):
+            event['type'] = 'pressure'
+            event['data'] = {'value': msg.pressure}
+        elif isinstance(msg, PitchBend):
+            event['type'] = 'pitch_bend'
+            event['data'] = {
+                'value': msg.pitch_bend
+            }
+        elif isinstance(msg, ControlChange):
+            event['type'] = 'cc'
+            event['data'] = {
+                'number': msg.control,
+                'value': msg.value
+            }
+
+        return event
 
     def cleanup(self):
         """Clean shutdown - no need to cleanup UART as it's shared"""
