@@ -9,7 +9,7 @@ from midi import MidiLogic
 
 class Constants:
     # Debug Settings
-    DEBUG = False
+    DEBUG = True
     
     # Hardware Setup
     SETUP_DELAY = 0.1
@@ -361,9 +361,11 @@ class Candide:
         # Pass to connection manager first for handshake
         self.connection_manager.handle_midi_message(event)
             
-        # Process as MIDI if connected
-        if self.connection_manager.state == CandideConnectionManager.CONNECTED:
-            self.synth_manager.process_midi_events([event])
+        # Process MIDI messages after config is sent (in HANDSHAKING or CONNECTED state)
+        if self.connection_manager.state in [CandideConnectionManager.HANDSHAKING, CandideConnectionManager.CONNECTED]:
+            # Exclude note on/off messages during handshaking
+            if event['type'] != 'note':
+                self.synth_manager.process_midi_events([event])
 
     def _check_volume(self):
         """Check and update volume"""
