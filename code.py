@@ -20,9 +20,11 @@ class Constants:
     
     # Connection
     DETECT_PIN = board.GP22
-    CONNECTION_TIMEOUT = 2.0
     MESSAGE_TIMEOUT = 0.05
-    CONFIG_SEND_DELAY = 0.05
+    HELLO_INTERVAL = 0.5  # How often to send hello when detecting
+    HEARTBEAT_INTERVAL = 1.0  # How often to send heartbeat when connected
+    HANDSHAKE_TIMEOUT = 5.0  # Maximum time to wait during any handshake stage
+    HANDSHAKE_MAX_RETRIES = 10  # Maximum number of hello messages to send
     
     # New Connection Constants
     STARTUP_DELAY = 1.0  # Give devices time to initialize
@@ -176,15 +178,15 @@ class SynthManager:
 
 class CandideConnectionManager:
     """
-    Handles the connection and handshake protocol for Candide (Client).
-    Uses text UART for sending config, MIDI for all other communication.
+    Manages connection state and handshake protocol for Candide (Cartridge).
+    Uses text UART for sending config and hello, receives MIDI responses.
     """
-    STANDALONE = 0
-    PIN_DETECTED = 1
-    CONNECTING = 2
-    CONFIGURING = 3
-    CONNECTED = 4
-
+    # States
+    STANDALONE = 0      # Not inserted
+    DETECTED = 1        # Inserted but no communication
+    HANDSHAKING = 2     # In handshake process
+    CONNECTED = 3       # Fully connected and operational
+    
     def __init__(self, text_uart, synth_manager, transport_manager):
         self.uart = text_uart
         self.synth_manager = synth_manager
@@ -195,38 +197,50 @@ class CandideConnectionManager:
         self.detect_pin.direction = digitalio.Direction.INPUT
         self.detect_pin.pull = digitalio.Pull.DOWN
         
-        # Initialize state
+        # Connection state
         self.state = self.STANDALONE
-        self.last_message_time = 0
-        self.connection_attempts = 0
-        self.last_connection_attempt = 0
+        self.last_hello_time = 0
+        self.last_heartbeat_time = 0
+        self.handshake_start_time = 0
+        self.hello_count = 0
         
-        print(f"Candide connection manager initialized")
+        print("Candide connection manager initialized")
         
     def update_state(self):
-        """Main update loop with improved error handling"""
+        """Main state machine update"""
         current_time = time.monotonic()
         
         # Check physical connection
-        current_state = self.detect_pin.value
-        
-        # Handle connection state changes
-        if current_state and self.state == self.STANDALONE:
-            self._handle_pin_detected()
-        elif not current_state and self.state != self.STANDALONE:
-            self._handle_disconnection()
+        if not self.detect_pin.value:
+            if self.state != self.STANDALONE:
+                self._handle_disconnection()
+            return
             
-        # Check for timeout in intermediate states
-        if self.state not in [self.STANDALONE, self.CONNECTED]:
-            if current_time - self.last_message_time > Constants.CONNECTION_TIMEOUT:
-                print("Connection timeout - no response")
-                self._handle_error()
+        # Handle state-specific updates
+        if self.state == self.STANDALONE and self.detect_pin.value:
+            self._handle_initial_detection()
             
+        elif self.state == self.DETECTED:
+            if current_time - self.last_hello_time >= Constants.HELLO_INTERVAL:
+                if self.hello_count < Constants.HANDSHAKE_MAX_RETRIES:
+                    self._send_hello()
+                    self.hello_count += 1
+                else:
+                    print("Max hello retries reached - staying in DETECTED state")
+                    self.hello_count = 0  # Reset for next attempt
+                    
+        elif self.state == self.HANDSHAKING:
+            if current_time - self.handshake_start_time >= Constants.HANDSHAKE_TIMEOUT:
+                print("Handshake timeout - returning to DETECTED state")
+                self.state = self.DETECTED
+                self.hello_count = 0
+                
+        elif self.state == self.CONNECTED:
+            if current_time - self.last_heartbeat_time >= Constants.HEARTBEAT_INTERVAL:
+                self._send_heartbeat()
+                
     def handle_midi_message(self, event):
-        """Process incoming MIDI events for handshake"""
-        if Constants.DEBUG:
-            print(f"DEBUG MIDI: Received event: {event}")
-            
+        """Process incoming MIDI messages for handshake protocol"""
         if not event or event['type'] != 'cc':
             return
             
@@ -235,88 +249,45 @@ class CandideConnectionManager:
             event['data']['number'] == Constants.HANDSHAKE_CC):
             
             if (event['data']['value'] == Constants.HANDSHAKE_VALUE and 
-                self.state == self.CONNECTING):
-                print("---------------")
-                print("HANDSHAKE STEP 3: Handshake CC received")
-                print("HANDSHAKE STEP 4: Sending config...")
-                print("---------------")
-                self.state = self.CONFIGURING
+                self.state == self.DETECTED):
+                print("Handshake CC received - sending config")
+                self.state = self.HANDSHAKING
+                self.handshake_start_time = time.monotonic()
                 self._send_config()
+                self.state = self.CONNECTED  # Candide is done after sending config
+                print("Connection established")
                 
-            elif (event['data']['value'] == Constants.WELCOME_VALUE and 
-                  self.state == self.CONFIGURING):
-                print("---------------")
-                print("HANDSHAKE COMPLETE: Connection established")
-                print("---------------")
-                self.state = self.CONNECTED
-                self.connection_attempts = 0
-                
-    def _handle_pin_detected(self):
-        """Handle new physical connection with proper initialization"""
-        print("---------------")
-        print("HANDSHAKE STEP 1: Host detected")
-        print("HANDSHAKE STEP 2: Sending hello...")
-        print("---------------")
-        
-        # Give both devices time to initialize
-        time.sleep(Constants.STARTUP_DELAY)
-        
-        self.state = self.PIN_DETECTED
+    def _handle_initial_detection(self):
+        """Handle initial physical connection"""
+        print("Base station detected - initializing connection")
         self.transport.flush_buffers()
+        time.sleep(Constants.SETUP_DELAY)
+        self.state = self.DETECTED
+        self.hello_count = 0
+        self._send_hello()
         
-        time.sleep(Constants.CONFIG_SEND_DELAY)
-        self._attempt_connection()
-        
-    def _attempt_connection(self):
-        """Attempt connection with retry logic"""
-        current_time = time.monotonic()
-        
-        # Check if we should retry
-        if self.connection_attempts >= Constants.MAX_RETRIES:
-            print("Max connection attempts reached")
-            self._handle_error()
-            return
-            
-        # Ensure minimum delay between attempts
-        if current_time - self.last_connection_attempt < Constants.RETRY_DELAY:
-            return
-            
-        try:
-            print(f"Connection attempt {self.connection_attempts + 1}/{Constants.MAX_RETRIES}")
-            self.uart.write("hello\n")
-            self.state = self.CONNECTING
-            self.last_message_time = current_time
-            self.last_connection_attempt = current_time
-            self.connection_attempts += 1
-        except Exception as e:
-            print(f"Connection attempt failed: {str(e)}")
-            self._handle_error()
-            
-    def _handle_error(self):
-        """Handle errors with proper cleanup and delay"""
-        print("Error occurred - cleaning up connection")
-        self.transport.flush_buffers()
-        time.sleep(Constants.ERROR_RECOVERY_DELAY)
-                   
-    def _handle_error(self):
-        """Handle errors with proper cleanup and delay"""
-        print("Error occurred - cleaning up connection")
-        self.transport.flush_buffers()
-        time.sleep(Constants.ERROR_RECOVERY_DELAY)
-        self._reset_state()
-            
     def _handle_disconnection(self):
-        """Handle physical disconnection with cleanup"""
-        print("Host disconnected")
+        """Handle physical disconnection"""
+        print("Base station disconnected")
         self.transport.flush_buffers()
-        self._reset_state()
-        
-    def _reset_state(self):
-        """Reset to initial state with cleanup"""
         self.state = self.STANDALONE
-        self.last_message_time = 0
-        self.connection_attempts = 0
-        self.last_connection_attempt = 0
+        self.hello_count = 0
+        
+    def _send_hello(self):
+        """Send hello message"""
+        try:
+            self.uart.write("hello\n")
+            self.last_hello_time = time.monotonic()
+        except Exception as e:
+            print(f"Failed to send hello: {str(e)}")
+            
+    def _send_heartbeat(self):
+        """Send heartbeat message"""
+        try:
+            self.uart.write("♥︎\n")
+            self.last_heartbeat_time = time.monotonic()
+        except Exception as e:
+            print(f"Failed to send heartbeat: {str(e)}")
             
     def _send_config(self):
         """Send synthesizer configuration"""
@@ -325,15 +296,18 @@ class CandideConnectionManager:
             if config:
                 self.uart.write(f"{config}\n")
                 print("Config sent successfully")
-                self.last_message_time = time.monotonic()
         except Exception as e:
             print(f"Failed to send config: {str(e)}")
-            self._handle_error()
-                    
+            self.state = self.DETECTED  # Return to detected state on error
+            
     def cleanup(self):
-        """Cleanup resources"""
+        """Clean up resources"""
         if self.detect_pin:
             self.detect_pin.deinit()
+
+    def is_connected(self):
+        """Check if fully connected"""
+        return self.state == self.CONNECTED
 
 class Candide:
     def __init__(self):
