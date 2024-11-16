@@ -344,6 +344,11 @@ class Synthesizer:
             print(f"Error during shutdown: {str(e)}")
 
     def _fractional_midi_to_hz(self, midi_note):
+        # First, check if it's an exact MIDI note in the lookup table
+        if isinstance(midi_note, int) and midi_note in Constants.MIDI_FREQUENCIES:
+            return Constants.MIDI_FREQUENCIES[midi_note]
+        
+        # For fractional notes, use the existing approximation method
         # Fixed-point constants
         A4_MIDI_NOTE = FixedPoint.from_float(69.0)
         A4_FREQUENCY = FixedPoint.from_float(440.0)
