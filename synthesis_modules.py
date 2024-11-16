@@ -57,6 +57,11 @@ class FixedPoint:
         """Normalize pitch bend value (0-16383) to -1 to 1 range using pre-calculated values"""
         return ((value << 16) - FixedPoint.PITCH_BEND_CENTER) * FixedPoint.PITCH_BEND_SCALE
 
+    @staticmethod
+    def clamp(value, min_val, max_val):
+        """Clamp a fixed-point value between min and max"""
+        return max(min(value, max_val), min_val)
+
 class Constants:
     DEBUG = False
     NOTE_TRACKER = False  # Added for note lifecycle tracking
@@ -77,6 +82,12 @@ class Constants:
     BASE_THRESHOLD = FixedPoint.from_float(0.05)  # Base threshold for significant changes (5%)
     MAX_THRESHOLD = FixedPoint.from_float(0.20)   # Maximum threshold cap (20%)
     THRESHOLD_SCALE = FixedPoint.from_float(1.5)  # Exponential scaling factor for threshold
+
+    # Envelope Parameter Constants
+    ENVELOPE_MIN_TIME = FixedPoint.from_float(0.001)  # Minimum envelope time
+    ENVELOPE_MAX_TIME = FixedPoint.from_float(10.0)   # Maximum envelope time
+    ENVELOPE_MIN_LEVEL = FixedPoint.from_float(0.0)   # Minimum envelope level
+    ENVELOPE_MAX_LEVEL = FixedPoint.from_float(1.0)   # Maximum envelope level
 
     # Pre-calculated sine lookup table
     SINE_TABLE = [FixedPoint.from_float(math.sin(2 * math.pi * i / 256)) for i in range(256)]
@@ -185,7 +196,12 @@ class Voice:
 
 class SynthEngine:
     def __init__(self):
-        self.envelope_settings = {}
+        self.envelope_settings = {
+            'attack': FixedPoint.from_float(0.01),
+            'decay': FixedPoint.from_float(0.1),
+            'sustain': FixedPoint.from_float(0.8),
+            'release': FixedPoint.from_float(0.1)
+        }
         self.instrument = None
         self.detune = FixedPoint.from_float(0)
         self.filter = None
@@ -309,16 +325,58 @@ class SynthEngine:
         })
 
     def set_envelope_param(self, param, value):
+        """
+        Set envelope parameter in fixed-point, with safe bounds
+        """
         if param in self.envelope_settings:
-            self.envelope_settings[param] = FixedPoint.from_float(value)
-    
+            # Clamp the value to safe envelope parameter ranges
+            if param in ['attack', 'decay', 'release']:
+                # Time parameters
+                clamped_value = FixedPoint.clamp(
+                    FixedPoint.from_float(value), 
+                    Constants.ENVELOPE_MIN_TIME, 
+                    Constants.ENVELOPE_MAX_TIME
+                )
+            elif param == 'sustain':
+                # Level parameter
+                clamped_value = FixedPoint.clamp(
+                    FixedPoint.from_float(value), 
+                    Constants.ENVELOPE_MIN_LEVEL, 
+                    Constants.ENVELOPE_MAX_LEVEL
+                )
+            else:
+                return  # Ignore unknown parameters
+            
+            self.envelope_settings[param] = clamped_value
+
     def create_envelope(self):
+        """
+        Create synthio Envelope using fixed-point math with safe conversions
+        Minimizes float conversions and maintains precision
+        """
+        # Safely convert fixed-point values to floats with bounds checking
+        attack_time = max(0.001, min(10.0, FixedPoint.to_float(
+            self.envelope_settings.get('attack', FixedPoint.from_float(0.01))
+        )))
+        
+        decay_time = max(0.001, min(10.0, FixedPoint.to_float(
+            self.envelope_settings.get('decay', FixedPoint.from_float(0.1))
+        )))
+        
+        release_time = max(0.001, min(10.0, FixedPoint.to_float(
+            self.envelope_settings.get('release', FixedPoint.from_float(0.1))
+        )))
+        
+        sustain_level = max(0.0, min(1.0, FixedPoint.to_float(
+            self.envelope_settings.get('sustain', FixedPoint.from_float(0.8))
+        )))
+
         return synthio.Envelope(
-            attack_time=FixedPoint.to_float(self.envelope_settings.get('attack', FixedPoint.from_float(0.01))),
-            decay_time=FixedPoint.to_float(self.envelope_settings.get('decay', FixedPoint.from_float(0.1))),
-            release_time=FixedPoint.to_float(self.envelope_settings.get('release', FixedPoint.from_float(0.1))),
-            attack_level=1.0,
-            sustain_level=FixedPoint.to_float(self.envelope_settings.get('sustain', FixedPoint.from_float(0.8)))
+            attack_time=attack_time,
+            decay_time=decay_time,
+            release_time=release_time,
+            attack_level=1.0,  # Kept as standard float
+            sustain_level=sustain_level
         )
 
     def set_waveform(self, waveform_type):
