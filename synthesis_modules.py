@@ -402,23 +402,27 @@ class SynthEngine:
         return self.waveforms[waveform_type]
 
     def generate_sine_wave(self, sample_size=256):
+        amplitude = FixedPoint.from_float(32767)
         return array.array("h", 
             [int(FixedPoint.to_float(FixedPoint.multiply(
                 Constants.SINE_TABLE[i % 256],
-                FixedPoint.from_float(32767)
+                amplitude
             ))) for i in range(sample_size)])
 
     def generate_saw_wave(self, sample_size=256):
+        scale = FixedPoint.from_float(2.0 / sample_size)
+        amplitude = FixedPoint.from_float(32767)
         return array.array("h", 
             [int(FixedPoint.to_float(FixedPoint.multiply(
-                FixedPoint.from_float(i / sample_size * 2 - 1),
-                FixedPoint.from_float(32767)
+                FixedPoint.multiply(FixedPoint.from_float(i), scale) - FixedPoint.ONE,
+                amplitude
             ))) for i in range(sample_size)])
 
     def generate_square_wave(self, sample_size=256, duty_cycle=0.5):
         duty = FixedPoint.from_float(duty_cycle)
+        scale = FixedPoint.from_float(1.0 / sample_size)
         return array.array("h", 
-            [32767 if FixedPoint.from_float(i / sample_size) < duty else -32767 
+            [32767 if FixedPoint.multiply(FixedPoint.from_float(i), scale) < duty else -32767 
              for i in range(sample_size)])
 
     def generate_triangle_wave(self, sample_size=256):

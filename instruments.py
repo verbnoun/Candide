@@ -208,7 +208,7 @@ class Womp(Instrument):
     def __init__(self):
         super().__init__("Womp")
         self.oscillator = {
-            'waveform': 'saw',     # Saw wave for rich harmonic content
+            'waveform': 'sine',     # Saw wave for rich harmonic content
             'detune': 0.15         # Significant detuning for thickness
         }
         self.filter = {
@@ -270,7 +270,7 @@ class WindChime(Instrument):
     def __init__(self):
         super().__init__("Wind Chime")
         self.oscillator = {
-            'waveform': 'triangle',  # Triangle wave gives a more metallic tone than sine
+            'waveform': 'square',  # Triangle wave gives a more metallic tone than sine
             'detune': 0.003  # Slight detuning for that shimmering effect
         }
         self.filter = {
