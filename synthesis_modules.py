@@ -57,7 +57,6 @@ class FixedPoint:
         """Normalize pitch bend value (0-16383) to -1 to 1 range using pre-calculated values"""
         return ((value << 16) - FixedPoint.PITCH_BEND_CENTER) * FixedPoint.PITCH_BEND_SCALE
 
-# Rest of the file remains unchanged until Voice class
 class Constants:
     DEBUG = False
     NOTE_TRACKER = False  # Added for note lifecycle tracking
@@ -78,6 +77,20 @@ class Constants:
     BASE_THRESHOLD = FixedPoint.from_float(0.05)  # Base threshold for significant changes (5%)
     MAX_THRESHOLD = FixedPoint.from_float(0.20)   # Maximum threshold cap (20%)
     THRESHOLD_SCALE = FixedPoint.from_float(1.5)  # Exponential scaling factor for threshold
+
+    # Pre-calculated sine lookup table
+    SINE_TABLE = [FixedPoint.from_float(math.sin(2 * math.pi * i / 256)) for i in range(256)]
+
+    # Pre-calculated triangle wave scale factors
+    TRIANGLE_SCALE_FACTORS = {
+        128: FixedPoint.from_float(32767.0 / 64),   # For 128-sample wave
+        256: FixedPoint.from_float(32767.0 / 128),  # For 256-sample wave
+        512: FixedPoint.from_float(32767.0 / 256)   # For 512-sample wave
+    }
+
+    # Pre-calculated amplitude constants
+    MAX_AMPLITUDE = FixedPoint.from_float(32767.0)
+    MIN_AMPLITUDE = FixedPoint.from_float(-32767.0)
 
 class Voice:
     def __init__(self, note=None, channel=None, velocity=1.0):
@@ -333,7 +346,7 @@ class SynthEngine:
     def generate_sine_wave(self, sample_size=256):
         return array.array("h", 
             [int(FixedPoint.to_float(FixedPoint.multiply(
-                FixedPoint.from_float(math.sin(math.pi * 2 * i / sample_size)),
+                Constants.SINE_TABLE[i % 256],
                 FixedPoint.from_float(32767)
             ))) for i in range(sample_size)])
 
@@ -351,23 +364,29 @@ class SynthEngine:
              for i in range(sample_size)])
 
     def generate_triangle_wave(self, sample_size=256):
-        # Optimized triangle wave generation using fixed-point math throughout
-        half_size = sample_size // 2
-        scale = FixedPoint.from_float(32767.0 / half_size)  # Scale factor for amplitude
+        """
+        Optimized triangle wave generation using pre-calculated scale factors
+        and fixed-point math throughout
+        """
+        # Use pre-calculated scale factor based on sample size
+        scale = Constants.TRIANGLE_SCALE_FACTORS.get(sample_size, 
+            FixedPoint.from_float(32767.0 / (sample_size // 2)))
         
+        half_size = sample_size // 2
         samples = array.array("h")
+        
         for i in range(sample_size):
             if i < half_size:
                 # Rising phase: -32767 to 32767 over half_size samples
                 value = FixedPoint.multiply(FixedPoint.from_float(i), scale)
-                value = value - FixedPoint.from_float(32767)  # Center around zero
+                value = value - Constants.MAX_AMPLITUDE  # Center around zero
             else:
                 # Falling phase: 32767 to -32767 over half_size samples
                 value = FixedPoint.multiply(FixedPoint.from_float(sample_size - i), scale)
-                value = value - FixedPoint.from_float(32767)  # Center around zero
+                value = value - Constants.MAX_AMPLITUDE  # Center around zero
             
-            # Convert to 16-bit integer
-            samples.append(int(FixedPoint.to_float(value)))
+            # Convert to 16-bit integer, ensuring bounds
+            samples.append(int(max(min(FixedPoint.to_float(value), 32767), -32768)))
         
         return samples
 
