@@ -158,52 +158,63 @@ class Synthesizer:
                 break
 
     def _handle_pressure(self, channel, pressure_value):
-        """Handle per-channel pressure"""
+        """Handle per-channel pressure with significance thresholds"""
         if not self.synth_engine.pressure_enabled:
             return
             
         if Constants.DEBUG:
             print(f"\nMPE Pressure - Channel: {channel}, Value: {pressure_value}")
             
+        # Count active voices
+        active_voice_count = sum(1 for voice in self.active_voices if voice.active)
+        
         # Use optimized MIDI normalization
         norm_pressure = FixedPoint.normalize_midi_value(pressure_value)
             
         for voice in self.active_voices:
             if voice.active and voice.channel == channel:
-                voice.pressure = pressure_value  # Store raw value
-                voice.refresh_timestamp()
-                
-                self.synth_engine.apply_pressure(FixedPoint.to_float(norm_pressure))
-                
-                new_envelope = self.synth_engine.create_envelope()
-                voice.log_envelope_update(new_envelope)
-                voice.synth_note.envelope = new_envelope
-                if self.synth_engine.filter:
-                    voice.synth_note.filter = self.synth_engine.filter(self.synth)
+                # Check if pressure change is significant
+                if voice.is_significant_change(voice.pressure, pressure_value, active_voice_count):
+                    voice.pressure = pressure_value  # Store raw value
+                    voice.refresh_timestamp()
+                    
+                    self.synth_engine.apply_pressure(FixedPoint.to_float(norm_pressure))
+                    
+                    new_envelope = self.synth_engine.create_envelope()
+                    voice.log_envelope_update(new_envelope)
+                    voice.synth_note.envelope = new_envelope
+                    if self.synth_engine.filter:
+                        voice.synth_note.filter = self.synth_engine.filter(self.synth)
 
     def _handle_pitch_bend(self, channel, bend_value):
-        """Handle per-channel pitch bend with safe calculations"""
+        """Handle per-channel pitch bend with significance thresholds"""
         if not self.synth_engine.pitch_bend_enabled:
             return
             
         if Constants.DEBUG:
             print(f"\nMPE Pitch Bend - Channel: {channel}, Value: {bend_value}")
         
+        # Clamp bend value to valid range
         bend_value = max(0, min(16383, bend_value))
+        
+        # Count active voices
+        active_voice_count = sum(1 for voice in self.active_voices if voice.active)
         
         for voice in self.active_voices:
             if voice.active and voice.channel == channel:
-                # Use optimized pitch bend normalization
-                norm_bend = FixedPoint.normalize_pitch_bend(bend_value)
-                bend_range = FixedPoint.multiply(
-                    self.synth_engine.pitch_bend_range,
-                    FixedPoint.from_float(1.0 / 12.0)
-                )
-                voice.pitch_bend = bend_value  # Store raw value
-                voice.synth_note.bend = FixedPoint.to_float(
-                    FixedPoint.multiply(norm_bend, bend_range)
-                )
-                voice.refresh_timestamp()
+                # Check if pitch bend change is significant
+                if voice.is_significant_change(voice.pitch_bend, bend_value, active_voice_count):
+                    # Use optimized pitch bend normalization
+                    norm_bend = FixedPoint.normalize_pitch_bend(bend_value)
+                    bend_range = FixedPoint.multiply(
+                        self.synth_engine.pitch_bend_range,
+                        FixedPoint.from_float(1.0 / 12.0)
+                    )
+                    voice.pitch_bend = bend_value  # Store raw value
+                    voice.synth_note.bend = FixedPoint.to_float(
+                        FixedPoint.multiply(norm_bend, bend_range)
+                    )
+                    voice.refresh_timestamp()
 
     def _handle_cc(self, channel, cc_number, value):
         """Handle MIDI CC messages"""
