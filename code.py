@@ -28,7 +28,8 @@ class Constants:
     
     # New Connection Constants
     STARTUP_DELAY = 1.0  # Give devices time to initialize
-    RETRY_DELAY = 0.25   # Delay between connection attempts
+    RETRY_DELAY = 5.0    # Delay after max retries before trying again
+    RETRY_INTERVAL = 0.25   # Delay between connection attempts
     ERROR_RECOVERY_DELAY = 0.5  # Delay after errors before retry
     BUFFER_CLEAR_TIMEOUT = 0.1  # Time to wait for buffer clearing
     MAX_RETRIES = 3
@@ -181,6 +182,7 @@ class CandideConnectionManager:
     DETECTED = 1        # Inserted but no communication
     HANDSHAKING = 2     # In handshake process
     CONNECTED = 3       # Fully connected and operational
+    RETRY_DELAY = 4     # Waiting before retrying connection
     
     def __init__(self, text_uart, synth_manager, transport_manager):
         self.uart = text_uart
@@ -198,6 +200,7 @@ class CandideConnectionManager:
         self.last_heartbeat_time = 0
         self.handshake_start_time = 0
         self.hello_count = 0
+        self.retry_start_time = 0
         
         print("Candide connection manager initialized")
         
@@ -221,9 +224,17 @@ class CandideConnectionManager:
                     self._send_hello()
                     self.hello_count += 1
                 else:
-                    print("Max hello retries reached - staying in DETECTED state")
+                    print("Max hello retries reached - entering retry delay")
+                    self.state = self.RETRY_DELAY
+                    self.retry_start_time = current_time
                     self.hello_count = 0  # Reset for next attempt
                     
+        elif self.state == self.RETRY_DELAY:
+            # Wait for 5 seconds before attempting to reconnect
+            if current_time - self.retry_start_time >= Constants.RETRY_DELAY:
+                print("Retry delay complete - returning to DETECTED state")
+                self.state = self.DETECTED
+                
         elif self.state == self.HANDSHAKING:
             if current_time - self.handshake_start_time >= Constants.HANDSHAKE_TIMEOUT:
                 print("Handshake timeout - returning to DETECTED state")

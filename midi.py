@@ -232,8 +232,12 @@ class MidiLogic:
 
                     # Handle different message types based on MIDI spec
                     if msg_type == Constants.NOTE_ON:
-                        note = self.uart.read(1)[0]
-                        velocity = self.uart.read(1)[0]
+                        note_byte = self.uart.read(1)
+                        velocity_byte = self.uart.read(1)
+                        if note_byte is None or velocity_byte is None:
+                            break
+                        note = note_byte[0]
+                        velocity = velocity_byte[0]
                         if Constants.DEBUG:
                             print(f"Raw MIDI Message: NoteOn - Channel {channel}, Note {note}, Velocity {velocity}")
                         event = {
@@ -243,8 +247,12 @@ class MidiLogic:
                         }
 
                     elif msg_type == Constants.NOTE_OFF:
-                        note = self.uart.read(1)[0]
-                        velocity = self.uart.read(1)[0]
+                        note_byte = self.uart.read(1)
+                        velocity_byte = self.uart.read(1)
+                        if note_byte is None or velocity_byte is None:
+                            break
+                        note = note_byte[0]
+                        velocity = velocity_byte[0]
                         if Constants.DEBUG:
                             print(f"Raw MIDI Message: NoteOff - Channel {channel}, Note {note}, Velocity {velocity}")
                         event = {
@@ -254,8 +262,12 @@ class MidiLogic:
                         }
 
                     elif msg_type == Constants.CONTROL_CHANGE:
-                        control = self.uart.read(1)[0]
-                        value = self.uart.read(1)[0]
+                        control_byte = self.uart.read(1)
+                        value_byte = self.uart.read(1)
+                        if control_byte is None or value_byte is None:
+                            break
+                        control = control_byte[0]
+                        value = value_byte[0]
                         if Constants.DEBUG:
                             print(f"Raw MIDI Message: ControlChange - Channel {channel}, Control {control}, Value {value}")
                         event = {
@@ -265,7 +277,10 @@ class MidiLogic:
                         }
 
                     elif msg_type == Constants.CHANNEL_PRESSURE:
-                        pressure = self.uart.read(1)[0]
+                        pressure_byte = self.uart.read(1)
+                        if pressure_byte is None:
+                            break
+                        pressure = pressure_byte[0]
                         if Constants.DEBUG:
                             print(f"Raw MIDI Message: ChannelPressure - Channel {channel}, Pressure {pressure}")
                         event = {
@@ -275,8 +290,12 @@ class MidiLogic:
                         }
 
                     elif msg_type == Constants.PITCH_BEND:
-                        lsb = self.uart.read(1)[0]
-                        msb = self.uart.read(1)[0]
+                        lsb_byte = self.uart.read(1)
+                        msb_byte = self.uart.read(1)
+                        if lsb_byte is None or msb_byte is None:
+                            break
+                        lsb = lsb_byte[0]
+                        msb = msb_byte[0]
                         bend_value = (msb << 7) | lsb
                         if Constants.DEBUG:
                             print(f"Raw MIDI Message: PitchBend - Channel {channel}, Value {bend_value}")
