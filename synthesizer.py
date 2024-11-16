@@ -89,7 +89,8 @@ class Synthesizer:
                 print("Invalid note value")
             return
             
-        norm_velocity = FixedPoint.from_float(velocity / 127.0)
+        # Use optimized MIDI normalization
+        norm_velocity = FixedPoint.normalize_midi_value(velocity)
         
         # Find an inactive voice
         target_voice = None
@@ -164,10 +165,12 @@ class Synthesizer:
         if Constants.DEBUG:
             print(f"\nMPE Pressure - Channel: {channel}, Value: {pressure_value}")
             
+        # Use optimized MIDI normalization
+        norm_pressure = FixedPoint.normalize_midi_value(pressure_value)
+            
         for voice in self.active_voices:
             if voice.active and voice.channel == channel:
-                norm_pressure = FixedPoint.from_float(pressure_value / 127.0)
-                voice.pressure = norm_pressure
+                voice.pressure = pressure_value  # Store raw value
                 voice.refresh_timestamp()
                 
                 self.synth_engine.apply_pressure(FixedPoint.to_float(norm_pressure))
@@ -190,12 +193,13 @@ class Synthesizer:
         
         for voice in self.active_voices:
             if voice.active and voice.channel == channel:
-                norm_bend = FixedPoint.from_float((bend_value - 8192) / 8192.0)
+                # Use optimized pitch bend normalization
+                norm_bend = FixedPoint.normalize_pitch_bend(bend_value)
                 bend_range = FixedPoint.multiply(
                     self.synth_engine.pitch_bend_range,
                     FixedPoint.from_float(1.0 / 12.0)
                 )
-                voice.pitch_bend = norm_bend
+                voice.pitch_bend = bend_value  # Store raw value
                 voice.synth_note.bend = FixedPoint.to_float(
                     FixedPoint.multiply(norm_bend, bend_range)
                 )
@@ -206,7 +210,8 @@ class Synthesizer:
         if Constants.DEBUG:
             print(f"\nMPE CC - Channel: {channel}, CC: {cc_number}, Value: {value}")
             
-        norm_value = FixedPoint.from_float(value / 127.0)
+        # Use optimized MIDI normalization
+        norm_value = FixedPoint.normalize_midi_value(value)
         self.current_midi_values[cc_number] = value
         found_parameter = False
 
@@ -307,9 +312,9 @@ class Synthesizer:
                     voice.log_release_progression(self.synth)
                     
                     if voice.pressure > 0:
-                        self._handle_pressure(voice.channel, int(voice.pressure * 127))
+                        self._handle_pressure(voice.channel, voice.pressure)
                     if voice.pitch_bend != 0:
-                        self._handle_pitch_bend(voice.channel, int((voice.pitch_bend * 8192) + 8192))
+                        self._handle_pitch_bend(voice.channel, voice.pitch_bend)
             
             self.synth_engine.update()
             
@@ -356,11 +361,11 @@ class Synthesizer:
         LN2_SQUARED = FixedPoint.multiply(LN2, LN2)
         
         power_approx = (
-            FixedPoint.from_float(1.0) + 
+            FixedPoint.ONE + 
             FixedPoint.multiply(octave_fraction, LN2) + 
             FixedPoint.multiply(
                 FixedPoint.multiply(octave_fraction, octave_fraction), 
-                FixedPoint.multiply(LN2_SQUARED, FixedPoint.from_float(0.5))
+                FixedPoint.multiply(LN2_SQUARED, FixedPoint.HALF)
             )
         )
         

@@ -11,6 +11,13 @@ class FixedPoint:
     MAX_VALUE = (1 << 31) - 1
     MIN_VALUE = -(1 << 31)
     
+    # Pre-calculated common scaling factors
+    MIDI_SCALE = 516  # 1/127 in fixed point (saves division)
+    PITCH_BEND_SCALE = 8  # 1/8192 in fixed point (saves division)
+    PITCH_BEND_CENTER = 8192 << 16  # 8192 in fixed point
+    ONE = 1 << 16  # 1.0 in fixed point
+    HALF = 1 << 15  # 0.5 in fixed point
+    
     @staticmethod
     def from_float(value):
         """Convert float to fixed-point integer with safe bounds"""
@@ -40,6 +47,17 @@ class FixedPoint:
             b = FixedPoint.from_float(float(b))
         return (a * b) >> 16
 
+    @staticmethod
+    def normalize_midi_value(value):
+        """Normalize MIDI value (0-127) to 0-1 range using pre-calculated scale"""
+        return value * FixedPoint.MIDI_SCALE
+
+    @staticmethod
+    def normalize_pitch_bend(value):
+        """Normalize pitch bend value (0-16383) to -1 to 1 range using pre-calculated values"""
+        return ((value << 16) - FixedPoint.PITCH_BEND_CENTER) * FixedPoint.PITCH_BEND_SCALE
+
+# Rest of the file remains unchanged until Voice class
 class Constants:
     DEBUG = False
     NOTE_TRACKER = False  # Added for note lifecycle tracking
@@ -65,9 +83,9 @@ class Voice:
     def __init__(self, note=None, channel=None, velocity=1.0):
         self.note = note
         self.channel = channel
-        self.velocity = FixedPoint.from_float(velocity)
-        self.pressure = FixedPoint.from_float(0.0)
-        self.pitch_bend = FixedPoint.from_float(0.0)
+        self.velocity = FixedPoint.normalize_midi_value(int(velocity * 127)) if velocity != 1.0 else FixedPoint.ONE
+        self.pressure = 0  # Store as raw value, normalize when needed
+        self.pitch_bend = 0  # Store as raw value, normalize when needed
         self.synth_note = None  # Will hold the synthio.Note instance
         self.timestamp = supervisor.ticks_ms()  # Added timestamp field
         self.release_tracking = False  # Flag to track release state
