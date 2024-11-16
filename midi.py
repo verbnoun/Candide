@@ -8,7 +8,7 @@ from adafruit_midi.pitch_bend import PitchBend
 from adafruit_midi.channel_pressure import ChannelPressure
 
 class Constants:
-    DEBUG = False
+    DEBUG = True
     
     # UART/MIDI Settings
     MIDI_BAUDRATE = 31250  # Aligned with Bartleby
@@ -175,7 +175,10 @@ class MidiUart:
             baudrate=Constants.MIDI_BAUDRATE,
             timeout=Constants.UART_TIMEOUT
         )
-        self.midi = MIDI(midi_in=self.uart, in_channel=0)
+        self.midi = MIDI(
+            midi_in=self.uart,
+            in_channel=tuple(range(Constants.ZONE_MANAGER, Constants.ZONE_END + 1))
+        )
         print("UART initialized")
 
     def read_byte(self):
@@ -212,52 +215,106 @@ class MidiLogic:
         self.midi = MIDI(midi_in=self.uart, in_channel=0)
 
     def check_for_messages(self):
-        """Check for MIDI messages and invoke callbacks"""
+        """Check for MIDI messages using raw byte handling"""
         try:
-            while True:
-                msg = self.midi.receive()
-                if not msg:
+            while self.uart.in_waiting:
+                # Read status byte
+                status_byte = self.uart.read(1)
+                if not status_byte:
                     break
 
-                # Log raw channel information before processing
-                if Constants.DEBUG:
-                    self._log_raw_message_info(msg)
+                status = status_byte[0]
+                if status & 0x80:  # Is this a status byte?
+                    channel = status & 0x0F
+                    msg_type = status & 0xF0
+                    current_time = time.monotonic()
+                    event = None
 
-                # Handle MIDI message
-                current_time = time.monotonic()
-                event = self._parse_message(msg, current_time)
-                
-                if event:
-                    # Immediately invoke callback with parsed event
-                    if self.text_callback:
-                        self.text_callback(event)
+                    # Handle different message types based on MIDI spec
+                    if msg_type == Constants.NOTE_ON:
+                        note = self.uart.read(1)[0]
+                        velocity = self.uart.read(1)[0]
+                        if Constants.DEBUG:
+                            print(f"Raw MIDI Message: NoteOn - Channel {channel}, Note {note}, Velocity {velocity}")
+                        event = {
+                            'type': 'note_on',
+                            'channel': channel,
+                            'data': {'note': note, 'velocity': velocity}
+                        }
 
-                    # Clean up any fully released voices
-                    self.voice_manager.cleanup_released_voices()
+                    elif msg_type == Constants.NOTE_OFF:
+                        note = self.uart.read(1)[0]
+                        velocity = self.uart.read(1)[0]
+                        if Constants.DEBUG:
+                            print(f"Raw MIDI Message: NoteOff - Channel {channel}, Note {note}, Velocity {velocity}")
+                        event = {
+                            'type': 'note_off',
+                            'channel': channel,
+                            'data': {'note': note, 'velocity': velocity}
+                        }
 
-                    # Update voice manager state based on the event
-                    if event['type'] == 'note_on':
-                        # Use the channel directly from the MIDI message
-                        self.voice_manager.add_voice(event['channel'], event['data']['note'])
-                    elif event['type'] == 'note_off':
-                        # Release note using the channel from the MIDI message
-                        self.voice_manager.release_voice(event['channel'], event['data']['note'])
-                    elif event['type'] in ('pressure', 'pitch_bend', 'cc'):
-                        # Handle controller messages
-                        if event['type'] == 'cc' and event['data']['number'] == Constants.CC_TIMBRE:
-                            self.controller_manager.handle_controller_update(
-                                event['channel'],
-                                'timbre',
-                                event['data']['value'],
-                                self.voice_manager
-                            )
-                        else:
-                            self.controller_manager.handle_controller_update(
-                                event['channel'],
-                                event['type'],
-                                event['data']['value'],
-                                self.voice_manager
-                            )
+                    elif msg_type == Constants.CONTROL_CHANGE:
+                        control = self.uart.read(1)[0]
+                        value = self.uart.read(1)[0]
+                        if Constants.DEBUG:
+                            print(f"Raw MIDI Message: ControlChange - Channel {channel}, Control {control}, Value {value}")
+                        event = {
+                            'type': 'cc',
+                            'channel': channel,
+                            'data': {'number': control, 'value': value}
+                        }
+
+                    elif msg_type == Constants.CHANNEL_PRESSURE:
+                        pressure = self.uart.read(1)[0]
+                        if Constants.DEBUG:
+                            print(f"Raw MIDI Message: ChannelPressure - Channel {channel}, Pressure {pressure}")
+                        event = {
+                            'type': 'pressure',
+                            'channel': channel,
+                            'data': {'value': pressure}
+                        }
+
+                    elif msg_type == Constants.PITCH_BEND:
+                        lsb = self.uart.read(1)[0]
+                        msb = self.uart.read(1)[0]
+                        bend_value = (msb << 7) | lsb
+                        if Constants.DEBUG:
+                            print(f"Raw MIDI Message: PitchBend - Channel {channel}, Value {bend_value}")
+                        event = {
+                            'type': 'pitch_bend',
+                            'channel': channel,
+                            'data': {'value': bend_value}
+                        }
+
+                    # Process the event if we have one
+                    if event:
+                        # Invoke callback
+                        if self.text_callback:
+                            self.text_callback(event)
+
+                        # Clean up released voices
+                        self.voice_manager.cleanup_released_voices()
+
+                        # Update voice manager state
+                        if event['type'] == 'note_on':
+                            self.voice_manager.add_voice(event['channel'], event['data']['note'])
+                        elif event['type'] == 'note_off':
+                            self.voice_manager.release_voice(event['channel'], event['data']['note'])
+                        elif event['type'] in ('pressure', 'pitch_bend', 'cc'):
+                            if event['type'] == 'cc' and event['data']['number'] == Constants.CC_TIMBRE:
+                                self.controller_manager.handle_controller_update(
+                                    event['channel'],
+                                    'timbre',
+                                    event['data']['value'],
+                                    self.voice_manager
+                                )
+                            else:
+                                self.controller_manager.handle_controller_update(
+                                    event['channel'],
+                                    event['type'],
+                                    event['data']['value'],
+                                    self.voice_manager
+                                )
 
         except Exception as e:
             if str(e):
