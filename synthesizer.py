@@ -339,20 +339,32 @@ class Synthesizer:
             print(f"Error during shutdown: {str(e)}")
 
     def _fractional_midi_to_hz(self, midi_note):
-        # Constants for fixed-point calculation
-        A4_MIDI_NOTE = 69
-        A4_FREQUENCY = 440.0
+        # Fixed-point constants
+        A4_MIDI_NOTE = FixedPoint.from_float(69.0)
+        A4_FREQUENCY = FixedPoint.from_float(440.0)
         
-        # Calculate note difference from A4
-        note_diff = midi_note - A4_MIDI_NOTE
-        octave_fraction = note_diff / 12.0
+        # Calculate note difference from A4 using fixed-point math
+        note_diff = FixedPoint.from_float(float(midi_note)) - A4_MIDI_NOTE
         
-        # Approximate 2^x using fixed-point math
-        # Use a simple approximation: 2^x ≈ 1 + x * ln(2)
-        LN2 = 0.69314718
-        power_approx = 1.0 + (octave_fraction * LN2)
+        # Replace divide with multiplication by reciprocal
+        octave_fraction = FixedPoint.multiply(note_diff, FixedPoint.from_float(1.0 / 12.0))
         
-        # Calculate frequency
-        frequency = A4_FREQUENCY * power_approx
+        # Improved fixed-point power approximation
+        # Use a more accurate Taylor series approximation for 2^x
+        # 2^x ≈ 1 + x * ln(2) + (x^2 * ln(2)^2 / 2!) 
+        LN2 = FixedPoint.from_float(0.69314718)
+        LN2_SQUARED = FixedPoint.multiply(LN2, LN2)
         
-        return frequency
+        power_approx = (
+            FixedPoint.from_float(1.0) + 
+            FixedPoint.multiply(octave_fraction, LN2) + 
+            FixedPoint.multiply(
+                FixedPoint.multiply(octave_fraction, octave_fraction), 
+                FixedPoint.multiply(LN2_SQUARED, FixedPoint.from_float(0.5))
+            )
+        )
+        
+        # Calculate frequency using fixed-point multiplication
+        frequency = FixedPoint.multiply(A4_FREQUENCY, power_approx)
+        
+        return FixedPoint.to_float(frequency)
