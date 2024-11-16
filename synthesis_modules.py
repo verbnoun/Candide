@@ -63,9 +63,9 @@ class FixedPoint:
         return max(min(value, max_val), min_val)
     
 class Constants:
-    DEBUG = True
-    NOTE_TRACKER = True  # Added for note lifecycle tracking
-    PRESSURE_TRACKER = True
+    DEBUG = False
+    NOTE_TRACKER = False  # Added for note lifecycle tracking
+    PRESSURE_TRACKER = False
     
     # Audio Pins (PCM5102A DAC)
     I2S_BIT_CLOCK = board.GP1
@@ -125,6 +125,14 @@ class Voice:
         self.release_tracking = False  # Flag to track release state
         self.active = False  # Flag to track if voice is active in fixed array
         
+        # New initial parameter storage for MPE
+        self.initial_parameters = {
+            'pitch_bend': 0,
+            'timbre': 0,
+            'pressure': 0,
+            'envelope': None,  # Will store initial envelope settings
+        }
+        
         # New timestamps for tracking MPE message updates
         self.last_timbre_update = 0
         self.last_pressure_update = 0
@@ -132,13 +140,27 @@ class Voice:
         
         # Reference to output manager for load management
         self.output_manager = output_manager
-        
-        if Constants.NOTE_TRACKER and note is not None:
-            print(f"[NOTE_TRACKER] Voice Created:")
-            print(f"  Channel: {channel}")
-            print(f"  Note: {note}")
-            print(f"  Velocity: {FixedPoint.to_float(self.velocity):.3f}")
-            print(f"  Time: {self.timestamp}ms")
+
+    def store_initial_parameters(self, pitch_bend=None, timbre=None, pressure=None, envelope=None):
+        """Store initial MPE parameters before note-on"""
+        if pitch_bend is not None:
+            self.initial_parameters['pitch_bend'] = pitch_bend
+        if timbre is not None:
+            self.initial_parameters['timbre'] = timbre
+        if pressure is not None:
+            self.initial_parameters['pressure'] = pressure
+        if envelope is not None:
+            self.initial_parameters['envelope'] = envelope.copy() if isinstance(envelope, dict) else envelope
+
+    def get_relative_pressure(self, current_pressure):
+        """Calculate pressure relative to initial value"""
+        initial = self.initial_parameters['pressure']
+        return current_pressure - initial if initial is not None else current_pressure
+
+    def get_relative_pitch_bend(self, current_bend):
+        """Calculate pitch bend relative to initial value"""
+        initial = self.initial_parameters['pitch_bend']
+        return current_bend - initial if initial is not None else current_bend
 
     def is_significant_change(self, current_value, new_value, active_voice_count):
         """Determine if a parameter change is significant enough to process"""
@@ -211,62 +233,6 @@ class Voice:
         self.last_pitch_update = current_time
         return True
 
-    def log_release_progression(self, synth):
-        """Track and log note release progression"""
-        if not Constants.NOTE_TRACKER or not self.synth_note:
-            return
-
-        note_state = synth.note_info(self.synth_note)
-        
-        if note_state[0] is not None:
-            if not self.release_tracking:
-                print(f"[NOTE_TRACKER] Release Started:")
-                print(f"  Channel: {self.channel}")
-                print(f"  Note: {self.note}")
-                self.release_tracking = True
-
-            print(f"[NOTE_TRACKER] Release Progression:")
-            print(f"  State: {note_state[0]}")
-            print(f"  Envelope Value: {FixedPoint.to_float(note_state[1]):.4f}")
-        elif self.release_tracking:
-            print(f"[NOTE_TRACKER] Release Completed:")
-            print(f"  Channel: {self.channel}")
-            print(f"  Note: {self.note}")
-            self.release_tracking = False
-
-    def refresh_timestamp(self):
-        """Update the timestamp to current time"""
-        old_timestamp = self.timestamp
-        self.timestamp = supervisor.ticks_ms()
-        if Constants.NOTE_TRACKER:
-            print(f"[NOTE_TRACKER] Voice Activity:")
-            print(f"  Channel: {self.channel}")
-            print(f"  Note: {self.note}")
-            print(f"  Pressure: {FixedPoint.to_float(self.pressure):.3f}")
-            print(f"  Pitch Bend: {FixedPoint.to_float(self.pitch_bend):.3f}")
-            print(f"  Time: {self.timestamp}ms")
-
-    def log_envelope_update(self, envelope):
-        """Log envelope parameter changes"""
-        if Constants.NOTE_TRACKER:
-            print(f"[NOTE_TRACKER] Envelope Update:")
-            print(f"  Channel: {self.channel}")
-            print(f"  Note: {self.note}")
-            print(f"  Attack: {FixedPoint.to_float(envelope.attack_time):.3f}s")
-            print(f"  Decay: {FixedPoint.to_float(envelope.decay_time):.3f}s")
-            print(f"  Sustain: {FixedPoint.to_float(envelope.sustain_level):.3f}")
-            print(f"  Release: {FixedPoint.to_float(envelope.release_time):.3f}s")
-
-    def log_release(self):
-        """Log note release"""
-        if Constants.NOTE_TRACKER:
-            print(f"[NOTE_TRACKER] Voice Released:")
-            print(f"  Channel: {self.channel}")
-            print(f"  Note: {self.note}")
-            print(f"  Final Pressure: {FixedPoint.to_float(self.pressure):.3f}")
-            print(f"  Final Pitch Bend: {FixedPoint.to_float(self.pitch_bend):.3f}")
-            print(f"  Total Duration: {supervisor.ticks_ms() - self.timestamp}ms")
-
 class SynthEngine:
     def __init__(self):
         self.envelope_settings = {
@@ -316,32 +282,48 @@ class SynthEngine:
                 self.pressure_sensitivity = FixedPoint.from_float(pressure_config.get('sensitivity', 0.5))
                 self.pressure_targets = pressure_config.get('targets', [])
 
-    def apply_pressure(self, pressure_value):
-        if Constants.PRESSURE_TRACKER:
-            print(f"Applying pressure: {pressure_value}")
-            print(f"Current targets: {self.pressure_targets}")
-            for target in self.pressure_targets:
-                print(f"Processing target: {target}")
+    def apply_pressure(self, pressure_value, initial_envelope=None):
+        """
+        Apply pressure modulation to the envelope, respecting initial envelope values.
+        
+        Args:
+            pressure_value (float): Normalized pressure value (0.0 to 1.0)
+            initial_envelope (dict, optional): Initial envelope parameters to reference
+        """
         if not self.pressure_enabled:
             return
-            
+        
+        # Use initial envelope if provided, otherwise use current settings
+        reference_envelope = initial_envelope or self.envelope_settings
+        
+        # Clamp pressure value
         pressure_value = max(0.0, min(1.0, pressure_value))
         self.current_pressure = FixedPoint.multiply(pressure_value, self.pressure_sensitivity)
         
+        # Modulate envelope parameters based on pressure
         for target in self.pressure_targets:
             param = target['param']
             min_val = FixedPoint.from_float(target.get('min', 0.0))
             max_val = FixedPoint.from_float(target.get('max', 1.0))
             curve = target.get('curve', 'linear')
             
+            # Get initial value from reference envelope if applicable
+            if param.startswith('envelope.'):
+                param_name = param.split('.')[1]
+                initial_value = FixedPoint.from_float(reference_envelope.get(param_name, 0.0))
+            else:
+                initial_value = min_val
+            
+            # Apply pressure modulation with different curve types
             if curve == 'exponential':
                 pressure_squared = FixedPoint.multiply(self.current_pressure, self.current_pressure)
-                range_val = max_val - min_val
-                scaled_value = min_val + FixedPoint.multiply(range_val, pressure_squared)
+                range_val = max_val - initial_value
+                scaled_value = initial_value + FixedPoint.multiply(range_val, pressure_squared)
             else:  # linear
-                range_val = max_val - min_val
-                scaled_value = min_val + FixedPoint.multiply(range_val, self.current_pressure)
+                range_val = max_val - initial_value
+                scaled_value = initial_value + FixedPoint.multiply(range_val, self.current_pressure)
             
+            # Apply modulated value to appropriate parameter
             if param.startswith('envelope.'):
                 param_name = param.split('.')[1]
                 self.set_envelope_param(param_name, FixedPoint.to_float(scaled_value))
@@ -677,3 +659,24 @@ class SynthAudioOutputManager:
 
     def stop(self):
         self.audio.stop()
+
+    def store_initial_parameters(self, pitch_bend=None, timbre=None, pressure=None, envelope=None):
+        """Store initial MPE parameters before note-on"""
+        if pitch_bend is not None:
+            self.initial_parameters['pitch_bend'] = pitch_bend
+        if timbre is not None:
+            self.initial_parameters['timbre'] = timbre
+        if pressure is not None:
+            self.initial_parameters['pressure'] = pressure
+        if envelope is not None:
+            self.initial_parameters['envelope'] = envelope.copy() if isinstance(envelope, dict) else envelope
+
+    def get_relative_pressure(self, current_pressure):
+        """Calculate pressure relative to initial value"""
+        initial = self.initial_parameters['pressure']
+        return current_pressure - initial if initial is not None else current_pressure
+
+    def get_relative_pitch_bend(self, current_bend):
+        """Calculate pitch bend relative to initial value"""
+        initial = self.initial_parameters['pitch_bend']
+        return current_bend - initial if initial is not None else current_bend
