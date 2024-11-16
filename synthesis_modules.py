@@ -61,10 +61,11 @@ class FixedPoint:
     def clamp(value, min_val, max_val):
         """Clamp a fixed-point value between min and max"""
         return max(min(value, max_val), min_val)
-
+    
 class Constants:
-    DEBUG = False
-    NOTE_TRACKER = False  # Added for note lifecycle tracking
+    DEBUG = True
+    NOTE_TRACKER = True  # Added for note lifecycle tracking
+    PRESSURE_TRACKER = True
     
     # Audio Pins (PCM5102A DAC)
     I2S_BIT_CLOCK = board.GP1
@@ -316,6 +317,11 @@ class SynthEngine:
                 self.pressure_targets = pressure_config.get('targets', [])
 
     def apply_pressure(self, pressure_value):
+        if Constants.PRESSURE_TRACKER:
+            print(f"Applying pressure: {pressure_value}")
+            print(f"Current targets: {self.pressure_targets}")
+            for target in self.pressure_targets:
+                print(f"Processing target: {target}")
         if not self.pressure_enabled:
             return
             

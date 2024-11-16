@@ -145,11 +145,6 @@ class SynthManager:
         print("Setting up synthesizer...")
         self.synth = Synthesizer(self.audio_manager.audio)
         
-        Piano()
-        Organ()
-        Womp()
-        WindChime()
-        
         if Constants.DEBUG:
             print(f"Available instruments: {[i.name for i in Instrument.available_instruments]}")
         

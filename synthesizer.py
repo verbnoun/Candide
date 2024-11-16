@@ -202,6 +202,21 @@ class Synthesizer:
 
     def _handle_pressure(self, channel, pressure_value):
         """Handle per-channel pressure with significance thresholds"""
+
+        if Constants.PRESSURE_TRACKER:
+            print(f"Handling pressure: {pressure_value}")
+        
+            # Add voice count and active channels
+            active_voices = [v for v in self.active_voices if v.active]
+            print(f"Active voices: {len(active_voices)}")
+            print(f"Active channels: {[v.channel for v in active_voices]}")
+            
+            for voice in self.active_voices:
+                if voice.active and voice.channel == channel:
+                    print(f"Found matching voice on channel {channel}")
+                    print(f"Current envelope sustain: {self.synth_engine.envelope_settings.get('sustain')}")
+                    print(f"Current voice pressure: {voice.pressure}")
+                        
         if not self.synth_engine.pressure_enabled:
             return
             
@@ -228,6 +243,16 @@ class Synthesizer:
                     voice.synth_note.envelope = new_envelope
                     if self.synth_engine.filter:
                         voice.synth_note.filter = self.synth_engine.filter(self.synth)
+
+        if Constants.PRESSURE_TRACKER:
+            if voice.active and voice.channel == channel:
+                print(f"Found active voice on channel {channel}")
+                if voice.is_significant_change(voice.pressure, pressure_value, active_voice_count):
+                    print(f"Pressure change significant")
+                    print(f"Before envelope sustain: {self.synth_engine.envelope_settings['sustain']}")
+                    self.synth_engine.apply_pressure(FixedPoint.to_float(norm_pressure))
+                    print(f"After envelope sustain: {self.synth_engine.envelope_settings['sustain']}")
+
 
     def _handle_pitch_bend(self, channel, bend_value):
         """Handle per-channel pitch bend with significance thresholds"""

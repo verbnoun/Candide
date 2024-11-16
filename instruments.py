@@ -1,7 +1,6 @@
 class Constants:
     DEBUG = False
     
-    
     # MPE Constants
     DEFAULT_MPE_PITCH_BEND_RANGE = 48  # Default 48 semitones for MPE
     DEFAULT_PRESSURE_SENSITIVITY = 0.7
@@ -114,9 +113,9 @@ class Piano(Instrument):
         }
         self.envelope = {
             'attack': 0.001,  # Very fast attack for hammer strike
-            'decay': 0.8,    # Longer decay for natural piano resonance
-            'sustain': 0.4,  # Lower sustain level like a real piano
-            'release': 0.6   # Natural string decay
+            'decay': 0.8,    # Natural decay for piano strings
+            'sustain': 0.0,  # No sustain - realistic piano behavior
+            'release': 0.3   # Quick release when key is released
         }
         self.midi = {
             'velocity_sensitivity': 1.0  # Full velocity sensitivity for dynamics
@@ -129,27 +128,14 @@ class Piano(Instrument):
             4: {'cc': 72, 'name': 'Release Time', 'min': 0.1, 'max': 0.5}    # Natural release range
         }
         self.pitch_bend = {
-            'enabled': False,  # Pianos don't have pitch bend
+            'enabled': False,  # Pianos don't pitch bend
             'range': 0,
             'curve': 1
         }
         self.pressure = {
-            'enabled': True,
-            'sensitivity': 1.0,  # Full sensitivity for dynamic control
-            'targets': [
-                {
-                    'param': 'filter.cutoff',  # Pressure affects brightness
-                    'min': 3000,
-                    'max': 7000,
-                    'curve': 'exponential'
-                },
-                {
-                    'param': 'envelope.decay',  # Pressure affects string resonance
-                    'min': 0.6,
-                    'max': 1.0,
-                    'curve': 'linear'
-                }
-            ]
+            'enabled': False,  # No pressure sensitivity for realistic piano
+            'sensitivity': 0,
+            'targets': []
         }
 
 
@@ -157,46 +143,41 @@ class Organ(Instrument):
     def __init__(self):
         super().__init__("Organ")
         self.oscillator = {
-            'waveform': 'saw', 
-            'detune': 0.2
+            'waveform': 'sine',  # Pure sine waves for organ pipes
+            'detune': 0.0      # No detuning for clean organ sound
         }
         self.filter = {
             'type': 'low_pass',
             'cutoff': 2000,
-            'resonance': 0.5
+            'resonance': 0.3
         }
         self.envelope = {
-            'attack': 0.01,
-            'decay': 0.1, 
-            'sustain': 0.8,
-            'release': 0.01  # Very short release
+            'attack': 0.05,    # Slight attack for pipe speak
+            'decay': 0.0,      # No decay - organ pipes sustain
+            'sustain': 1.0,    # Full sustain
+            'release': 0.08    # Quick release when key is released
         }
         self.midi = {
-            'velocity_sensitivity': 0.7
+            'velocity_sensitivity': 0.0  # Organs don't respond to velocity
         }
         self.pots = {
             0: {'cc': 74, 'name': 'Filter Cutoff', 'min': 500, 'max': 8000},
-            1: {'cc': 71, 'name': 'Filter Resonance', 'min': 0, 'max': 1},
-            2: {'cc': 94, 'name': 'Detune Amount', 'min': 0, 'max': 0.5},
-            3: {'cc': 73, 'name': 'Attack Time', 'min': 0.001, 'max': 0.1},
-            4: {'cc': 75, 'name': 'Decay Time', 'min': 0.01, 'max': 0.5},
-            5: {'cc': 76, 'name': 'Sustain Level', 'min': 0.4, 'max': 1.0},
-            6: {'cc': 72, 'name': 'Release Time', 'min': 0.01, 'max': 1.0},
-            7: {'cc': 77, 'name': 'Bend Range', 'min': 2, 'max': 48},
-            8: {'cc': 78, 'name': 'Bend Curve', 'min': 1, 'max': 4}
+            1: {'cc': 71, 'name': 'Filter Resonance', 'min': 0, 'max': 0.5},
+            2: {'cc': 73, 'name': 'Attack Time', 'min': 0.02, 'max': 0.1},
+            3: {'cc': 72, 'name': 'Release Time', 'min': 0.05, 'max': 0.2}
         }
         self.pitch_bend = {
-            'enabled': True,
-            'range': Constants.DEFAULT_MPE_PITCH_BEND_RANGE,
-            'curve': 2
+            'enabled': False,  # Organs don't pitch bend
+            'range': 0,
+            'curve': 1
         }
         self.pressure = {
             'enabled': True,
-            'sensitivity': 1.0,  # Full sensitivity for direct control
+            'sensitivity': 1.0,  # Full sensitivity for expression pedal simulation
             'targets': [
                 {
-                    'param': 'envelope.sustain',
-                    'min': 0.0,  # Full range
+                    'param': 'envelope.sustain',  # Pressure controls volume like an expression pedal
+                    'min': 0.0001,
                     'max': 1.0,
                     'curve': 'linear'
                 }
@@ -208,33 +189,28 @@ class Womp(Instrument):
     def __init__(self):
         super().__init__("Womp")
         self.oscillator = {
-            'waveform': 'sine',     # Saw wave for rich harmonic content
-            'detune': 0.15         # Significant detuning for thickness
+            'waveform': 'saw',      # Rich harmonic content for aggressive sound
+            'detune': 0.2          # Heavy detuning for thickness
         }
         self.filter = {
-            'type': 'low_pass',    # Low pass filter for that classic wobble
-            'cutoff': 1000,        # Start with lower cutoff for growl
-            'resonance': 1.8       # High resonance for aggressive sound
+            'type': 'low_pass',    
+            'cutoff': 800,         # Low initial cutoff for growl
+            'resonance': 2.0       # High resonance for aggressive character
         }
         self.envelope = {
-            'attack': 0.01,        # Fast attack for punchy sound
-            'decay': 0.2,          # Moderate decay
-            'sustain': 0.7,        # Higher sustain for continuous sound
-            'release': 0.15        # Quick release for tight bass drops
+            'attack': 0.005,       # Very fast attack for punch
+            'decay': 0.1,          # Quick initial decay
+            'sustain': 0.0,        # Start with no sustain
+            'release': 0.1         # Quick release
         }
         self.midi = {
-            'velocity_sensitivity': 0.9  # High velocity sensitivity for expression
+            'velocity_sensitivity': 1.0  # Full velocity sensitivity
         }
         self.pots = {
-            0: {'cc': 74, 'name': 'Filter Cutoff', 'min': 150, 'max': 8000},    # Wide filter range
-            1: {'cc': 71, 'name': 'Filter Resonance', 'min': 0.7, 'max': 1.9},  # High resonance range
-            2: {'cc': 94, 'name': 'Detune Amount', 'min': 0.1, 'max': 0.3},     # Increased detune range
-            3: {'cc': 73, 'name': 'Attack Time', 'min': 0.001, 'max': 0.2},     # Quick attack options
-            4: {'cc': 75, 'name': 'Decay Time', 'min': 0.1, 'max': 0.5},        # Moderate decay range
-            5: {'cc': 76, 'name': 'Sustain Level', 'min': 0.4, 'max': 0.9},     # Higher sustain range
-            6: {'cc': 72, 'name': 'Release Time', 'min': 0.1, 'max': 0.3},      # Quick release options
-            7: {'cc': 77, 'name': 'Bend Range', 'min': 12, 'max': 24},          # Wider bend range
-            8: {'cc': 78, 'name': 'Bend Curve', 'min': 1, 'max': 4}             # More curve options
+            0: {'cc': 74, 'name': 'Filter Cutoff', 'min': 150, 'max': 8000},
+            1: {'cc': 71, 'name': 'Filter Resonance', 'min': 1.0, 'max': 2.5},
+            2: {'cc': 73, 'name': 'Attack Time', 'min': 0.001, 'max': 0.1},
+            3: {'cc': 72, 'name': 'Release Time', 'min': 0.05, 'max': 0.3}
         }
         self.pitch_bend = {
             'enabled': True,
@@ -246,78 +222,84 @@ class Womp(Instrument):
             'sensitivity': 1.0,    # Full pressure sensitivity
             'targets': [
                 {
-                    'param': 'filter.cutoff',  # Filter movement for wobble
-                    'min': 200,               # Very low cutoff for growl
-                    'max': 6000,              # High cutoff for screech
-                    'curve': 'exponential'    # Exponential for dramatic sweeps
-                },
-                {
-                    'param': 'filter.resonance',  # Dynamic resonance
-                    'min': 0.8,
-                    'max': 1.9,
+                    'param': 'envelope.sustain',  # Pressure controls sustain level
+                    'min': 0.0,
+                    'max': 0.8,
                     'curve': 'exponential'
                 },
                 {
-                    'param': 'envelope.sustain',  # Pressure affects sustain
-                    'min': 0.4,
-                    'max': 0.9,
-                    'curve': 'linear'
+                    'param': 'filter.cutoff',     # Pressure opens filter
+                    'min': 800,
+                    'max': 6000,
+                    'curve': 'exponential'
                 }
             ]
         }
+
 
 class WindChime(Instrument):
     def __init__(self):
         super().__init__("Wind Chime")
         self.oscillator = {
-            'waveform': 'square',  # Triangle wave gives a more metallic tone than sine
-            'detune': 0.003  # Slight detuning for that shimmering effect
+            'waveform': 'sine',    # Pure tone for metallic sound
+            'detune': 0.01         # Slight detuning for natural variation
         }
         self.filter = {
-            'type': 'band_pass',  # Band-pass to emphasize metallic harmonics
-            'cutoff': 2000,  # Center frequency for metallic character
-            'resonance': 0.8  # Moderate resonance for ringing quality
+            'type': 'band_pass',   # Band-pass for resonant, metallic character
+            'cutoff': 3000,        # Higher center frequency for bright tone
+            'resonance': 1.5       # High resonance for ringing quality
         }
         self.envelope = {
-            'attack': 0.001,  # Very fast attack like striking metal
-            'decay': 0.1,     # Quick initial decay
-            'sustain': 0.3,   # Moderate sustain level
-            'release': 2.0    # Long release for that lingering ring
+            'attack': 0.001,       # Instant attack
+            'decay': 0.2,          # Quick initial decay
+            'sustain': 0.1,        # Low sustain for gentle sound
+            'release': 2.0         # Long release for natural fade
         }
         self.midi = {
-            'velocity_sensitivity': 1.0  # Full velocity sensitivity for dynamics
+            'velocity_sensitivity': 0.8
         }
         self.pots = {
-            0: {'cc': 74, 'name': 'Filter Cutoff', 'min': 1000, 'max': 4000},
-            1: {'cc': 71, 'name': 'Filter Resonance', 'min': 0.5, 'max': 1.5},
-            2: {'cc': 94, 'name': 'Detune Amount', 'min': 0.001, 'max': 0.01},
-            3: {'cc': 73, 'name': 'Attack Time', 'min': 0.001, 'max': 0.01},
-            4: {'cc': 75, 'name': 'Decay Time', 'min': 0.05, 'max': 0.3},
-            5: {'cc': 76, 'name': 'Sustain Level', 'min': 0.1, 'max': 0.5},
-            6: {'cc': 72, 'name': 'Release Time', 'min': 1.0, 'max': 4.0},
-            7: {'cc': 77, 'name': 'Bend Range', 'min': 2, 'max': 12},
-            8: {'cc': 78, 'name': 'Bend Curve', 'min': 1, 'max': 2}
+            0: {'cc': 74, 'name': 'Filter Cutoff', 'min': 2000, 'max': 5000},
+            1: {'cc': 71, 'name': 'Filter Resonance', 'min': 1.0, 'max': 2.0},
+            2: {'cc': 73, 'name': 'Decay Time', 'min': 0.1, 'max': 0.5},
+            3: {'cc': 72, 'name': 'Release Time', 'min': 1.0, 'max': 4.0}
         }
         self.pitch_bend = {
             'enabled': True,
-            'range': 2,  # Smaller pitch bend range for subtle variations
-            'curve': 1   # Linear curve for predictable bends
+            'range': 4,            # Small range for subtle variations
+            'curve': 1             # Linear response
         }
         self.pressure = {
             'enabled': True,
-            'sensitivity': 0.6,
+            'sensitivity': 0.8,
             'targets': [
                 {
-                    'param': 'filter.cutoff',
-                    'min': 1500,
-                    'max': 3000,
+                    'param': 'filter.cutoff',     # Pressure affects brightness
+                    'min': 2000,
+                    'max': 4000,
                     'curve': 'exponential'
                 },
                 {
-                    'param': 'envelope.release',
+                    'param': 'filter.resonance',  # Pressure affects resonance
                     'min': 1.0,
-                    'max': 3.0,
+                    'max': 2.0,
+                    'curve': 'linear'
+                },
+                {
+                    'param': 'oscillator.detune', # Pressure affects detuning
+                    'min': 0.005,
+                    'max': 0.02,
                     'curve': 'linear'
                 }
             ]
         }
+
+
+def initialize_instruments():
+    Piano()
+    Organ()
+    Womp()
+    WindChime()
+
+# Call the function at the module level
+initialize_instruments()
