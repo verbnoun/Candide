@@ -103,6 +103,9 @@ class Constants:
     MAX_AMPLITUDE = FixedPoint.from_float(32767.0)
     MIN_AMPLITUDE = FixedPoint.from_float(-32767.0)
 
+    # Pre-calculated MIDI note frequencies
+    MIDI_FREQUENCIES = [440.0 * 2 ** ((i - 69) / 12) for i in range(128)]
+
 class Voice:
     def __init__(self, note=None, channel=None, velocity=1.0):
         self.note = note
