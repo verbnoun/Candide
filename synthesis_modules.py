@@ -63,9 +63,9 @@ class FixedPoint:
         return max(min(value, max_val), min_val)
     
 class Constants:
-    DEBUG = False
-    NOTE_TRACKER = False  # Added for note lifecycle tracking
-    PRESSURE_TRACKER = False
+    DEBUG = True
+    NOTE_TRACKER = True  # Added for note lifecycle tracking
+    PRESSURE_TRACKER = True
     
     # Audio Pins (PCM5102A DAC)
     I2S_BIT_CLOCK = board.GP1
@@ -300,6 +300,9 @@ class SynthEngine:
         pressure_value = max(0.0, min(1.0, pressure_value))
         self.current_pressure = FixedPoint.multiply(pressure_value, self.pressure_sensitivity)
         
+        # Debug print for pressure application
+        print(f"Applying Pressure: value={pressure_value}, sensitivity={FixedPoint.to_float(self.pressure_sensitivity)}")
+        
         # Modulate envelope parameters based on pressure
         for target in self.pressure_targets:
             param = target['param']
@@ -322,6 +325,9 @@ class SynthEngine:
             else:  # linear
                 range_val = max_val - initial_value
                 scaled_value = initial_value + FixedPoint.multiply(range_val, self.current_pressure)
+            
+            # Debug print for parameter modulation
+            print(f"Modulating {param}: initial={FixedPoint.to_float(initial_value)}, scaled={FixedPoint.to_float(scaled_value)}, curve={curve}")
             
             # Apply modulated value to appropriate parameter
             if param.startswith('envelope.'):
