@@ -65,19 +65,25 @@ class FixedPoint:
 class Constants:
     DEBUG = False
     NOTE_TRACKER = False  # Added for note lifecycle tracking
+    
     # Audio Pins (PCM5102A DAC)
     I2S_BIT_CLOCK = board.GP1
     I2S_WORD_SELECT = board.GP2
     I2S_DATA = board.GP0
 
     # Synthesizer Constants
-    AUDIO_BUFFER_SIZE = 8192 #4096
+    AUDIO_BUFFER_SIZE = 8192  # Increased buffer size
     SAMPLE_RATE = 44100
     
     # Note Management Constants
     MAX_ACTIVE_NOTES = 8  # Maximum simultaneous voices
     NOTE_TIMEOUT_MS = 2000  # 5 seconds in milliseconds before force note-off
     
+    # MPE Load Management Constants
+    MPE_LOAD_CHECK_INTERVAL = 100  # ms between load factor recalculations
+    BASE_MPE_THRESHOLD = 10  # Base threshold for MPE message filtering (ms)
+    MAX_MPE_THRESHOLD_MULTIPLIER = 4  # Maximum scaling factor for thresholds
+
     # MPE Significance Constants
     BASE_THRESHOLD = FixedPoint.from_float(0.05)  # Base threshold for significant changes (5%)
     MAX_THRESHOLD = FixedPoint.from_float(0.20)   # Maximum threshold cap (20%)
@@ -107,7 +113,7 @@ class Constants:
     MIDI_FREQUENCIES = [440.0 * 2 ** ((i - 69) / 12) for i in range(128)]
 
 class Voice:
-    def __init__(self, note=None, channel=None, velocity=1.0):
+    def __init__(self, note=None, channel=None, velocity=1.0, output_manager=None):
         self.note = note
         self.channel = channel
         self.velocity = FixedPoint.normalize_midi_value(int(velocity * 127)) if velocity != 1.0 else FixedPoint.ONE
@@ -117,6 +123,15 @@ class Voice:
         self.timestamp = supervisor.ticks_ms()  # Added timestamp field
         self.release_tracking = False  # Flag to track release state
         self.active = False  # Flag to track if voice is active in fixed array
+        
+        # New timestamps for tracking MPE message updates
+        self.last_timbre_update = 0
+        self.last_pressure_update = 0
+        self.last_pitch_update = 0
+        
+        # Reference to output manager for load management
+        self.output_manager = output_manager
+        
         if Constants.NOTE_TRACKER and note is not None:
             print(f"[NOTE_TRACKER] Voice Created:")
             print(f"  Channel: {channel}")
@@ -140,6 +155,60 @@ class Voice:
             FixedPoint.from_float(1.0 / current_value)
         ))
         return relative_change > threshold
+
+    def process_timbre(self, timbre_value):
+        """
+        Process timbre message with load-aware filtering
+        """
+        current_time = supervisor.ticks_ms()
+        
+        # If output manager exists and suggests skipping, return early
+        if (self.output_manager and 
+            self.output_manager.should_skip_mpe_message(
+                self, 'timbre', timbre_value, self.last_timbre_update
+            )):
+            return False
+        
+        # Update timbre-related parameters
+        # Placeholder: Implement specific timbre processing logic
+        self.last_timbre_update = current_time
+        return True
+
+    def process_pressure(self, pressure_value):
+        """
+        Process pressure message with load-aware filtering
+        """
+        current_time = supervisor.ticks_ms()
+        
+        # If output manager exists and suggests skipping, return early
+        if (self.output_manager and 
+            self.output_manager.should_skip_mpe_message(
+                self, 'pressure', pressure_value, self.last_pressure_update
+            )):
+            return False
+        
+        # Update pressure
+        self.pressure = pressure_value
+        self.last_pressure_update = current_time
+        return True
+
+    def process_pitch_bend(self, pitch_bend_value):
+        """
+        Process pitch bend message with load-aware filtering
+        """
+        current_time = supervisor.ticks_ms()
+        
+        # If output manager exists and suggests skipping, return early
+        if (self.output_manager and 
+            self.output_manager.should_skip_mpe_message(
+                self, 'pitch', pitch_bend_value, self.last_pitch_update
+            )):
+            return False
+        
+        # Update pitch bend
+        self.pitch_bend = pitch_bend_value
+        self.last_pitch_update = current_time
+        return True
 
     def log_release_progression(self, synth):
         """Track and log note release progression"""
@@ -471,7 +540,111 @@ class SynthAudioOutputManager:
             channel_count=2
         )
         self.volume = FixedPoint.from_float(1.0)
+        
+        # New attributes for load management
+        self.active_voices = 0
+        self.last_load_check = supervisor.ticks_ms()
+        self.load_check_interval = Constants.MPE_LOAD_CHECK_INTERVAL
+        self.load_factor = 0.0  # 0.0 to 1.0 representing system load
+        self.max_voices = Constants.MAX_ACTIVE_NOTES
+        
         self._setup_audio()
+
+    def calculate_load_factor(self):
+        """
+        Calculate instantaneous load factor based on:
+        1. Active voice count
+        2. I2S buffer health (approximated by checking buffer fullness)
+        """
+        # Voice count contribution (linear scaling)
+        voice_load = min(1.0, self.active_voices / self.max_voices)
+        
+        # Approximate I2S buffer health 
+        # Note: This is a simplified approximation and might need platform-specific tuning
+        try:
+            buffer_fullness = self.synth.buffer_fullness
+            buffer_load = min(1.0, buffer_fullness / Constants.AUDIO_BUFFER_SIZE)
+        except Exception:
+            buffer_load = 0.5  # Default mid-load if cannot determine
+        
+        # Weighted combination of voice and buffer load
+        # More weight on voice count, some weight on buffer health
+        load_factor = (0.7 * voice_load) + (0.3 * buffer_load)
+        
+        return min(1.0, max(0.0, load_factor))
+
+    def update_load_factor(self):
+        """
+        Periodically update load factor to avoid constant recalculation
+        """
+        current_time = supervisor.ticks_ms()
+        if supervisor.ticks_diff(current_time, self.last_load_check) >= self.load_check_interval:
+            self.load_factor = self.calculate_load_factor()
+            self.last_load_check = current_time
+
+    def get_mpe_threshold_windows(self):
+        """
+        Dynamically calculate MPE message threshold windows based on load factor
+        
+        Returns a dictionary with threshold windows for different MPE message types:
+        - timbre: Most skippable, widest window
+        - pressure: Moderate skippability
+        - pitch: Least skippable, narrowest window
+        """
+        base_windows = {
+            'timbre': 20,   # ms
+            'pressure': 10, # ms
+            'pitch': 5      # ms
+        }
+        
+        # Scale windows exponentially with load factor
+        scaled_windows = {
+            key: int(window * (1 + (self.load_factor ** 2) * Constants.MAX_MPE_THRESHOLD_MULTIPLIER))
+            for key, window in base_windows.items()
+        }
+        
+        return scaled_windows
+
+    def should_skip_mpe_message(self, voice, message_type, new_value, last_update_time):
+        """
+        Determine whether to skip an MPE message based on load factor and message type
+        
+        Args:
+            voice (Voice): The voice processing the MPE message
+            message_type (str): 'timbre', 'pressure', or 'pitch'
+            new_value (float): The new value for the message
+            last_update_time (int): Timestamp of last update for this message type
+        
+        Returns:
+            bool: Whether to skip processing this message
+        """
+        current_time = supervisor.ticks_ms()
+        threshold_windows = self.get_mpe_threshold_windows()
+        
+        # Check time since last update against dynamically calculated threshold
+        time_since_last_update = supervisor.ticks_diff(current_time, last_update_time)
+        threshold = threshold_windows.get(message_type, 10)
+        
+        # Skip if time since last update is less than threshold and change is insignificant
+        if time_since_last_update < threshold:
+            # Use voice's significance check as additional filter
+            return not voice.is_significant_change(
+                getattr(voice, message_type, 0), 
+                new_value, 
+                self.active_voices
+            )
+        
+        return False
+
+    def increment_active_voices(self):
+        """Increment active voice count"""
+        self.active_voices = min(self.active_voices + 1, self.max_voices)
+        self.update_load_factor()
+
+    def decrement_active_voices(self):
+        """Decrement active voice count"""
+        self.active_voices = max(0, self.active_voices - 1)
+        self.update_load_factor()
 
     def _setup_audio(self):
         if self.audio is not None:

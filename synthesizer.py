@@ -13,8 +13,51 @@ class Synthesizer:
         self.max_amplitude = FixedPoint.from_float(0.9)
         self.instrument = None
         self.current_midi_values = {}
+        
+        # New tracking dictionary for parameter states
+        self.last_parameter_values = {
+            'filter_cutoff': None,
+            'filter_resonance': None,
+            'detune_amount': None,
+            'attack_time': None,
+            'decay_time': None,
+            'sustain_level': None,
+            'release_time': None,
+            'bend_range': None,
+            'bend_curve': None
+        }
+        
         # Initialize voices with proper size array
         self.active_voices = [Voice() for _ in range(Constants.MAX_ACTIVE_NOTES)]
+
+    def _is_parameter_changed(self, param_name, new_value, tolerance=0.001):
+        """
+        Check if a parameter value has changed significantly.
+        
+        Args:
+            param_name (str): Name of the parameter to check
+            new_value (float): New parameter value
+            tolerance (float): Acceptable variation threshold
+        
+        Returns:
+            bool: True if parameter has changed, False otherwise
+        """
+        last_value = self.last_parameter_values.get(param_name)
+        
+        # First time setting the parameter
+        if last_value is None:
+            self.last_parameter_values[param_name] = new_value
+            return True
+        
+        # Check if change is significant
+        is_changed = abs(last_value - new_value) > tolerance
+        
+        if is_changed:
+            if Constants.DEBUG:
+                print(f"Parameter {param_name} changed: {last_value} → {new_value}")
+            self.last_parameter_values[param_name] = new_value
+        
+        return is_changed
 
     def set_instrument(self, instrument):
         if Constants.DEBUG:
@@ -217,7 +260,7 @@ class Synthesizer:
                     voice.refresh_timestamp()
 
     def _handle_cc(self, channel, cc_number, value):
-        """Handle MIDI CC messages"""
+        """Optimized CC handling with parameter change tracking"""
         if Constants.DEBUG:
             print(f"\nMPE CC - Channel: {channel}, CC: {cc_number}, Value: {value}")
             
@@ -253,34 +296,70 @@ class Synthesizer:
                     print(f"  - Value range: {FixedPoint.to_float(min_val)} to {FixedPoint.to_float(max_val)}")
                     print(f"  - Scaled value: {FixedPoint.to_float(scaled_value):.3f}")
 
-                self._apply_cc_parameter(param_name, scaled_value)
-                self._update_active_voices()
+                # Only update if parameter actually changes
+                if self._apply_cc_parameter(param_name, scaled_value):
+                    self._update_active_voices()
                 break
                 
         if not found_parameter and Constants.DEBUG:
             print(f"- No mapping found for CC {cc_number}")
 
     def _apply_cc_parameter(self, param_name, scaled_value):
-        """Apply CC parameter changes to the synth engine"""
+        """Apply CC parameter changes to the synth engine with change tracking"""
         param_handlers = {
-            'Filter Cutoff': lambda: self.synth_engine.set_filter_cutoff(FixedPoint.to_float(scaled_value)),
-            'Filter Resonance': lambda: self.synth_engine.set_filter_resonance(FixedPoint.to_float(scaled_value)),
-            'Detune Amount': lambda: self.synth_engine.set_detune(scaled_value),
-            'Attack Time': lambda: self.synth_engine.set_envelope_param('attack', FixedPoint.to_float(scaled_value)),
-            'Decay Time': lambda: self.synth_engine.set_envelope_param('decay', FixedPoint.to_float(scaled_value)),
-            'Sustain Level': lambda: self.synth_engine.set_envelope_param('sustain', FixedPoint.to_float(scaled_value)),
-            'Release Time': lambda: self.synth_engine.set_envelope_param('release', FixedPoint.to_float(scaled_value)),
-            'Bend Range': lambda: setattr(self.synth_engine, 'pitch_bend_range', scaled_value),
-            'Bend Curve': lambda: setattr(self.synth_engine, 'pitch_bend_curve', scaled_value)
+            'Filter Cutoff': (
+                lambda: self.synth_engine.set_filter_cutoff(FixedPoint.to_float(scaled_value)),
+                'filter_cutoff'
+            ),
+            'Filter Resonance': (
+                lambda: self.synth_engine.set_filter_resonance(FixedPoint.to_float(scaled_value)),
+                'filter_resonance'
+            ),
+            'Detune Amount': (
+                lambda: self.synth_engine.set_detune(scaled_value),
+                'detune_amount'
+            ),
+            'Attack Time': (
+                lambda: self.synth_engine.set_envelope_param('attack', FixedPoint.to_float(scaled_value)),
+                'attack_time'
+            ),
+            'Decay Time': (
+                lambda: self.synth_engine.set_envelope_param('decay', FixedPoint.to_float(scaled_value)),
+                'decay_time'
+            ),
+            'Sustain Level': (
+                lambda: self.synth_engine.set_envelope_param('sustain', FixedPoint.to_float(scaled_value)),
+                'sustain_level'
+            ),
+            'Release Time': (
+                lambda: self.synth_engine.set_envelope_param('release', FixedPoint.to_float(scaled_value)),
+                'release_time'
+            ),
+            'Bend Range': (
+                lambda: setattr(self.synth_engine, 'pitch_bend_range', scaled_value),
+                'bend_range'
+            ),
+            'Bend Curve': (
+                lambda: setattr(self.synth_engine, 'pitch_bend_curve', scaled_value),
+                'bend_curve'
+            )
         }
         
         if param_name in param_handlers:
-            if Constants.DEBUG:
-                print(f"  - Setting {param_name}")
-            param_handlers[param_name]()
+            handler, tracking_key = param_handlers[param_name]
+            new_value = FixedPoint.to_float(scaled_value)
+            
+            # Only apply and update voices if parameter has changed
+            if self._is_parameter_changed(tracking_key, new_value):
+                if Constants.DEBUG:
+                    print(f"  - Setting {param_name}")
+                handler()
+                return True
+        
+        return False
 
     def _update_active_voices(self):
-        """Update all active voices with current synth engine settings"""
+        """Optimized update for active voices with change tracking"""
         if not any(voice.active for voice in self.active_voices):
             if Constants.DEBUG:
                 print("No active voices to update")
