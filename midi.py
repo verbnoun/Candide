@@ -8,7 +8,7 @@ from adafruit_midi.pitch_bend import PitchBend
 from adafruit_midi.channel_pressure import ChannelPressure
 
 class Constants:
-    DEBUG = True
+    DEBUG = False
     
     # UART/MIDI Settings
     MIDI_BAUDRATE = 31250  # Aligned with Bartleby
