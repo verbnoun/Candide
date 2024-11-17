@@ -37,7 +37,6 @@ class ModulationMatrix:
         self.source_values = {}
         self.blocks = []
         self.current_key_press = None
-        self.route_update_counter = 0
         
     def start_key_press(self, note, channel):
         """Start tracking a new key press"""
@@ -107,8 +106,6 @@ class ModulationMatrix:
             if self.current_key_press:
                 print("[MOD]   Context: Note {}".format(self.current_key_press['note']))
         
-        # Reset route update counter before processing
-        self.route_update_counter = 0
         # Update all routes using this source
         self._update_routes(source, channel)
     
@@ -171,11 +168,8 @@ class ModulationMatrix:
         if source not in self.source_values:
             return
         
-        total_updates = len([key for key, route in self.routes.items() 
-                           if key[0] == source and 
-                           (key[2] is None or channel is None or key[2] == channel)])
-        
-        current_update = 0
+        # Track processed routes to prevent duplicate processing
+        processed_routes = set()
         
         for key, route in list(self.routes.items()):  # Use list to avoid runtime modification
             # Check if the route's source matches and channel is either None or matches
@@ -184,15 +178,16 @@ class ModulationMatrix:
                  channel is None or  # No specific channel requested
                  key[2] == channel)):  # Exact channel match
                 
-                current_update += 1
-                self.route_update_counter += 1
+                # Prevent processing the same route multiple times
+                if key in processed_routes:
+                    continue
+                processed_routes.add(key)
                 
                 # Get the source value for this specific channel, default to 0.0
                 source_value = self.source_values[source].get(channel, 0.0)
                 
                 if Constants.DEBUG:
-                    print("[MOD] Updating Route (Step {} of {}, Loop {})".format(
-                        current_update, total_updates, self.route_update_counter))
+                    print("[MOD] Updating Route:")
                     print("[MOD]   Source: {} -> Target: {}".format(
                         get_source_name(key[0]), get_target_name(key[1])))
                 
