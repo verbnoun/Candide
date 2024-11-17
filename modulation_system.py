@@ -32,53 +32,49 @@ def get_target_name(target):
     return "Unknown Target ({})".format(target)
 
 class ModulationMatrix:
+    """Modulation routing and processing system for MPE synthesis.
+    
+    Handles:
+    - Base values (note, velocity) 
+    - Control values (pressure, timbre, bend)
+    - LFO modulation
+    - Proper value persistence
+    - Per-channel modulation
+    - Multi-source modulation combining
+    
+    Signal flow:
+    1. Base values set via set_source_value()
+    2. Control values update via set_source_value()
+    3. Routes process values through get_target_value()
+    4. Values combined according to target type
+    """
     def __init__(self):
-        self.routes = {}
-        self.source_values = {}
-        self.blocks = []
-        self.current_key_press = None
-        self.processed_routes = {}  # Track processed routes per source
+        self.routes = {}  # (source, target, channel): ModulationRoute
+        self.source_values = {}  # source: {channel: value}
+        self.blocks = []  # Active synth blocks (LFOs etc)
+        self.base_values = {}  # (source, channel): value - For persistent values like note freq
+        self._debug_last_values = {}  # For detecting significant changes in debug logging
         
-    def start_key_press(self, note, channel):
-        """Start tracking a new key press"""
-        self.current_key_press = {
-            'note': note,
-            'channel': channel,
-            'start_time': synthio.get_time_ms()
-        }
-        if Constants.DEBUG:
-            print("\n[KEY PRESS] Started: Note {}, Channel {}".format(note, channel))
-    
-    def end_key_press(self):
-        """End the current key press tracking"""
-        if self.current_key_press and Constants.DEBUG:
-            duration = synthio.get_time_ms() - self.current_key_press['start_time']
-            print("[KEY PRESS] Ended: Note {}, Channel {}, Duration {}ms".format(
-                self.current_key_press['note'], 
-                self.current_key_press['channel'], 
-                duration
-            ))
-        self.current_key_press = None
-    
     def add_route(self, source, target, amount=1.0, channel=None):
         """Add a modulation route with optional per-channel routing"""
         key = (source, target, channel)
         if key not in self.routes:
             route = ModulationRoute(source, target, amount, channel)
             self.routes[key] = route
-            # Create synthio.Math block if needed
+            
+            # Create math block if needed
             if route.needs_math_block():
                 route.create_math_block()
                 self.blocks.append(route.math_block)
             
             if Constants.DEBUG:
-                source_name = get_source_name(source)
-                target_name = get_target_name(target)
-                print("[MOD] Added Modulation Route: {} -> {}".format(source_name, target_name))
-                print("[MOD]   Channel: {}, Amount: {}".format(channel, amount))
-                if self.current_key_press:
-                    print("[MOD]   Context: Note {}".format(self.current_key_press['note']))
-    
+                print("[MOD] Added Route: {} -> {} (ch={}, amt={:.3f})".format(
+                    get_source_name(source),
+                    get_target_name(target),
+                    channel if channel is not None else 'all',
+                    amount
+                ))
+                
     def remove_route(self, source, target, channel=None):
         """Remove a modulation route"""
         key = (source, target, channel)
@@ -87,138 +83,157 @@ class ModulationMatrix:
             if route.math_block and route.math_block in self.blocks:
                 self.blocks.remove(route.math_block)
             del self.routes[key]
+            
+            if Constants.DEBUG:
+                print("[MOD] Removed Route: {} -> {} (ch={})".format(
+                    get_source_name(source),
+                    get_target_name(target),
+                    channel if channel is not None else 'all'
+                ))
     
     def set_source_value(self, source, channel, value):
-        """Set value for a modulation source"""
+        """Set value for a modulation source.
+        
+        Handles both persistent base values (NOTE, VELOCITY)
+        and continuous control values (PRESSURE, TIMBRE, PITCH_BEND)
+        """
+        # Store value
         if source not in self.source_values:
             self.source_values[source] = {}
-        
-        # Ensure the channel is tracked
-        if channel not in self.source_values[source]:
-            self.source_values[source][channel] = 0.0
-        
-        # Update the source value
         self.source_values[source][channel] = value
         
+        # Store base values separately for persistence
+        if source in (ModSource.NOTE, ModSource.VELOCITY):
+            self.base_values[(source, channel)] = value
+        
+        # Debug logging with change detection
         if Constants.DEBUG:
-            source_name = get_source_name(source)
-            print("\n[MOD] Source Value Updated: {}".format(source_name))
-            print("[MOD]   Channel: {}, Value: {}".format(channel, value))
-            if source == ModSource.VELOCITY:
-                print("[DEBUG] Velocity set for channel {}: {} by set_source_value".format(channel, value))
-            if self.current_key_press:
-                print("[MOD]   Context: Note {}".format(self.current_key_press['note']))
+            last_value = self._debug_last_values.get((source, channel))
+            if last_value is None or abs(value - last_value) > 0.001:
+                print("\n[MOD] Source Value Updated: {}".format(get_source_name(source)))
+                print("[MOD]   Channel: {}, Value: {:.6f}".format(channel, value))
+                if source == ModSource.VELOCITY:
+                    print("[DEBUG] Velocity value for channel {}: {:.6f}".format(channel, value))
+                self._debug_last_values[(source, channel)] = value
         
-        # Reset processed routes for this source
-        if source in self.processed_routes:
-            del self.processed_routes[source]
+        # Process routes for control sources
+        if source not in (ModSource.NOTE, ModSource.VELOCITY):
+            self._update_control_routes(source, channel)
+            
+    def get_target_value(self, target, channel):
+        """Get current value for a modulation target.
         
-        # Update all routes using this source
-        self._update_routes(source, channel)
-    
-    def get_target_value(self, target, channel=None):
-        """Get current value for a modulation target"""
-        total = 0.0
-        matching_routes = []
-        
+        Combines values based on target type:
+        - OSC_PITCH: Base note + pitch bend
+        - AMPLITUDE: Base velocity * pressure
+        - FILTER_*/Others: Sum of modulations
+        """
         if Constants.DEBUG:
-            target_name = get_target_name(target)
-            print("\n[MOD] Calculating Target Value: {}".format(target_name))
-            print("[MOD]   Channel: {}".format(channel))
-            if self.current_key_press:
-                print("[MOD]   Context: Note {}".format(self.current_key_press['note']))
+            print("\n[MOD] Getting Target: {} (ch={})".format(
+                get_target_name(target), channel))
         
-        total_routes = len([key for key in self.routes.keys() if key[1] == target])
-        current_step = 0
+        # Get base value first
+        base_value = 0.0
+        if target == ModTarget.OSC_PITCH:
+            base_value = self.base_values.get((ModSource.NOTE, channel), 0.0)
+        elif target == ModTarget.AMPLITUDE:
+            base_value = self.base_values.get((ModSource.VELOCITY, channel), 1.0)
+            
+        # Initialize accumulators for different combination types
+        multiplicative_mod = 1.0  # For multiplication (e.g. amplitude)
+        additive_mod = 0.0  # For addition (e.g. pitch bend)
+        greatest_mod = 0.0  # For maximum value (e.g. filter)
         
+        # Process all routes targeting this parameter
         for key, route in self.routes.items():
-            # More flexible route matching
-            if (key[1] == target and 
-                (key[2] is None or  # Global route
-                 channel is None or  # No specific channel requested
-                 key[2] == channel)):  # Exact channel match
+            source, route_target, route_channel = key
+            
+            # Skip if not matching target or channel
+            if route_target != target:
+                continue
+            if route_channel is not None and route_channel != channel:
+                continue
                 
-                current_step += 1
-                matching_routes.append(key)
-                source = key[0]
-                source_values = self.source_values.get(source, {})
+            # Get source value for this route
+            source_value = self._get_source_value(source, channel)
+            if source_value == 0.0:
+                continue
                 
-                source_name = get_source_name(source)
-                target_name = get_target_name(target)
+            # Process value through route
+            mod_value = route.process(source_value, context="get_target_value")
+            
+            # Combine based on target type
+            if target == ModTarget.AMPLITUDE:
+                multiplicative_mod *= (1.0 + mod_value)  # Pressure increases amplitude
+            elif target == ModTarget.OSC_PITCH:
+                additive_mod += mod_value  # Pitch bend adds to base
+            else:  # FILTER_CUTOFF, FILTER_RESONANCE, etc
+                greatest_mod = max(greatest_mod, mod_value)
                 
-                # Prefer channel-specific value, fall back to global
-                source_value = (
-                    source_values.get(channel) or  # Channel-specific value
-                    source_values.get(None, 0.0)   # Global/default value
-                )
-                
-                route_value = route.process(source_value, context="get_target_value")
-                
-                if Constants.DEBUG:
-                    print("[MOD] Route Analysis (Step {} of {}):".format(current_step, total_routes))
-                    print("[MOD]   {} -> {}".format(source_name, target_name))
-                    print("[MOD]   Source Value: {}".format(source_value))
-                    print("[MOD]   Processed Value: {}".format(route_value))
-                
-                total += route_value
+            if Constants.DEBUG:
+                print("[MOD]   Route {} -> {}: {:.6f}".format(
+                    get_source_name(source),
+                    get_target_name(target),
+                    mod_value
+                ))
         
+        # Combine base and modulation
+        final_value = base_value
+        if target == ModTarget.AMPLITUDE:
+            final_value *= multiplicative_mod
+        elif target == ModTarget.OSC_PITCH:
+            final_value += additive_mod
+        else:
+            final_value = greatest_mod
+            
         if Constants.DEBUG:
-            print("[MOD] Target Value Summary:")
-            print("[MOD]   Total Value: {}".format(total))
-            print("[MOD]   Processed {} Matching Routes".format(len(matching_routes)))
+            print("[MOD]   Final Value: {:.6f} (base={:.6f})".format(final_value, base_value))
+            
+        return final_value
         
-        return total
-    
-    def _update_routes(self, source, channel):
-        """Update all routes for a given source/channel combination"""
-        # Ensure source exists in source_values
-        if source not in self.source_values:
-            return
+    def _get_source_value(self, source, channel):
+        """Get current value for a source, including base values"""
+        # Check base values first for persistent sources
+        if (source, channel) in self.base_values:
+            return self.base_values[(source, channel)]
+            
+        # Otherwise get from source values
+        return self.source_values.get(source, {}).get(channel, 0.0)
         
-        # Initialize processed routes for this source if not exists
-        if source not in self.processed_routes:
-            self.processed_routes[source] = set()
+    def _update_control_routes(self, source, channel):
+        """Update routes for control sources (pressure, timbre, pitch bend, LFOs)"""
+        source_value = self.source_values[source][channel]
         
-        for key, route in list(self.routes.items()):  # Use list to avoid runtime modification
-            # Check if the route's source matches
-            if key[0] == source:
-                # Create a unique key that ignores channel specificity
-                route_unique_key = (key[0], key[1])
+        for key, route in list(self.routes.items()):
+            route_source, _, route_channel = key
+            
+            # Only process matching source and channel
+            if route_source != source:
+                continue
+            if route_channel is not None and route_channel != channel:
+                continue
                 
-                # Prevent processing the same route multiple times
-                if route_unique_key in self.processed_routes[source]:
-                    continue
+            if Constants.DEBUG:
+                print("[MOD] Updating Control Route:")
+                print("[MOD]   {} -> {} (ch={})".format(
+                    get_source_name(source),
+                    get_target_name(route.target),
+                    channel
+                ))
                 
-                # Check if the route matches the channel
-                if (key[2] is None or  # Global route
-                    channel is None or  # No specific channel requested
-                    key[2] == channel):  # Exact channel match
-                    
-                    # Get the source value for this specific channel, default to 0.0
-                    source_value = self.source_values[source].get(channel, 0.0)
-                    
-                    # Skip processing if source value is effectively zero
-                    if abs(source_value) < 1e-6:
-                        continue
-                    
-                    if Constants.DEBUG:
-                        print("[MOD] Updating Route:")
-                        print("[MOD]   Source: {} -> Target: {}".format(
-                            get_source_name(key[0]), get_target_name(key[1])))
-                        if source == ModSource.VELOCITY:
-                            print("[DEBUG] Processing velocity for channel {}: {} by _update_routes".format(channel, source_value))
-                    
-                    try:
-                        # Process the value through the route
-                        route.process(source_value, context="_update_routes")
-                        
-                        # Mark this route as processed
-                        self.processed_routes[source].add(route_unique_key)
-                    except Exception as e:
-                        # Log any processing errors
-                        print(f"[ERROR] Route processing failed: {e}")
-                        print(f"Source: {source}, Channel: {channel}, Value: {source_value}")
-                        print(f"Route details: {key}")
+            try:
+                route.process(source_value, context="_update_control_routes")
+            except Exception as e:
+                print(f"[ERROR] Route processing failed: {e}")
+                print(f"Source: {source}, Channel: {channel}, Value: {source_value}")
+                
+    def cleanup(self):
+        """Remove all routes and clear state"""
+        self.routes.clear()
+        self.source_values.clear()
+        self.base_values.clear()
+        self.blocks.clear()
+        self._debug_last_values.clear()
 
 class ModulationRoute:
     def __init__(self, source, target, amount=1.0, channel=None):
