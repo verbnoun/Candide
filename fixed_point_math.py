@@ -42,10 +42,13 @@ class FixedPoint:
             b = FixedPoint.from_float(float(b))
         return (a * b) >> 16
     
-    @staticmethod
+    @staticmethod 
     def normalize_midi_value(value):
         """Normalize MIDI value (0-127) to 0-1 range"""
-        return value * FixedPoint.MIDI_SCALE
+        # First normalize to 0-1 range in floating point
+        normalized = value * FixedPoint.MIDI_SCALE  
+        # Then convert normalized float to fixed-point format
+        return FixedPoint.from_float(normalized)
     
     @staticmethod
     def normalize_pitch_bend(value):

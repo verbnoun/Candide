@@ -12,31 +12,23 @@ class MPESynthesizer:
     
     MPE Signal Flow Overview:
     1. MIDI Input -> MPEMessageRouter
-       - Routes note on/off to voice manager
-       - Routes continuous controllers to parameter processor
+       Routes note on/off and control messages
+       Captures initial control values before note-on
     
     2. MPEVoiceManager
-       - Allocates/tracks voices per channel
-       - Maintains voice-to-channel mapping
+       Tracks voice/channel mapping and initial control state
+       Stores pre-note control values
+       Applies initial values during voice allocation
     
     3. MPEParameterProcessor -> ModulationMatrix
-       - Normalizes MPE parameters (pressure, pitch bend, timbre)
-       - Updates modulation matrix source values
+       Handles ongoing control value updates after note-on
+       Routes modulation based on instrument config
     
     4. ModulationMatrix -> SynthesisEngine
-       - Routes MPE parameters to synthesis targets:
-         * Note number -> oscillator frequency
-         * Velocity -> initial amplitude
-         * Pressure -> ongoing amplitude/filter modulation
-         * Pitch bend -> frequency modulation
-         * Timbre (CC74) -> filter cutoff
-    
-    5. SynthesisEngine -> Audio Output
-       - Applies modulated parameters to synthesis
-       - Generates audio output
+       Applies modulation only for enabled performance features
+       Note: initial values bypass modulation matrix
     """
     def __init__(self, output_manager=None):
-        # Use provided output manager or create new one
         self.output_manager = output_manager or AudioOutputManager()
         self.synth = synthio.Synthesizer(
             sample_rate=Constants.SAMPLE_RATE,
@@ -46,11 +38,8 @@ class MPESynthesizer:
         if Constants.DEBUG:
             print("[SYNTH] Synthesizer initialized")
         
-        # Initialize modulation system for routing MPE parameters
         self.mod_matrix = ModulationMatrix()
         self.lfo_manager = LFOManager(self.mod_matrix)
-        
-        # Initialize MPE voice and parameter management
         self.voice_manager = MPEVoiceManager()
         self.parameter_processor = MPEParameterProcessor(
             self.voice_manager,
@@ -61,62 +50,71 @@ class MPESynthesizer:
             self.parameter_processor
         )
         
-        # Initialize synthesis engine that receives MPE modulation
         self.engine = SynthesisEngine(self.synth)
-        
-        # Set up audio chain
         self.output_manager.attach_synthesizer(self.synth)
-        
-        # Attach global LFOs
         self.lfo_manager.attach_to_synth(self.synth)
+
+        # Track current instrument configuration
+        self.current_instrument = None
         
-    def process_mpe_events(self, events):
-        """Process incoming MPE messages
-        
-        MPE Signal Flow:
-        1. Receive MPE MIDI messages
-        2. Route through message router to appropriate handlers
-        3. Update voice/parameter state
-        4. Trigger synthesis updates
-        """
-        if not events:
-            return
-            
-        if self.output_manager.performance.should_throttle():
-            # If system is heavily loaded, prioritize note events
-            events = [e for e in events if e.get('type') in ('note_on', 'note_off')]
-            if Constants.DEBUG:
-                print("[SYNTH] System loaded - throttling messages")
-            
-        for event in events:
-            result = self.message_router.route_message(event)
-            if result:
-                if result['type'] == 'voice_allocated':
-                    self._handle_voice_allocation(result['voice'])
-                elif result['type'] == 'voice_released':
-                    self._handle_voice_release(result['voice'])
-                    
     def _handle_voice_allocation(self, voice):
-        """Handle new voice allocation
+        """Handle new voice allocation with initial control values
         
-        MPE Signal Flow:
-        1. Get modulated frequency from mod matrix (note + pitch bend)
-        2. Get initial amplitude from velocity
-        3. Create synthio note with parameters
+        Following MPE spec 2.4.1:
+        1. Apply initial control values captured before note-on
+        2. Create note with proper initial state
+        3. Only then enable modulation matrix updates
         """
         if voice and not voice.synth_note:
-            # Create new synthio note
+            # Directly access initial_state dictionary instead of calling a method
+            initial_state = voice.initial_state
+            
+            # Get base frequency from note number
             frequency = FixedPoint.to_float(
                 self.mod_matrix.get_target_value(ModTarget.OSC_PITCH, voice.channel)
             )
             
-            # Ensure frequency is within a reasonable range
+            # Apply initial pitch bend if enabled
+            if self.current_instrument and \
+               self.current_instrument['performance'].get('pitch_bend_enabled', False):
+                bend_range = self.current_instrument['performance'].get('pitch_bend_range', 2)
+                bend_amount = initial_state['bend'] * (bend_range / 12.0)  # convert semitones to ratio
+                frequency *= pow(2, bend_amount)
+            
+            # Ensure frequency is in valid range
             frequency = max(20.0, min(frequency, 20000.0))
             
-            # Normalize velocity to amplitude range 0-1
-            amplitude = max(0.0, min(voice.velocity, 1.0))
+            # Get velocity-based amplitude
+            amplitude = initial_state['velocity']
+            if Constants.DEBUG:
+                print(f"[DEBUG] Raw velocity value: {initial_state['velocity']}")
+                print(f"[DEBUG] Normalized amplitude: {amplitude}")
             
+            # Apply initial pressure if enabled
+            if self.current_instrument and \
+               self.current_instrument['performance'].get('pressure_enabled', False):
+                pressure_sens = self.current_instrument['performance'].get('pressure_sensitivity', 1.0)
+                amplitude *= (1.0 + (initial_state['pressure'] * pressure_sens))
+            
+            # Clamp final amplitude
+            amplitude = max(0.0, min(amplitude, 1.0))
+            
+            # Create the note with initial values
             voice.synth_note = self.engine.create_note(frequency, amplitude)
+            
+            # Apply initial timbre via filter if configured
+            if self.current_instrument and 'filter' in self.current_instrument:
+                filter_config = self.current_instrument['filter']
+                cutoff = filter_config['cutoff']
+                if self.current_instrument['performance'].get('pressure_enabled', False):
+                    # Modify cutoff based on initial timbre value
+                    cutoff *= (1.0 + initial_state['timbre'])
+                voice.synth_note.filter = self.engine.filter_manager.create_filter(
+                    cutoff=cutoff,
+                    resonance=filter_config.get('resonance', 0.7)
+                )
+            
+            # Start the note
             self.synth.press(voice.synth_note)
             self.output_manager.performance.active_voices += 1
             
@@ -131,21 +129,111 @@ class MPESynthesizer:
             self.output_manager.performance.active_voices -= 1
             
             if Constants.DEBUG:
-                print("[SYNTH] Voice released: ch={0}, note={1}".format(voice.channel, voice.note))
+                print(f"[SYNTH] Voice released: ch={voice.channel}, note={voice.note}")
+    
+    def set_instrument(self, instrument_config):
+        """Configure synthesizer with new instrument settings"""
+        if not instrument_config:
+            return
             
+        if Constants.DEBUG:
+            print("[SYNTH] Setting new instrument configuration")
+        
+        self.current_instrument = instrument_config
+            
+        # Update synthesis parameters
+        if 'oscillator' in instrument_config:
+            osc = instrument_config['oscillator']
+            if 'waveform' in osc:
+                self.engine.waveform_manager.get_waveform(osc['waveform'])
+                
+        # Clear ALL existing routes
+        self.mod_matrix.routes.clear()
+        
+        # Essential routes that are ALWAYS active
+        self.mod_matrix.add_route(ModSource.NOTE, ModTarget.OSC_PITCH, amount=1.0)
+        
+        # Get performance settings
+        perf = instrument_config.get('performance', {})
+        velocity_sensitivity = perf.get('velocity_sensitivity', 1.0)
+        
+        # Velocity to amplitude (if velocity sensitivity > 0)
+        if velocity_sensitivity > 0:
+            self.mod_matrix.add_route(
+                ModSource.VELOCITY, 
+                ModTarget.AMPLITUDE,
+                amount=velocity_sensitivity
+            )
+
+        # Only add performance-based routes if explicitly enabled
+        if perf.get('pressure_enabled', False):
+            if perf.get('pressure_sensitivity', 0) > 0:
+                self.mod_matrix.add_route(
+                    ModSource.PRESSURE,
+                    ModTarget.AMPLITUDE,
+                    amount=perf.get('pressure_sensitivity', Constants.DEFAULT_PRESSURE_SENSITIVITY)
+                )
+        
+        if perf.get('pitch_bend_enabled', False):
+            if perf.get('pitch_bend_range', 0) > 0:
+                self.mod_matrix.add_route(
+                    ModSource.PITCH_BEND,
+                    ModTarget.OSC_PITCH,
+                    amount=perf.get('pitch_bend_range', 2) / 12.0
+                )
+        
+        # Add custom modulation routings if allowed by performance settings
+        if 'modulation' in instrument_config:
+            for route in instrument_config['modulation']:
+                source = route['source']
+                if ((source == ModSource.PRESSURE and not perf.get('pressure_enabled', False)) or
+                    (source == ModSource.PITCH_BEND and not perf.get('pitch_bend_enabled', False))):
+                    if Constants.DEBUG:
+                        print(f"[SYNTH] Skipping disabled route source: {source}")
+                    continue
+                    
+                self.mod_matrix.add_route(
+                    source,
+                    route['target'],
+                    route.get('amount', 1.0)
+                )
+                
+        # Update performance settings
+        if 'performance' in instrument_config:
+            perf = instrument_config['performance']
+            self.parameter_processor.config.pressure_sensitivity = perf.get(
+                'pressure_sensitivity',
+                Constants.DEFAULT_PRESSURE_SENSITIVITY
+            )
+            
+    def process_mpe_events(self, events):
+        """Process incoming MPE messages"""
+        if not events:
+            return
+            
+        if self.output_manager.performance.should_throttle():
+            events = [e for e in events if e.get('type') in ('note_on', 'note_off')]
+            if Constants.DEBUG:
+                print("[SYNTH] System loaded - throttling messages")
+            
+        for event in events:
+            result = self.message_router.route_message(event)
+            if result:
+                if result['type'] == 'voice_allocated':
+                    self._handle_voice_allocation(result['voice'])
+                elif result['type'] == 'voice_released':
+                    self._handle_voice_release(result['voice'])
+                    
     def update(self):
         """Main update loop
         
-        MPE Signal Flow:
-        1. Process modulation matrix updates from MPE parameters
-        2. Update synthesis parameters for each active voice
-        3. Update audio output system
+        Note: Initial control values bypass modulation matrix.
+        Only ongoing control changes after note-on use modulation.
         """
         try:
             # Update modulation from MPE parameters
             for key, route in self.mod_matrix.routes.items():
                 if route.needs_update:
-                    # Retrieve the source value for the route
                     source_value = self.mod_matrix.source_values.get(key[0], {}).get(key[2], 0.0)
                     route.process(source_value)
                     
@@ -162,101 +250,24 @@ class MPESynthesizer:
             print("Update error: {0}".format(str(e)))
             
     def _collect_voice_parameters(self, voice):
-        """Collect all modulated parameters for a voice
-        
-        MPE Signal Flow:
-        1. Gather all modulated parameters from mod matrix:
-           - OSC_PITCH: Note number + pitch bend
-           - AMPLITUDE: Velocity + pressure
-           - FILTER_CUTOFF: Often mapped from timbre
-           - FILTER_RESONANCE: Can be mapped from pressure
-        """
+        """Collect all modulated parameters for a voice"""
         return {
             'frequency': FixedPoint.to_float(self.mod_matrix.get_target_value(ModTarget.OSC_PITCH, voice.channel)),
             'amplitude': FixedPoint.to_float(self.mod_matrix.get_target_value(ModTarget.AMPLITUDE, voice.channel)),
             'filter_cutoff': FixedPoint.to_float(self.mod_matrix.get_target_value(ModTarget.FILTER_CUTOFF, voice.channel)),
             'filter_resonance': FixedPoint.to_float(self.mod_matrix.get_target_value(ModTarget.FILTER_RESONANCE, voice.channel))
         }
-        
-    def set_instrument(self, instrument_config):
-        """Configure synthesizer with new instrument settings
-        
-        MPE Signal Flow:
-        1. Set up essential MIDI->synth parameter routes
-        2. Configure performance controls (pressure, pitch bend)
-        3. Add custom modulation routings
-        """
-        if not instrument_config:
-            return
-            
-        if Constants.DEBUG:
-            print("[SYNTH] Setting new instrument configuration")
-            
-        # Update synthesis parameters
-        if 'oscillator' in instrument_config:
-            osc = instrument_config['oscillator']
-            if 'waveform' in osc:
-                self.engine.waveform_manager.get_waveform(osc['waveform'])
-                
-        # Clear existing routes
-        self.mod_matrix.routes.clear()
-        
-        # Set up essential MIDI->synth parameter routes
-        # Note number to frequency (always active)
-        self.mod_matrix.add_route(ModSource.NOTE, ModTarget.OSC_PITCH, amount=1.0)
-        
-        # Velocity to amplitude (always active)
-        self.mod_matrix.add_route(ModSource.VELOCITY, ModTarget.AMPLITUDE, amount=1.0)
-        
-        # Add performance-based routes if enabled
-        if 'performance' in instrument_config:
-            perf = instrument_config['performance']
-            
-            # Pressure to amplitude if enabled
-            if perf.get('pressure_enabled', False):
-                self.mod_matrix.add_route(
-                    ModSource.PRESSURE,
-                    ModTarget.AMPLITUDE,
-                    amount=perf.get('pressure_sensitivity', Constants.DEFAULT_PRESSURE_SENSITIVITY)
-                )
-            
-            # Pitch bend if enabled
-            if perf.get('pitch_bend_enabled', False):
-                self.mod_matrix.add_route(
-                    ModSource.PITCH_BEND,
-                    ModTarget.OSC_PITCH,
-                    amount=perf.get('pitch_bend_range', 2) / 12.0  # Convert semitones to octaves
-                )
-        
-        # Add custom modulation routings from config
-        if 'modulation' in instrument_config:
-            for route in instrument_config['modulation']:
-                self.mod_matrix.add_route(
-                    route['source'],
-                    route['target'],
-                    route.get('amount', 1.0)
-                )
-                
-        # Update performance settings
-        if 'performance' in instrument_config:
-            perf = instrument_config['performance']
-            self.parameter_processor.config.pressure_sensitivity = perf.get(
-                'pressure_sensitivity',
-                Constants.DEFAULT_PRESSURE_SENSITIVITY
-            )
-            
+
     def cleanup(self):
         """Clean shutdown"""
         try:
             if Constants.DEBUG:
                 print("[SYNTH] Starting cleanup...")
                 
-            # Release all active voices
             for voice in self.voice_manager.active_voices.values():
                 if voice.active and voice.synth_note:
                     self.synth.release(voice.synth_note)
                     
-            # Clean up audio system only if we created it
             if not hasattr(self, '_output_manager_provided'):
                 self.output_manager.cleanup()
                 

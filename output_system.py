@@ -113,7 +113,7 @@ class AudioOutputManager:
             self.mixer.voice[0].level = FixedPoint.to_float(new_volume)
             
             # Only log if volume has changed significantly
-            if Constants.DEBUG and abs(FixedPoint.to_float(new_volume) - self._last_logged_volume) > 0.01:
+            if Constants.DEBUG and abs(FixedPoint.to_float(new_volume) - self._last_logged_volume) >= 0.1:
                 print("[AUDIO] Volume set to {0:.2f}".format(FixedPoint.to_float(new_volume)))
                 self._last_logged_volume = FixedPoint.to_float(new_volume)
                 
