@@ -1,6 +1,4 @@
 import board
-import time
-import digitalio
 import analogio
 import rotaryio
 
