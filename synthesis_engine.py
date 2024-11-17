@@ -154,6 +154,9 @@ class SynthesisEngine:
             filter=self.filter_manager.create_filter()
         )
         
+        if Constants.DEBUG:
+            print("[SYNTH] Created note: freq={0:.2f}Hz, vel={1:.2f}".format(frequency, velocity))
+        
         return note
     
     def create_ring_modulated_note(self, frequency, ring_freq, velocity=1.0,
@@ -173,12 +176,19 @@ class SynthesisEngine:
             ring_waveform=modulator
         )
         
+        if Constants.DEBUG:
+            print("[SYNTH] Created ring mod note: freq={0:.2f}Hz, ring={1:.2f}Hz".format(frequency, ring_freq))
+        
         return note
     
     def update_note_parameters(self, note, params):
         """Update parameters for an existing note"""
         if not note.synth_note:
             return
+            
+        if Constants.DEBUG:
+            param_str = ", ".join("{0}={1:.2f}".format(k, v) for k, v in params.items())
+            print("[SYNTH] Updating note params: {0}".format(param_str))
             
         if 'frequency' in params:
             note.synth_note.frequency = params['frequency']

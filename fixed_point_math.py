@@ -1,3 +1,5 @@
+import math
+
 class FixedPoint:
     """Fixed-point math utilities for audio calculations"""
     SCALE = 1 << 16
@@ -10,7 +12,7 @@ class FixedPoint:
     ZERO = 0
     
     # Scaling factors
-    MIDI_SCALE = 516  # 1/127 in fixed point
+    MIDI_SCALE = int((1 << 16) / 127)  # Corrected MIDI scaling
     PITCH_BEND_SCALE = 8  # 1/8192 in fixed point
     PITCH_BEND_CENTER = 8192 << 16
     
@@ -49,3 +51,21 @@ class FixedPoint:
     def normalize_pitch_bend(value):
         """Normalize pitch bend value (0-16383) to -1 to 1 range"""
         return ((value << 16) - FixedPoint.PITCH_BEND_CENTER) * FixedPoint.PITCH_BEND_SCALE
+    
+    @staticmethod
+    def midi_note_to_frequency(note):
+        """Convert MIDI note number to frequency"""
+        # Clamp note to reasonable range
+        note = max(0, min(note, 127))
+        # Standard MIDI note to frequency formula
+        return 440.0 * (2.0 ** ((note - 69) / 12.0))
+    
+    @staticmethod
+    def midi_note_to_fixed(note):
+        """Convert MIDI note number to fixed-point frequency"""
+        # Clamp note to reasonable range
+        note = max(0, min(note, 127))
+        # Standard MIDI note to frequency formula
+        freq = 440.0 * (2.0 ** ((note - 69) / 12.0))
+        # Convert to fixed point
+        return FixedPoint.from_float(freq)

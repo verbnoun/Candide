@@ -1,7 +1,7 @@
 import board
 
 class Constants:
-    DEBUG = False
+    DEBUG = True
     
     # Audio Hardware (PCM5102A DAC)
     I2S_BIT_CLOCK = board.GP1

@@ -139,6 +139,16 @@ class MPEMessageRouter:
             note = data.get('note')
             velocity = data.get('velocity', 127)
             voice = self.voice_manager.allocate_voice(channel, note, velocity)
+            
+            # NEW: Set note value as source for OSC_PITCH
+            # Convert MIDI note to frequency and set as source value
+            note_freq = FixedPoint.midi_note_to_fixed(note)
+            self.parameter_processor.mod_matrix.set_source_value(
+                ModSource.NOTE, 
+                channel, 
+                FixedPoint.to_float(note_freq)
+            )
+            
             return {'type': 'voice_allocated', 'voice': voice}
             
         elif msg_type == 'note_off':

@@ -2,13 +2,63 @@ import synthio
 from fixed_point_math import FixedPoint
 from synth_constants import Constants, ModSource, ModTarget
 
+def get_source_name(source):
+    """Convert source enum to human-readable name"""
+    source_names = {
+        ModSource.NONE: "None",
+        ModSource.PRESSURE: "Pressure",
+        ModSource.PITCH_BEND: "Pitch Bend",
+        ModSource.TIMBRE: "Timbre",
+        ModSource.LFO1: "LFO 1",
+        ModSource.VELOCITY: "Velocity",
+        ModSource.NOTE: "Note"
+    }
+    if source in source_names:
+        return source_names[source]
+    return "Unknown Source ({})".format(source)
+
+def get_target_name(target):
+    """Convert target enum to human-readable name"""
+    target_names = {
+        ModTarget.NONE: "None",
+        ModTarget.FILTER_CUTOFF: "Filter Cutoff",
+        ModTarget.FILTER_RESONANCE: "Filter Resonance",
+        ModTarget.OSC_PITCH: "Oscillator Pitch",
+        ModTarget.AMPLITUDE: "Amplitude",
+        ModTarget.RING_FREQUENCY: "Ring Frequency"
+    }
+    if target in target_names:
+        return target_names[target]
+    return "Unknown Target ({})".format(target)
+
 class ModulationMatrix:
-    """Routes modulation sources to targets using synthio.Math blocks"""
     def __init__(self):
-        self.routes = {}  # (source, target): ModulationRoute
-        self.source_values = {}  # source: {channel: value}
-        self.blocks = []  # Active synthio.Math blocks
+        self.routes = {}
+        self.source_values = {}
+        self.blocks = []
+        self.current_key_press = None
         
+    def start_key_press(self, note, channel):
+        """Start tracking a new key press"""
+        self.current_key_press = {
+            'note': note,
+            'channel': channel,
+            'start_time': synthio.get_time_ms()
+        }
+        if Constants.DEBUG:
+            print("\n[KEY PRESS] Started: Note {}, Channel {}".format(note, channel))
+    
+    def end_key_press(self):
+        """End the current key press tracking"""
+        if self.current_key_press and Constants.DEBUG:
+            duration = synthio.get_time_ms() - self.current_key_press['start_time']
+            print("[KEY PRESS] Ended: Note {}, Channel {}, Duration {}ms".format(
+                self.current_key_press['note'], 
+                self.current_key_press['channel'], 
+                duration
+            ))
+        self.current_key_press = None
+    
     def add_route(self, source, target, amount=1.0, channel=None):
         """Add a modulation route with optional per-channel routing"""
         key = (source, target, channel)
@@ -19,6 +69,14 @@ class ModulationMatrix:
             if route.needs_math_block():
                 route.create_math_block()
                 self.blocks.append(route.math_block)
+            
+            if Constants.DEBUG:
+                source_name = get_source_name(source)
+                target_name = get_target_name(target)
+                print("[MOD] Added Modulation Route: {} -> {}".format(source_name, target_name))
+                print("[MOD]   Channel: {}, Amount: {}".format(channel, amount))
+                if self.current_key_press:
+                    print("[MOD]   Context: Note {}".format(self.current_key_press['note']))
     
     def remove_route(self, source, target, channel=None):
         """Remove a modulation route"""
@@ -35,16 +93,55 @@ class ModulationMatrix:
             self.source_values[source] = {}
         self.source_values[source][channel] = value
         
+        if Constants.DEBUG:
+            source_name = get_source_name(source)
+            print("\n[MOD] Source Value Updated: {}".format(source_name))
+            print("[MOD]   Channel: {}, Value: {}".format(channel, value))
+            if self.current_key_press:
+                print("[MOD]   Context: Note {}".format(self.current_key_press['note']))
+        
         # Update all routes using this source
         self._update_routes(source, channel)
     
     def get_target_value(self, target, channel=None):
         """Get current value for a modulation target"""
         total = 0.0
+        matching_routes = []
+        
+        if Constants.DEBUG:
+            target_name = get_target_name(target)
+            print("\n[MOD] Calculating Target Value: {}".format(target_name))
+            print("[MOD]   Channel: {}".format(channel))
+            if self.current_key_press:
+                print("[MOD]   Context: Note {}".format(self.current_key_press['note']))
+        
         for key, route in self.routes.items():
             if key[1] == target and (channel is None or key[2] == channel):
-                source_value = self.source_values.get(key[0], {}).get(channel, 0.0)
-                total += route.process(source_value)
+                matching_routes.append(key)
+                source = key[0]
+                source_values = self.source_values.get(source, {})
+                
+                source_name = get_source_name(source)
+                target_name = get_target_name(target)
+                
+                # Use 0.0 if no source value exists for this channel
+                source_value = source_values.get(channel, 0.0)
+                
+                route_value = route.process(source_value)
+                
+                if Constants.DEBUG:
+                    print("[MOD] Route Analysis:")
+                    print("[MOD]   {} -> {}".format(source_name, target_name))
+                    print("[MOD]   Source Value: {}".format(source_value))
+                    print("[MOD]   Processed Value: {}".format(route_value))
+                
+                total += route_value
+        
+        if Constants.DEBUG:
+            print("[MOD] Target Value Summary:")
+            print("[MOD]   Total Value: {}".format(total))
+            print("[MOD]   Matching Routes: {}".format(len(matching_routes)))
+        
         return total
     
     def _update_routes(self, source, channel):
@@ -55,7 +152,6 @@ class ModulationMatrix:
                 route.update(source_value)
 
 class ModulationRoute:
-    """Handles individual modulation routing with synthio.Math support"""
     def __init__(self, source, target, amount=1.0, channel=None):
         self.source = source
         self.target = target
@@ -97,6 +193,11 @@ class ModulationRoute:
                 0.0,  # will be updated
                 self.amount
             )
+        
+        if Constants.DEBUG:
+            source_name = get_source_name(self.source)
+            target_name = get_target_name(self.target)
+            print("[MOD] Created Math Block: {} -> {}".format(source_name, target_name))
     
     def process(self, value):
         """Process value through route"""
@@ -105,8 +206,19 @@ class ModulationRoute:
             
         if self.math_block:
             self.math_block.a = value
-            return self.math_block.value
-        return value * self.amount
+            processed_value = self.math_block.value
+        else:
+            processed_value = value * self.amount
+        
+        if Constants.DEBUG:
+            source_name = get_source_name(self.source)
+            target_name = get_target_name(self.target)
+            print("[MOD] Route Processing:")
+            print("[MOD]   {} -> {}".format(source_name, target_name))
+            print("[MOD]   Input Value: {}".format(value))
+            print("[MOD]   Processed Value: {}".format(processed_value))
+        
+        return processed_value
     
     def update(self, value):
         """Update route with new value"""
@@ -115,13 +227,19 @@ class ModulationRoute:
             if self.math_block:
                 self.math_block.a = value
             self.needs_update = False
+        
+        if Constants.DEBUG:
+            source_name = get_source_name(self.source)
+            target_name = get_target_name(self.target)
+            print("[MOD] Route Updated:")
+            print("[MOD]   {} -> {}".format(source_name, target_name))
+            print("[MOD]   New Value: {}".format(value))
 
 class LFOManager:
-    """Manages LFO creation and routing"""
     def __init__(self, mod_matrix):
         self.mod_matrix = mod_matrix
-        self.lfos = {}  # name: LFOConfig
-        self.global_lfos = []  # LFOs that should always run
+        self.lfos = {}
+        self.global_lfos = []
         
     def create_lfo(self, name, rate=1.0, shape='triangle', min_value=0.0, max_value=1.0):
         """Create new LFO with given parameters"""
@@ -149,7 +267,6 @@ class LFOManager:
                 synth.blocks.append(lfo.lfo_block)
 
 class LFOConfig:
-    """Configuration and state for a single LFO"""
     def __init__(self, name, rate, shape, min_value, max_value):
         self.name = name
         self.rate = rate
