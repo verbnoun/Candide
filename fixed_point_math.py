@@ -12,7 +12,7 @@ class FixedPoint:
     ZERO = 0
     
     # Scaling factors
-    MIDI_SCALE = int((1 << 16) / 127)  # Corrected MIDI scaling
+    MIDI_SCALE = 1.0 / 127  # Corrected MIDI scaling to 0-1 range
     PITCH_BEND_SCALE = 8  # 1/8192 in fixed point
     PITCH_BEND_CENTER = 8192 << 16
     

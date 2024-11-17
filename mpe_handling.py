@@ -12,7 +12,13 @@ class MPEConfig:
         self.pressure_sensitivity = Constants.DEFAULT_PRESSURE_SENSITIVITY
 
 class MPEVoice:
-    """Tracks state of an active MPE voice and its parameters"""
+    """Tracks state of an active MPE voice and its parameters
+    
+    MPE Signal Flow:
+    1. Each voice represents a note with its own channel for independent control
+    2. Core MPE parameters (pressure, pitch bend, timbre) are tracked per-voice
+    3. These parameters feed into the modulation matrix to affect synthesis
+    """
     def __init__(self, channel, note, velocity):
         self.channel = channel
         self.note = note
@@ -20,22 +26,28 @@ class MPEVoice:
         self.start_time = time.monotonic()
         self.last_update = self.start_time
         
-        # Core MPE parameters
-        self.velocity = FixedPoint.normalize_midi_value(velocity)
-        self.pressure = FixedPoint.ZERO
-        self.pitch_bend = FixedPoint.ZERO
-        self.timbre = FixedPoint.ZERO
+        # Core MPE parameters that feed into synthesis engine
+        self.velocity = FixedPoint.normalize_midi_value(velocity)  # Initial note velocity -> amplitude
+        self.pressure = FixedPoint.ZERO  # Channel pressure -> typically mapped to amplitude/filter
+        self.pitch_bend = FixedPoint.ZERO  # Per-note pitch bend -> frequency modulation
+        self.timbre = FixedPoint.ZERO  # CC74 timbre control -> typically mapped to filter cutoff
         
         # Parameter history for significance tracking
         self.last_pressure = self.pressure
         self.last_pitch_bend = self.pitch_bend
         self.last_timbre = self.timbre
         
-        # Note object reference
+        # Reference to the actual synthio note being controlled
         self.synth_note = None
 
 class MPEVoiceManager:
-    """Manages voice allocation and parameter tracking"""
+    """Manages voice allocation and parameter tracking
+    
+    MPE Signal Flow:
+    1. Allocates/tracks voices for incoming MPE messages
+    2. Each voice gets its own channel for independent parameter control
+    3. Maintains mapping between MIDI channels and active voices
+    """
     def __init__(self):
         self.active_voices = {}  # (channel, note): MPEVoice
         self.channel_voices = {}  # channel: set of active notes
@@ -77,14 +89,21 @@ class MPEVoiceManager:
         return self.active_voices.get((channel, note))
 
 class MPEParameterProcessor:
-    """Processes and normalizes MPE control messages"""
+    """Processes and normalizes MPE control messages
+    
+    MPE Signal Flow:
+    1. Receives raw MPE messages (pressure, pitch bend, timbre)
+    2. Normalizes values and applies sensitivity/scaling
+    3. Updates voice parameters and feeds into modulation matrix
+    4. Modulation matrix then routes these to synthesis parameters
+    """
     def __init__(self, voice_manager, mod_matrix):
         self.voice_manager = voice_manager
         self.mod_matrix = mod_matrix
         self.config = MPEConfig()
         
     def handle_pressure(self, channel, value, voice=None):
-        """Process pressure message"""
+        """Process pressure message -> routes to modulation matrix"""
         normalized = FixedPoint.normalize_midi_value(value)
         if voice and voice.active:
             if self._is_significant_change(voice.pressure, normalized):
@@ -95,7 +114,7 @@ class MPEParameterProcessor:
         return False
         
     def handle_pitch_bend(self, channel, value, voice=None):
-        """Process pitch bend message"""
+        """Process pitch bend message -> routes to modulation matrix"""
         normalized = FixedPoint.normalize_pitch_bend(value)
         if voice and voice.active:
             if self._is_significant_change(voice.pitch_bend, normalized):
@@ -106,7 +125,7 @@ class MPEParameterProcessor:
         return False
         
     def handle_timbre(self, channel, value, voice=None):
-        """Process timbre (CC74) message"""
+        """Process timbre (CC74) message -> routes to modulation matrix"""
         normalized = FixedPoint.normalize_midi_value(value)
         if voice and voice.active:
             if self._is_significant_change(voice.timbre, normalized):
@@ -121,7 +140,15 @@ class MPEParameterProcessor:
         return abs(FixedPoint.to_float(new_value - old_value)) > 0.001
 
 class MPEMessageRouter:
-    """Routes MPE messages to appropriate handlers"""
+    """Routes MPE messages to appropriate handlers
+    
+    MPE Signal Flow:
+    1. Entry point for all incoming MPE MIDI messages
+    2. Routes note on/off to voice manager for allocation/release
+    3. Routes continuous controllers to parameter processor
+    4. Parameter processor updates modulation matrix
+    5. Modulation matrix affects synthesis engine parameters
+    """
     def __init__(self, voice_manager, parameter_processor):
         self.voice_manager = voice_manager
         self.parameter_processor = parameter_processor
@@ -140,13 +167,19 @@ class MPEMessageRouter:
             velocity = data.get('velocity', 127)
             voice = self.voice_manager.allocate_voice(channel, note, velocity)
             
-            # NEW: Set note value as source for OSC_PITCH
-            # Convert MIDI note to frequency and set as source value
+            # Set note frequency as source for oscillator pitch
             note_freq = FixedPoint.midi_note_to_fixed(note)
             self.parameter_processor.mod_matrix.set_source_value(
                 ModSource.NOTE, 
                 channel, 
                 FixedPoint.to_float(note_freq)
+            )
+            
+            # Set velocity as source for amplitude modulation
+            self.parameter_processor.mod_matrix.set_source_value(
+                ModSource.VELOCITY,
+                channel,
+                FixedPoint.to_float(voice.velocity)
             )
             
             return {'type': 'voice_allocated', 'voice': voice}

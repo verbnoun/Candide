@@ -91,6 +91,12 @@ class ModulationMatrix:
         """Set value for a modulation source"""
         if source not in self.source_values:
             self.source_values[source] = {}
+        
+        # Ensure the channel is tracked
+        if channel not in self.source_values[source]:
+            self.source_values[source][channel] = 0.0
+        
+        # Update the source value
         self.source_values[source][channel] = value
         
         if Constants.DEBUG:
@@ -116,7 +122,12 @@ class ModulationMatrix:
                 print("[MOD]   Context: Note {}".format(self.current_key_press['note']))
         
         for key, route in self.routes.items():
-            if key[1] == target and (channel is None or key[2] == channel):
+            # More flexible route matching
+            if (key[1] == target and 
+                (key[2] is None or  # Global route
+                 channel is None or  # No specific channel requested
+                 key[2] == channel)):  # Exact channel match
+                
                 matching_routes.append(key)
                 source = key[0]
                 source_values = self.source_values.get(source, {})
@@ -124,8 +135,11 @@ class ModulationMatrix:
                 source_name = get_source_name(source)
                 target_name = get_target_name(target)
                 
-                # Use 0.0 if no source value exists for this channel
-                source_value = source_values.get(channel, 0.0)
+                # Prefer channel-specific value, fall back to global
+                source_value = (
+                    source_values.get(channel) or  # Channel-specific value
+                    source_values.get(None, 0.0)   # Global/default value
+                )
                 
                 route_value = route.process(source_value)
                 
@@ -146,10 +160,28 @@ class ModulationMatrix:
     
     def _update_routes(self, source, channel):
         """Update all routes for a given source/channel combination"""
-        for key, route in self.routes.items():
-            if key[0] == source and (key[2] is None or key[2] == channel):
-                source_value = self.source_values[source][channel]
-                route.update(source_value)
+        # Ensure source exists in source_values
+        if source not in self.source_values:
+            return
+        
+        for key, route in list(self.routes.items()):  # Use list to avoid runtime modification
+            # Check if the route's source matches and channel is either None or matches
+            if (key[0] == source and 
+                (key[2] is None or  # Global route
+                 channel is None or  # No specific channel requested
+                 key[2] == channel)):  # Exact channel match
+                
+                # Get the source value for this specific channel, default to 0.0
+                source_value = self.source_values[source].get(channel, 0.0)
+                
+                try:
+                    # Process the value through the route
+                    route.process(source_value)
+                except Exception as e:
+                    # Log any processing errors
+                    print(f"[ERROR] Route processing failed: {e}")
+                    print(f"Source: {source}, Channel: {channel}, Value: {source_value}")
+                    print(f"Route details: {key}")
 
 class ModulationRoute:
     def __init__(self, source, target, amount=1.0, channel=None):
@@ -203,37 +235,26 @@ class ModulationRoute:
         """Process value through route"""
         if value != self.last_value:
             self.needs_update = True
-            
-        if self.math_block:
-            self.math_block.a = value
-            processed_value = self.math_block.value
-        else:
-            processed_value = value * self.amount
-        
-        if Constants.DEBUG:
-            source_name = get_source_name(self.source)
-            target_name = get_target_name(self.target)
-            print("[MOD] Route Processing:")
-            print("[MOD]   {} -> {}".format(source_name, target_name))
-            print("[MOD]   Input Value: {}".format(value))
-            print("[MOD]   Processed Value: {}".format(processed_value))
-        
-        return processed_value
-    
-    def update(self, value):
-        """Update route with new value"""
-        if value != self.last_value:
             self.last_value = value
+            
             if self.math_block:
                 self.math_block.a = value
-            self.needs_update = False
+                processed_value = self.math_block.value
+            else:
+                processed_value = value * self.amount
+            
+            if Constants.DEBUG:
+                source_name = get_source_name(self.source)
+                target_name = get_target_name(self.target)
+                print("[MOD] Route Processing:")
+                print("[MOD]   {} -> {}".format(source_name, target_name))
+                print("[MOD]   Input Value: {}".format(value))
+                print("[MOD]   Processed Value: {}".format(processed_value))
+            
+            return processed_value
         
-        if Constants.DEBUG:
-            source_name = get_source_name(self.source)
-            target_name = get_target_name(self.target)
-            print("[MOD] Route Updated:")
-            print("[MOD]   {} -> {}".format(source_name, target_name))
-            print("[MOD]   New Value: {}".format(value))
+        # If value hasn't changed, return last processed value
+        return self.last_value * self.amount if not self.math_block else self.math_block.value
 
 class LFOManager:
     def __init__(self, mod_matrix):

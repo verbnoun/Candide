@@ -80,7 +80,13 @@ class WaveformManager:
         return result
 
 class FilterManager:
-    """Manages filter configurations and updates"""
+    """Manages filter configurations and updates
+    
+    MPE Signal Flow:
+    1. Receives filter parameters from modulation matrix
+    2. Timbre (CC74) often maps to filter cutoff
+    3. Pressure can affect filter resonance
+    """
     def __init__(self, synth):
         self.synth = synth
         self.current_type = FilterType.LOW_PASS
@@ -102,7 +108,7 @@ class FilterManager:
         return None
     
     def update_filter(self, note, cutoff=None, resonance=None):
-        """Update filter parameters for a note"""
+        """Update filter parameters for a note based on MPE modulation"""
         if cutoff:
             self.current_cutoff = max(20, min(20000, cutoff))
         if resonance:
@@ -134,7 +140,16 @@ class EnvelopeManager:
         )
 
 class SynthesisEngine:
-    """Main synthesis engine coordinating voices and parameters"""
+    """Main synthesis engine coordinating voices and parameters
+    
+    MPE Signal Flow:
+    1. Receives modulated parameters from modulation matrix
+    2. Note number -> oscillator frequency
+    3. Velocity -> initial amplitude
+    4. Pressure -> ongoing amplitude modulation
+    5. Pitch bend -> frequency modulation
+    6. Timbre (CC74) -> filter cutoff modulation
+    """
     def __init__(self, synth):
         self.synth = synth
         self.waveform_manager = WaveformManager()
@@ -142,7 +157,12 @@ class SynthesisEngine:
         self.envelope_manager = EnvelopeManager()
         
     def create_note(self, frequency, velocity=1.0, waveform_name='sine'):
-        """Create new synthio Note with current parameters"""
+        """Create new synthio Note with current parameters
+        
+        MPE parameters affect:
+        - frequency: Base pitch + pitch bend modulation
+        - velocity: Initial amplitude scaling
+        """
         waveform = self.waveform_manager.get_waveform(waveform_name)
         envelope = self.envelope_manager.create_envelope()
         
@@ -182,7 +202,15 @@ class SynthesisEngine:
         return note
     
     def update_note_parameters(self, note, params):
-        """Update parameters for an existing note"""
+        """Update parameters for an existing note based on MPE modulation
+        
+        MPE Signal Flow:
+        1. Receives continuous MPE updates from modulation matrix
+        2. Updates note parameters in real-time:
+           - Pitch bend -> frequency
+           - Pressure -> amplitude
+           - Timbre -> filter cutoff
+        """
         if not note.synth_note:
             return
             

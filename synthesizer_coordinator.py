@@ -8,7 +8,33 @@ from output_system import AudioOutputManager
 from fixed_point_math import FixedPoint
 
 class MPESynthesizer:
-    """Main synthesizer coordinator"""
+    """Main synthesizer coordinator
+    
+    MPE Signal Flow Overview:
+    1. MIDI Input -> MPEMessageRouter
+       - Routes note on/off to voice manager
+       - Routes continuous controllers to parameter processor
+    
+    2. MPEVoiceManager
+       - Allocates/tracks voices per channel
+       - Maintains voice-to-channel mapping
+    
+    3. MPEParameterProcessor -> ModulationMatrix
+       - Normalizes MPE parameters (pressure, pitch bend, timbre)
+       - Updates modulation matrix source values
+    
+    4. ModulationMatrix -> SynthesisEngine
+       - Routes MPE parameters to synthesis targets:
+         * Note number -> oscillator frequency
+         * Velocity -> initial amplitude
+         * Pressure -> ongoing amplitude/filter modulation
+         * Pitch bend -> frequency modulation
+         * Timbre (CC74) -> filter cutoff
+    
+    5. SynthesisEngine -> Audio Output
+       - Applies modulated parameters to synthesis
+       - Generates audio output
+    """
     def __init__(self, output_manager=None):
         # Use provided output manager or create new one
         self.output_manager = output_manager or AudioOutputManager()
@@ -20,11 +46,11 @@ class MPESynthesizer:
         if Constants.DEBUG:
             print("[SYNTH] Synthesizer initialized")
         
-        # Initialize modulation system
+        # Initialize modulation system for routing MPE parameters
         self.mod_matrix = ModulationMatrix()
         self.lfo_manager = LFOManager(self.mod_matrix)
         
-        # Initialize voice management
+        # Initialize MPE voice and parameter management
         self.voice_manager = MPEVoiceManager()
         self.parameter_processor = MPEParameterProcessor(
             self.voice_manager,
@@ -35,7 +61,7 @@ class MPESynthesizer:
             self.parameter_processor
         )
         
-        # Initialize synthesis engine
+        # Initialize synthesis engine that receives MPE modulation
         self.engine = SynthesisEngine(self.synth)
         
         # Set up audio chain
@@ -45,7 +71,14 @@ class MPESynthesizer:
         self.lfo_manager.attach_to_synth(self.synth)
         
     def process_mpe_events(self, events):
-        """Process incoming MPE messages"""
+        """Process incoming MPE messages
+        
+        MPE Signal Flow:
+        1. Receive MPE MIDI messages
+        2. Route through message router to appropriate handlers
+        3. Update voice/parameter state
+        4. Trigger synthesis updates
+        """
         if not events:
             return
             
@@ -64,20 +97,32 @@ class MPESynthesizer:
                     self._handle_voice_release(result['voice'])
                     
     def _handle_voice_allocation(self, voice):
-        """Handle new voice allocation"""
+        """Handle new voice allocation
+        
+        MPE Signal Flow:
+        1. Get modulated frequency from mod matrix (note + pitch bend)
+        2. Get initial amplitude from velocity
+        3. Create synthio note with parameters
+        """
         if voice and not voice.synth_note:
             # Create new synthio note
             frequency = FixedPoint.to_float(
                 self.mod_matrix.get_target_value(ModTarget.OSC_PITCH, voice.channel)
             )
             
-            voice.synth_note = self.engine.create_note(frequency, voice.velocity)
+            # Ensure frequency is within a reasonable range
+            frequency = max(20.0, min(frequency, 20000.0))
+            
+            # Normalize velocity to amplitude range 0-1
+            amplitude = max(0.0, min(voice.velocity, 1.0))
+            
+            voice.synth_note = self.engine.create_note(frequency, amplitude)
             self.synth.press(voice.synth_note)
             self.output_manager.performance.active_voices += 1
             
             if Constants.DEBUG:
-                print("[SYNTH] Voice allocated: ch={0}, note={1}, freq={2:.2f}Hz".format(
-                    voice.channel, voice.note, frequency))
+                print("[SYNTH] Voice allocated: ch={0}, note={1}, freq={2:.2f}Hz, amp={3:.2f}".format(
+                    voice.channel, voice.note, frequency, amplitude))
             
     def _handle_voice_release(self, voice):
         """Handle voice release"""
@@ -89,12 +134,20 @@ class MPESynthesizer:
                 print("[SYNTH] Voice released: ch={0}, note={1}".format(voice.channel, voice.note))
             
     def update(self):
-        """Main update loop"""
+        """Main update loop
+        
+        MPE Signal Flow:
+        1. Process modulation matrix updates from MPE parameters
+        2. Update synthesis parameters for each active voice
+        3. Update audio output system
+        """
         try:
-            # Update modulation
+            # Update modulation from MPE parameters
             for key, route in self.mod_matrix.routes.items():
                 if route.needs_update:
-                    route.update()
+                    # Retrieve the source value for the route
+                    source_value = self.mod_matrix.source_values.get(key[0], {}).get(key[2], 0.0)
+                    route.process(source_value)
                     
             # Update synthesis engine parameters for active voices
             for voice in self.voice_manager.active_voices.values():
@@ -109,7 +162,15 @@ class MPESynthesizer:
             print("Update error: {0}".format(str(e)))
             
     def _collect_voice_parameters(self, voice):
-        """Collect all modulated parameters for a voice"""
+        """Collect all modulated parameters for a voice
+        
+        MPE Signal Flow:
+        1. Gather all modulated parameters from mod matrix:
+           - OSC_PITCH: Note number + pitch bend
+           - AMPLITUDE: Velocity + pressure
+           - FILTER_CUTOFF: Often mapped from timbre
+           - FILTER_RESONANCE: Can be mapped from pressure
+        """
         return {
             'frequency': FixedPoint.to_float(self.mod_matrix.get_target_value(ModTarget.OSC_PITCH, voice.channel)),
             'amplitude': FixedPoint.to_float(self.mod_matrix.get_target_value(ModTarget.AMPLITUDE, voice.channel)),
@@ -118,7 +179,13 @@ class MPESynthesizer:
         }
         
     def set_instrument(self, instrument_config):
-        """Configure synthesizer with new instrument settings"""
+        """Configure synthesizer with new instrument settings
+        
+        MPE Signal Flow:
+        1. Set up essential MIDI->synth parameter routes
+        2. Configure performance controls (pressure, pitch bend)
+        3. Add custom modulation routings
+        """
         if not instrument_config:
             return
             
