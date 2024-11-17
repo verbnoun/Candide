@@ -37,6 +37,7 @@ class ModulationMatrix:
         self.source_values = {}
         self.blocks = []
         self.current_key_press = None
+        self.route_update_counter = 0
         
     def start_key_press(self, note, channel):
         """Start tracking a new key press"""
@@ -106,6 +107,8 @@ class ModulationMatrix:
             if self.current_key_press:
                 print("[MOD]   Context: Note {}".format(self.current_key_press['note']))
         
+        # Reset route update counter before processing
+        self.route_update_counter = 0
         # Update all routes using this source
         self._update_routes(source, channel)
     
@@ -121,6 +124,9 @@ class ModulationMatrix:
             if self.current_key_press:
                 print("[MOD]   Context: Note {}".format(self.current_key_press['note']))
         
+        total_routes = len([key for key in self.routes.keys() if key[1] == target])
+        current_step = 0
+        
         for key, route in self.routes.items():
             # More flexible route matching
             if (key[1] == target and 
@@ -128,6 +134,7 @@ class ModulationMatrix:
                  channel is None or  # No specific channel requested
                  key[2] == channel)):  # Exact channel match
                 
+                current_step += 1
                 matching_routes.append(key)
                 source = key[0]
                 source_values = self.source_values.get(source, {})
@@ -144,7 +151,7 @@ class ModulationMatrix:
                 route_value = route.process(source_value)
                 
                 if Constants.DEBUG:
-                    print("[MOD] Route Analysis:")
+                    print("[MOD] Route Analysis (Step {} of {}):".format(current_step, total_routes))
                     print("[MOD]   {} -> {}".format(source_name, target_name))
                     print("[MOD]   Source Value: {}".format(source_value))
                     print("[MOD]   Processed Value: {}".format(route_value))
@@ -154,7 +161,7 @@ class ModulationMatrix:
         if Constants.DEBUG:
             print("[MOD] Target Value Summary:")
             print("[MOD]   Total Value: {}".format(total))
-            print("[MOD]   Matching Routes: {}".format(len(matching_routes)))
+            print("[MOD]   Processed {} Matching Routes".format(len(matching_routes)))
         
         return total
     
@@ -164,6 +171,12 @@ class ModulationMatrix:
         if source not in self.source_values:
             return
         
+        total_updates = len([key for key, route in self.routes.items() 
+                           if key[0] == source and 
+                           (key[2] is None or channel is None or key[2] == channel)])
+        
+        current_update = 0
+        
         for key, route in list(self.routes.items()):  # Use list to avoid runtime modification
             # Check if the route's source matches and channel is either None or matches
             if (key[0] == source and 
@@ -171,8 +184,17 @@ class ModulationMatrix:
                  channel is None or  # No specific channel requested
                  key[2] == channel)):  # Exact channel match
                 
+                current_update += 1
+                self.route_update_counter += 1
+                
                 # Get the source value for this specific channel, default to 0.0
                 source_value = self.source_values[source].get(channel, 0.0)
+                
+                if Constants.DEBUG:
+                    print("[MOD] Updating Route (Step {} of {}, Loop {})".format(
+                        current_update, total_updates, self.route_update_counter))
+                    print("[MOD]   Source: {} -> Target: {}".format(
+                        get_source_name(key[0]), get_target_name(key[1])))
                 
                 try:
                     # Process the value through the route

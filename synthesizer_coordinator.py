@@ -14,6 +14,7 @@ class MPESynthesizer:
     1. MIDI Input -> MPEMessageRouter
        Routes note on/off and control messages
        Captures initial control values before note-on
+       Filters out MPE messages based on instrument config
     
     2. MPEVoiceManager
        Tracks voice/channel mapping and initial control state
@@ -58,50 +59,40 @@ class MPESynthesizer:
         self.current_instrument = None
         
     def _handle_voice_allocation(self, voice):
-        """Handle new voice allocation with initial control values
-        
-        Following MPE spec 2.4.1:
-        1. Apply initial control values captured before note-on
-        2. Create note with proper initial state
-        3. Only then enable modulation matrix updates
-        """
+        """Handle new voice allocation with initial control values"""
         if voice and not voice.synth_note:
-            # Directly access initial_state dictionary instead of calling a method
             initial_state = voice.initial_state
-            
+
             # Get base frequency from note number
             frequency = FixedPoint.to_float(
                 self.mod_matrix.get_target_value(ModTarget.OSC_PITCH, voice.channel)
             )
-            
+
             # Apply initial pitch bend if enabled
             if self.current_instrument and \
-               self.current_instrument['performance'].get('pitch_bend_enabled', False):
+            self.current_instrument['performance'].get('pitch_bend_enabled', False):
                 bend_range = self.current_instrument['performance'].get('pitch_bend_range', 2)
                 bend_amount = initial_state['bend'] * (bend_range / 12.0)  # convert semitones to ratio
                 frequency *= pow(2, bend_amount)
-            
+
             # Ensure frequency is in valid range
             frequency = max(20.0, min(frequency, 20000.0))
-            
+
             # Get velocity-based amplitude
             amplitude = initial_state['velocity']
-            if Constants.DEBUG:
-                print(f"[DEBUG] Raw velocity value: {initial_state['velocity']}")
-                print(f"[DEBUG] Normalized amplitude: {amplitude}")
-            
+
             # Apply initial pressure if enabled
             if self.current_instrument and \
-               self.current_instrument['performance'].get('pressure_enabled', False):
+            self.current_instrument['performance'].get('pressure_enabled', False):
                 pressure_sens = self.current_instrument['performance'].get('pressure_sensitivity', 1.0)
                 amplitude *= (1.0 + (initial_state['pressure'] * pressure_sens))
-            
+
             # Clamp final amplitude
             amplitude = max(0.0, min(amplitude, 1.0))
-            
+
             # Create the note with initial values
             voice.synth_note = self.engine.create_note(frequency, amplitude)
-            
+
             # Apply initial timbre via filter if configured
             if self.current_instrument and 'filter' in self.current_instrument:
                 filter_config = self.current_instrument['filter']
@@ -113,11 +104,11 @@ class MPESynthesizer:
                     cutoff=cutoff,
                     resonance=filter_config.get('resonance', 0.7)
                 )
-            
+
             # Start the note
             self.synth.press(voice.synth_note)
             self.output_manager.performance.active_voices += 1
-            
+
             if Constants.DEBUG:
                 print("[SYNTH] Voice allocated: ch={0}, note={1}, freq={2:.2f}Hz, amp={3:.2f}".format(
                     voice.channel, voice.note, frequency, amplitude))
@@ -140,6 +131,9 @@ class MPESynthesizer:
             print("[SYNTH] Setting new instrument configuration")
         
         self.current_instrument = instrument_config
+        
+        # Update message router with new instrument config
+        self.message_router.set_instrument_config(instrument_config)
             
         # Update synthesis parameters
         if 'oscillator' in instrument_config:

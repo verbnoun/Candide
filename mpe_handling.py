@@ -62,9 +62,6 @@ class MPEVoiceManager:
         if pending_key not in self.pending_controls:
             self.pending_controls[pending_key] = {}
         self.pending_controls[pending_key][control_type] = value
-        if Constants.DEBUG:
-            print("[MPE] Stored pending {0}: {1} for channel {2}, key {3}".format(
-                control_type, value, channel, key))
             
     def get_pending_controls(self, channel, key):
         """Get and clear pending controls for a note"""
@@ -105,9 +102,6 @@ class MPEVoiceManager:
             self.channel_voices[channel] = set()
         self.channel_voices[channel].add(note)
         
-        if Constants.DEBUG:
-            print("[MPE] Voice allocated with initial state: {}".format(voice.initial_state))
-        
         return voice
 
     def get_voice(self, channel, note):
@@ -115,7 +109,7 @@ class MPEVoiceManager:
         return self.active_voices.get((channel, note))
 
     def release_voice(self, channel, note):
-        """Handle note release and cleanup"""
+        """Handle voice release and cleanup"""
         voice_key = (channel, note)
         if voice_key in self.active_voices:
             voice = self.active_voices[voice_key]
@@ -135,14 +129,29 @@ class MPEParameterProcessor:
         self.voice_manager = voice_manager
         self.mod_matrix = mod_matrix
         self.config = MPEConfig()
+        self.instrument_config = None
+        
+    def set_instrument_config(self, config):
+        """Update current instrument configuration"""
+        self.instrument_config = config
+        
+    def _is_feature_enabled(self, feature):
+        """Check if a performance feature is enabled"""
+        if not self.instrument_config:
+            return False
+        perf = self.instrument_config.get('performance', {})
+        return perf.get(f'{feature}_enabled', False)
         
     def handle_pressure(self, channel, value, key=None):
         """Process pressure message"""
+        if not self._is_feature_enabled('pressure'):
+            return False
+            
         # Get voice if it exists
         voice = self.voice_manager.get_voice(channel, key) if key is not None else None
         
         if voice is None:
-            # Store as pending control
+            # Store as pending control without applying to mod matrix
             self.voice_manager.store_pending_control(channel, key, 'pressure', value)
             return True
             
@@ -159,9 +168,13 @@ class MPEParameterProcessor:
         
     def handle_pitch_bend(self, channel, value, key=None):
         """Process pitch bend message"""
+        if not self._is_feature_enabled('pitch_bend'):
+            return False
+            
         voice = self.voice_manager.get_voice(channel, key) if key is not None else None
         
         if voice is None:
+            # Store as pending control without applying to mod matrix
             self.voice_manager.store_pending_control(channel, key, 'bend', value)
             return True
             
@@ -177,9 +190,13 @@ class MPEParameterProcessor:
         
     def handle_timbre(self, channel, value, key=None):
         """Process timbre (CC74) message"""
+        if not self._is_feature_enabled('pressure'):  # Timbre is tied to pressure
+            return False
+            
         voice = self.voice_manager.get_voice(channel, key) if key is not None else None
         
         if voice is None:
+            # Store as pending control without applying to mod matrix
             self.voice_manager.store_pending_control(channel, key, 'timbre', value)
             return True
             
@@ -199,11 +216,40 @@ class MPEParameterProcessor:
             return False
         return abs(FixedPoint.to_float(new_value - old_value)) > 0.001
 
+    def apply_pending_controls(self, voice):
+        """Apply all pending controls for a newly created voice"""
+        if voice.initial_state.get('pressure') is not None and self._is_feature_enabled('pressure'):
+            normalized = FixedPoint.normalize_midi_value(voice.initial_state['pressure'])
+            voice.pressure = normalized
+            voice.last_values['pressure'] = normalized
+            self.mod_matrix.set_source_value(ModSource.PRESSURE, voice.channel,
+                FixedPoint.to_float(normalized))
+            
+        if voice.initial_state.get('bend') is not None and self._is_feature_enabled('pitch_bend'):
+            normalized = FixedPoint.normalize_pitch_bend(voice.initial_state['bend'])
+            voice.pitch_bend = normalized
+            voice.last_values['bend'] = normalized
+            self.mod_matrix.set_source_value(ModSource.PITCH_BEND, voice.channel,
+                FixedPoint.to_float(normalized))
+            
+        if voice.initial_state.get('timbre') is not None and self._is_feature_enabled('pressure'):
+            normalized = FixedPoint.normalize_midi_value(voice.initial_state['timbre'])
+            voice.timbre = normalized
+            voice.last_values['timbre'] = normalized
+            self.mod_matrix.set_source_value(ModSource.TIMBRE, voice.channel,
+                FixedPoint.to_float(normalized))
+
 class MPEMessageRouter:
     """Routes MPE messages to appropriate handlers"""
     def __init__(self, voice_manager, parameter_processor):
         self.voice_manager = voice_manager
         self.parameter_processor = parameter_processor
+        self.instrument_config = None
+        
+    def set_instrument_config(self, config):
+        """Update current instrument configuration"""
+        self.instrument_config = config
+        self.parameter_processor.set_instrument_config(config)
         
     def route_message(self, message):
         """Route incoming MPE message to appropriate handler"""
@@ -216,7 +262,7 @@ class MPEMessageRouter:
         
         # Extract key for note-specific messages
         key = data.get('note') if msg_type in ('note_on', 'note_off') else None
-        
+            
         # Handle control messages
         if msg_type == 'pressure':
             self.parameter_processor.handle_pressure(channel, data.get('value', 0), key)
@@ -225,7 +271,7 @@ class MPEMessageRouter:
         elif msg_type == 'cc' and data.get('number') == 74:  # Timbre
             self.parameter_processor.handle_timbre(channel, data.get('value', 64), key)
             
-        # Note events
+        # Note events are always processed
         elif msg_type == 'note_on':
             note = data.get('note')
             velocity = data.get('velocity', 127)
@@ -243,6 +289,9 @@ class MPEMessageRouter:
                 channel,
                 FixedPoint.to_float(voice.initial_state['velocity'])
             )
+            
+            # Apply any pending controls that were stored before note-on
+            self.parameter_processor.apply_pending_controls(voice)
             
             return {'type': 'voice_allocated', 'voice': voice}
             

@@ -202,40 +202,34 @@ class SynthesisEngine:
         return note
     
     def update_note_parameters(self, note, params):
-        """Update parameters for an existing note based on MPE modulation
-        
-        MPE Signal Flow:
-        1. Receives continuous MPE updates from modulation matrix
-        2. Updates note parameters in real-time:
-           - Pitch bend -> frequency
-           - Pressure -> amplitude
-           - Timbre -> filter cutoff
-        """
+        """Update parameters for an existing note based on MPE modulation"""
         if not note.synth_note:
             return
-            
+
         if Constants.DEBUG:
             param_str = ", ".join("{0}={1:.2f}".format(k, v) for k, v in params.items())
             print("[SYNTH] Updating note params: {0}".format(param_str))
-            
+
         if 'frequency' in params:
             note.synth_note.frequency = params['frequency']
-        
+
         if 'amplitude' in params:
-            note.synth_note.amplitude = params['amplitude']
-        
+            if self.current_instrument and self.current_instrument['performance'].get('pressure_enabled', False):
+                note.synth_note.amplitude = params['amplitude']
+
         if 'bend' in params:
-            note.synth_note.bend = params['bend']
-        
+            if self.current_instrument and self.current_instrument['performance'].get('pitch_bend_enabled', False):
+                note.synth_note.bend = params['bend']
+
         if 'filter_cutoff' in params or 'filter_resonance' in params:
             self.filter_manager.update_filter(
                 note,
                 params.get('filter_cutoff'),
                 params.get('filter_resonance')
             )
-        
+
         if 'ring_frequency' in params:
             note.synth_note.ring_frequency = params['ring_frequency']
-        
+
         if 'ring_bend' in params:
             note.synth_note.ring_bend = params['ring_bend']
