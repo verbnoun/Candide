@@ -101,8 +101,6 @@ class FixedPoint:
 
 class Constants:
     DEBUG = True
-    NOTE_TRACKER = True
-    PRESSURE_TRACKER = True
     
     # Audio Pins (PCM5102A DAC)
     I2S_BIT_CLOCK = board.GP1
