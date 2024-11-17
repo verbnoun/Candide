@@ -78,8 +78,13 @@ class MPESynthesizer:
             # Ensure frequency is in valid range
             frequency = max(20.0, min(frequency, 20000.0))
 
-            # Get velocity-based amplitude
-            amplitude = initial_state['velocity']
+            # Set initial velocity in modulation matrix
+            self.mod_matrix.set_source_value(ModSource.VELOCITY, voice.channel, initial_state['velocity'])
+
+            # Get amplitude from modulation matrix (includes velocity)
+            amplitude = FixedPoint.to_float(
+                self.mod_matrix.get_target_value(ModTarget.AMPLITUDE, voice.channel)
+            )
 
             # Apply initial pressure if enabled
             if self.current_instrument and \
@@ -227,9 +232,13 @@ class MPESynthesizer:
         try:
             # Update modulation from MPE parameters
             for key, route in self.mod_matrix.routes.items():
+                # Skip processing velocity for amplitude updates
+                if key[0] == ModSource.VELOCITY and key[1] == ModTarget.AMPLITUDE:
+                    continue
+
                 if route.needs_update:
                     source_value = self.mod_matrix.source_values.get(key[0], {}).get(key[2], 0.0)
-                    route.process(source_value)
+                    route.process(source_value, context="update")
                     
             # Update synthesis engine parameters for active voices
             for voice in self.voice_manager.active_voices.values():

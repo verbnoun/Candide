@@ -37,6 +37,7 @@ class ModulationMatrix:
         self.source_values = {}
         self.blocks = []
         self.current_key_press = None
+        self.processed_routes = {}  # Track processed routes per source
         
     def start_key_press(self, note, channel):
         """Start tracking a new key press"""
@@ -103,8 +104,14 @@ class ModulationMatrix:
             source_name = get_source_name(source)
             print("\n[MOD] Source Value Updated: {}".format(source_name))
             print("[MOD]   Channel: {}, Value: {}".format(channel, value))
+            if source == ModSource.VELOCITY:
+                print("[DEBUG] Velocity set for channel {}: {} by set_source_value".format(channel, value))
             if self.current_key_press:
                 print("[MOD]   Context: Note {}".format(self.current_key_press['note']))
+        
+        # Reset processed routes for this source
+        if source in self.processed_routes:
+            del self.processed_routes[source]
         
         # Update all routes using this source
         self._update_routes(source, channel)
@@ -145,7 +152,7 @@ class ModulationMatrix:
                     source_values.get(None, 0.0)   # Global/default value
                 )
                 
-                route_value = route.process(source_value)
+                route_value = route.process(source_value, context="get_target_value")
                 
                 if Constants.DEBUG:
                     print("[MOD] Route Analysis (Step {} of {}):".format(current_step, total_routes))
@@ -168,37 +175,50 @@ class ModulationMatrix:
         if source not in self.source_values:
             return
         
-        # Track processed routes to prevent duplicate processing
-        processed_routes = set()
+        # Initialize processed routes for this source if not exists
+        if source not in self.processed_routes:
+            self.processed_routes[source] = set()
         
         for key, route in list(self.routes.items()):  # Use list to avoid runtime modification
-            # Check if the route's source matches and channel is either None or matches
-            if (key[0] == source and 
-                (key[2] is None or  # Global route
-                 channel is None or  # No specific channel requested
-                 key[2] == channel)):  # Exact channel match
+            # Check if the route's source matches
+            if key[0] == source:
+                # Create a unique key that ignores channel specificity
+                route_unique_key = (key[0], key[1])
                 
                 # Prevent processing the same route multiple times
-                if key in processed_routes:
+                if route_unique_key in self.processed_routes[source]:
                     continue
-                processed_routes.add(key)
                 
-                # Get the source value for this specific channel, default to 0.0
-                source_value = self.source_values[source].get(channel, 0.0)
-                
-                if Constants.DEBUG:
-                    print("[MOD] Updating Route:")
-                    print("[MOD]   Source: {} -> Target: {}".format(
-                        get_source_name(key[0]), get_target_name(key[1])))
-                
-                try:
-                    # Process the value through the route
-                    route.process(source_value)
-                except Exception as e:
-                    # Log any processing errors
-                    print(f"[ERROR] Route processing failed: {e}")
-                    print(f"Source: {source}, Channel: {channel}, Value: {source_value}")
-                    print(f"Route details: {key}")
+                # Check if the route matches the channel
+                if (key[2] is None or  # Global route
+                    channel is None or  # No specific channel requested
+                    key[2] == channel):  # Exact channel match
+                    
+                    # Get the source value for this specific channel, default to 0.0
+                    source_value = self.source_values[source].get(channel, 0.0)
+                    
+                    # Skip processing if source value is effectively zero
+                    if abs(source_value) < 1e-6:
+                        continue
+                    
+                    if Constants.DEBUG:
+                        print("[MOD] Updating Route:")
+                        print("[MOD]   Source: {} -> Target: {}".format(
+                            get_source_name(key[0]), get_target_name(key[1])))
+                        if source == ModSource.VELOCITY:
+                            print("[DEBUG] Processing velocity for channel {}: {} by _update_routes".format(channel, source_value))
+                    
+                    try:
+                        # Process the value through the route
+                        route.process(source_value, context="_update_routes")
+                        
+                        # Mark this route as processed
+                        self.processed_routes[source].add(route_unique_key)
+                    except Exception as e:
+                        # Log any processing errors
+                        print(f"[ERROR] Route processing failed: {e}")
+                        print(f"Source: {source}, Channel: {channel}, Value: {source_value}")
+                        print(f"Route details: {key}")
 
 class ModulationRoute:
     def __init__(self, source, target, amount=1.0, channel=None):
@@ -248,7 +268,7 @@ class ModulationRoute:
             target_name = get_target_name(self.target)
             print("[MOD] Created Math Block: {} -> {}".format(source_name, target_name))
     
-    def process(self, value):
+    def process(self, value, context="unknown"):
         """Process value through route"""
         if value != self.last_value:
             self.needs_update = True
@@ -267,6 +287,7 @@ class ModulationRoute:
                 print("[MOD]   {} -> {}".format(source_name, target_name))
                 print("[MOD]   Input Value: {}".format(value))
                 print("[MOD]   Processed Value: {}".format(processed_value))
+                print("[DEBUG] Applied by process method in ModulationRoute class, called from {}".format(context))
             
             return processed_value
         

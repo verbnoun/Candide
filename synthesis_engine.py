@@ -145,7 +145,7 @@ class SynthesisEngine:
     MPE Signal Flow:
     1. Receives modulated parameters from modulation matrix
     2. Note number -> oscillator frequency
-    3. Velocity -> initial amplitude
+    3. Velocity -> amplitude (via modulation matrix)
     4. Pressure -> ongoing amplitude modulation
     5. Pitch bend -> frequency modulation
     6. Timbre (CC74) -> filter cutoff modulation
@@ -156,12 +156,12 @@ class SynthesisEngine:
         self.filter_manager = FilterManager(synth)
         self.envelope_manager = EnvelopeManager()
         
-    def create_note(self, frequency, velocity=1.0, waveform_name='sine'):
+    def create_note(self, frequency, amplitude=0.0, waveform_name='sine'):
         """Create new synthio Note with current parameters
         
         MPE parameters affect:
         - frequency: Base pitch + pitch bend modulation
-        - velocity: Initial amplitude scaling
+        - amplitude: Set by modulation matrix (velocity + pressure)
         """
         waveform = self.waveform_manager.get_waveform(waveform_name)
         envelope = self.envelope_manager.create_envelope()
@@ -170,16 +170,16 @@ class SynthesisEngine:
             frequency=frequency,
             waveform=waveform,
             envelope=envelope,
-            amplitude=velocity,
+            amplitude=amplitude,
             filter=self.filter_manager.create_filter()
         )
         
         if Constants.DEBUG:
-            print("[SYNTH] Created note: freq={0:.2f}Hz, vel={1:.2f}".format(frequency, velocity))
+            print("[SYNTH] Created note: freq={0:.2f}Hz, amp={1:.2f}".format(frequency, amplitude))
         
         return note
     
-    def create_ring_modulated_note(self, frequency, ring_freq, velocity=1.0,
+    def create_ring_modulated_note(self, frequency, ring_freq, amplitude=0.0,
                                  carrier_wave='sine', modulator_wave='sine'):
         """Create note with ring modulation"""
         carrier = self.waveform_manager.get_waveform(carrier_wave)
@@ -190,7 +190,7 @@ class SynthesisEngine:
             frequency=frequency,
             waveform=carrier,
             envelope=envelope,
-            amplitude=velocity,
+            amplitude=amplitude,
             filter=self.filter_manager.create_filter(),
             ring_frequency=ring_freq,
             ring_waveform=modulator
