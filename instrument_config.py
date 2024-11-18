@@ -40,125 +40,7 @@ class InstrumentConfig:
     def __init__(self, name):
         self.name = name
         self.config = {
-            'name': name,
-            'oscillator': {
-                'waveform': 'sine',
-                'detune': 0.0,
-                'control': {
-                    'cc': 74,
-                    'name': 'Oscillator Detune',
-                    'range': {'min': -1.0, 'max': 1.0},
-                    'curve': 'linear',
-                    'default': 0.0
-                }
-            },
-            'filter': {
-                'type': 'low_pass',
-                'cutoff': 2000,
-                'resonance': 0.7,
-                'controls': [
-                    {
-                        'name': 'Brightness',
-                        'cc': CCMapping.BRIGHTNESS,
-                        'target': ModTarget.FILTER_CUTOFF,
-                        'range': {'min': 500, 'max': 8000},
-                        'curve': 'exponential',
-                        'default': 2000
-                    },
-                    {
-                        'name': 'Resonance',
-                        'cc': CCMapping.RESONANCE,
-                        'target': ModTarget.FILTER_RESONANCE,
-                        'range': {'min': 0.1, 'max': 2.0},
-                        'curve': 's_curve',
-                        'default': 0.7
-                    }
-                ]
-            },
-            'envelope': {
-                'attack': {
-                    'gate': 'note_on',
-                    'time': 0.01,
-                    'level': 1.0,
-                    'curve': 'linear',
-                    'control': {
-                        'cc': CCMapping.ATTACK_TIME,
-                        'name': 'Attack Time',
-                        'range': {'min': 0.001, 'max': 2.0},
-                        'curve': 'logarithmic',
-                        'default': 0.01
-                    }
-                },
-                'decay': {
-                    'gate': 'attack_end',
-                    'time': 0.1,
-                    'level_scale': 0.8,
-                    'curve': 'exponential',
-                    'control': {
-                        'cc': 75,
-                        'name': 'Decay Time',
-                        'range': {'min': 0.01, 'max': 1.0},
-                        'curve': 'linear',
-                        'default': 0.1
-                    }
-                },
-                'sustain': {
-                    'gate': 'decay_end',
-                    'level': 0.5,
-                    'control': {
-                        'source': ModSource.PRESSURE,
-                        'min_level': 0.0,
-                        'max_level': 0.8,
-                        'curve': 'linear'
-                    }
-                },
-                'release': {
-                    'gate': 'note_off',
-                    'time': 0.3,
-                    'level': 0.0,
-                    'control': {
-                        'cc': CCMapping.RELEASE_TIME,
-                        'name': 'Release Time',
-                        'range': {'min': 0.01, 'max': 3.0},
-                        'curve': 's_curve',
-                        'default': 0.3
-                    }
-                }
-            },
-            'modulation': [
-                {
-                    'source': ModSource.VELOCITY,
-                    'target': ModTarget.AMPLITUDE,
-                    'amount': 1.0,
-                    'curve': 'exponential'
-                }
-            ],
-            'lfo': {
-                'tremolo': {
-                    'rate': 5.0,
-                    'shape': 'sine',
-                    'min_value': 0.7,
-                    'max_value': 1.0,
-                    'sync_to_gate': True,
-                    'control': {
-                        'cc': 1,
-                        'name': 'LFO Rate',
-                        'range': {'min': 0.1, 'max': 20.0},
-                        'curve': 'logarithmic',
-                        'default': 5.0
-                    }
-                }
-            },
-            'expression': {
-                'pressure': True,
-                'pitch_bend': False,
-                'velocity': True
-            },
-            'scaling': {
-                'velocity': 1.0,
-                'pressure': 1.0,
-                'pitch_bend': 48
-            }
+            'name': name
         }
 
     def _find_controls(self, config):
@@ -225,29 +107,15 @@ class Piano(InstrumentConfig):
         self.config.update({
             'oscillator': {
                 'waveform': 'triangle',
-                'detune': 0.001,
-                'control': {
+                # Detune is now optional and controlled via CC
+                'detune_control': {
                     'cc': 75,
                     'name': 'Piano Detune',
                     'range': {'min': -0.01, 'max': 0.01},
                     'curve': 'linear',
-                    'default': 0.001
+                    'default': 0.001,
+                    'initial_value': 0.001  # Default detune value
                 }
-            },
-            'filter': {
-                'type': 'low_pass',
-                'cutoff': 5000,
-                'resonance': 0.2,
-                'controls': [
-                    {
-                        'name': 'Brightness',
-                        'cc': CCMapping.BRIGHTNESS,
-                        'target': ModTarget.FILTER_CUTOFF,
-                        'range': {'min': 1000, 'max': 10000},
-                        'curve': 'exponential',
-                        'default': 5000
-                    }
-                ]
             },
             'envelope': {
                 'attack': {
@@ -268,6 +136,26 @@ class Piano(InstrumentConfig):
                         'range': {'min': 0.1, 'max': 2.0},
                         'curve': 's_curve',
                         'default': 0.8
+                    }
+                },
+                'sustain': {
+                    'level': 0.5,
+                    'control': {
+                        'cc': 80,
+                        'name': 'Piano Sustain Level',
+                        'range': {'min': 0.0, 'max': 1.0},
+                        'curve': 'linear',
+                        'default': 0.5
+                    }
+                },
+                'release': {
+                    'time': 0.5,
+                    'control': {
+                        'cc': 74,
+                        'name': 'Piano Release',
+                        'range': {'min': 0.01, 'max': 3.0},
+                        'curve': 'exponential',
+                        'default': 0.5
                     }
                 }
             }

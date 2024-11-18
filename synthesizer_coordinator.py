@@ -102,7 +102,7 @@ class MPESynthesizer:
             
             # Create note with instrument's config
             voice.synth_note = self.engine.create_note(
-                frequency=frequency,
+                frequency=params.get('frequency', frequency),
                 amplitude=min(1.0, params['amplitude']),
                 waveform_name=self.current_instrument.get('oscillator', {}).get('waveform', 'sine')
             )
@@ -162,7 +162,7 @@ class MPESynthesizer:
         if not old_params or not new_params:
             return True
             
-        for key in ('frequency', 'amplitude', 'filter_cutoff', 'filter_resonance'):
+        for key in ('frequency', 'amplitude', 'filter_cutoff', 'filter_resonance', 'detune'):
             if key not in old_params or key not in new_params:
                 continue
                 
@@ -228,11 +228,39 @@ class MPESynthesizer:
                 if voice.envelope_state.current_stage == 'sustain':
                     envelope_level = voice.envelope_state.control_level
             
+            # Retrieve base frequency from modulation matrix
+            base_frequency = FixedPoint.to_float(
+                self.mod_matrix.get_target_value(ModTarget.OSC_PITCH, voice.channel)
+            )
+            
+            # Handle detune configuration
+            detune_value = 0.0
+            if (self.current_instrument and 
+                'oscillator' in self.current_instrument and 
+                'detune_control' in self.current_instrument['oscillator']):
+                detune_config = self.current_instrument['oscillator']['detune_control']
+                
+                # Check for initial static value
+                detune_value = detune_config.get('initial_value', 0.0)
+                
+                # If CC is defined, it takes precedence
+                if 'cc' in detune_config:
+                    # Retrieve CC value from modulation matrix if available
+                    # This allows for dynamic CC-based detune
+                    cc_value = self.mod_matrix.get_source_value(
+                        ModSource.CC, 
+                        voice.channel, 
+                        detune_config['cc']
+                    )
+                    if cc_value is not None:
+                        # Map CC value to detune range
+                        min_detune = detune_config.get('range', {}).get('min', -0.01)
+                        max_detune = detune_config.get('range', {}).get('max', 0.01)
+                        detune_value = min_detune + cc_value * (max_detune - min_detune)
+            
             # Collect parameters
             params = {
-                'frequency': FixedPoint.to_float(
-                    self.mod_matrix.get_target_value(ModTarget.OSC_PITCH, voice.channel)
-                ),
+                'frequency': base_frequency * (1 + detune_value),
                 'amplitude': min(1.0, FixedPoint.to_float(
                     self.mod_matrix.get_target_value(ModTarget.AMPLITUDE, voice.channel)
                 ) * envelope_level),
@@ -241,13 +269,17 @@ class MPESynthesizer:
                 ),
                 'filter_resonance': FixedPoint.to_float(
                     self.mod_matrix.get_target_value(ModTarget.FILTER_RESONANCE, voice.channel)
-                )
+                ),
+                'detune': detune_value
             }
             
             if Constants.DEBUG:
                 print(f"\n[SYNTH] Collected parameters for voice:")
                 print(f"      Channel: {voice.channel}")
                 print(f"      Note: {voice.note}")
+                print(f"      Base Frequency: {base_frequency:.3f}")
+                print(f"      Detune Value: {detune_value:.3f}")
+                print(f"      Final Frequency: {params['frequency']:.3f}")
                 print(f"      Envelope Stage: {voice.envelope_state.current_stage}")
                 print(f"      Envelope Level: {envelope_level:.3f}")
                 for k, v in params.items():
