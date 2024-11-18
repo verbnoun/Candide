@@ -90,7 +90,7 @@ class MPEVoice:
         # Initial state capture using fixed point
         self.initial_state = {
             'pressure': FixedPoint.ZERO,
-            'timbre': FixedPoint.from_float(0.5),  # CC74 default center
+            'timbre': FixedPoint.from_float(0.5),  # Default center
             'bend': FixedPoint.ZERO,
             'velocity': FixedPoint.normalize_midi_value(velocity)
         }
@@ -314,35 +314,6 @@ class MPEParameterProcessor:
                 return True
         return False
 
-    def handle_timbre(self, channel, value, key=None):
-        """Process timbre (CC74) value for voice"""
-        if not self._is_expression_enabled('timbre'):
-            return False
-            
-        voice = self.voice_manager.get_voice(channel, key) if key is not None else None
-        if not voice:
-            self.voice_manager.store_pending_control(channel, key, 'timbre', value)
-            return True
-            
-        if voice.active:
-            scale = self._get_scaling('timbre')
-            normalized = FixedPoint.multiply(
-                FixedPoint.normalize_midi_value(value),
-                FixedPoint.from_float(scale)
-            )
-            
-            voice.timbre = normalized
-            voice.last_values['timbre'] = normalized
-            
-            if self.config.get('modulation'):
-                self.mod_matrix.set_source_value(
-                    ModSource.TIMBRE,
-                    voice.channel,
-                    FixedPoint.to_float(normalized)
-                )
-            return True
-        return False
-
 class MPEMessageRouter:
     """Routes MPE messages to appropriate handlers"""
     def __init__(self, voice_manager, parameter_processor, modulation_matrix):
@@ -354,7 +325,7 @@ class MPEMessageRouter:
     def set_instrument_config(self, config):
         """Set the current instrument configuration"""
         self.current_instrument_config = config
-        # Only configure modulation matrix when instrument changes
+        # Configure modulation matrix when instrument changes
         self.modulation_matrix.configure_from_instrument(config)
 
     def route_message(self, message):
@@ -374,8 +345,20 @@ class MPEMessageRouter:
             self.parameter_processor.handle_pressure(channel, data.get('value', 0), key)
         elif msg_type == 'pitch_bend':
             self.parameter_processor.handle_pitch_bend(channel, data.get('value', 8192), key)
-        elif msg_type == 'cc' and data.get('number') == Constants.CC_TIMBRE:
-            self.parameter_processor.handle_timbre(channel, data.get('value', 64), key)
+        elif msg_type == 'cc':
+            # Route CC through modulation matrix if configured
+            cc_number = data.get('number')
+            cc_value = data.get('value', 0)
+            
+            # Get voice if this is a note-specific CC
+            voice = self.voice_manager.get_voice(channel, key) if key is not None else None
+            
+            # Process through modulation matrix
+            self.modulation_matrix.process_cc(cc_number, cc_value, channel)
+            
+            if Constants.DEBUG:
+                print(f"[MPE] CC: ch={channel} cc={cc_number} value={cc_value}")
+                
         # Note events are always processed, even if expression disabled
         elif msg_type == 'note_on':
             note = data.get('note')
@@ -397,9 +380,6 @@ class MPEMessageRouter:
             return {'type': 'voice_released', 'voice': voice}
     
     def process_updates(self):
-        """Process any pending state updates - no longer reconfigures modulation"""
+        """Process any pending state updates"""
         if self.current_instrument_config:
-            # Only process voice updates, skip modulation reconfiguration
             self.voice_manager.update_voices()
-            
-        

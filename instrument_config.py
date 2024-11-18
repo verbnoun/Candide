@@ -10,20 +10,26 @@ Signal Flow:
    → Sets initial amplitude via velocity routing
 
 2. MPE Control Signals (pressure, timbre, pitch bend)
-   → Only processed if explicitly enabled in config
-   → Routed to specified parameters via modulation matrix
+   → Routed to parameters via explicit CC assignments
+   → Uses standard MIDI CC numbers where appropriate
 
-3. Envelope System
+3. CC Routing
+   → Explicit CC assignments for all controls
+   → Uses standard MIDI CC numbers (1-127)
+   → Can use undefined CCs (3,9,14,15,20-31) for custom controls
+   → Maximum 14 CC assignments per instrument
+
+4. Envelope System
    → Gates triggered by note events
    → Each stage can be controlled by MPE signals
    → Controls amplitude over time
 
-4. LFO System
+5. LFO System
    → Created and routed based on explicit config
    → Can modulate any parameter
    → Can be synced to note events
 
-5. Filter System
+6. Filter System
    → Parameters controlled via modulation matrix
    → Can respond to envelopes, LFOs, and MPE controls
 
@@ -32,6 +38,46 @@ No routing occurs unless specified here.
 """
 
 from synth_constants import ModSource, ModTarget
+
+class CCMapping:
+    """Standard MIDI CC number definitions"""
+    # Standard MIDI CCs
+    MODULATION_WHEEL = 1
+    BREATH = 2
+    FOOT = 4
+    PORTAMENTO_TIME = 5
+    VOLUME = 7
+    BALANCE = 8
+    PAN = 10
+    EXPRESSION = 11
+    EFFECT1 = 12
+    EFFECT2 = 13
+    
+    # Sound Controllers
+    SOUND_VARIATION = 70
+    RESONANCE = 71
+    RELEASE_TIME = 72
+    ATTACK_TIME = 73
+    BRIGHTNESS = 74
+    SOUND_CTRL6 = 75
+    SOUND_CTRL7 = 76
+    SOUND_CTRL8 = 77
+    SOUND_CTRL9 = 78
+    SOUND_CTRL10 = 79
+    
+    # Effect Depths
+    REVERB = 91
+    TREMOLO = 92
+    CHORUS = 93
+    DETUNE = 94
+    PHASER = 95
+    
+    # Undefined CCs available for custom use
+    UNDEFINED1 = 3
+    UNDEFINED2 = 9
+    UNDEFINED3 = 14
+    UNDEFINED4 = 15
+    UNDEFINED5 = 20  # 20-31 range available
 
 class InstrumentConfig:
     """Base class for instrument configurations"""
@@ -51,43 +97,57 @@ class InstrumentConfig:
             'expression': {
                 'pressure': False,    # Must be explicitly enabled
                 'pitch_bend': False,  # Must be explicitly enabled
-                'timbre': False,      # Must be explicitly enabled
                 'velocity': True      # Always enabled for basic dynamics
+            },
+            'cc_routing': {
+                # Maps CC numbers to parameter targets with explicit routing
+                # Example: 74: {'target': ModTarget.FILTER_CUTOFF, 'amount': 1.0, 'curve': 'linear'}
             },
             'envelope': {
                 'attack': {
-                    'gate': 'note_on',       # Gate trigger source
-                    'time': 0.01,            # Stage duration
-                    'level': None,           # Uses velocity if None
-                    'curve': 'linear'        # Level curve type
+                    'gate': 'note_on',
+                    'time': 0.01,
+                    'level': None,
+                    'curve': 'linear'
                 },
                 'decay': {
-                    'gate': 'attack_end',    
-                    'time': 0.1,             
-                    'level_scale': 1.0,      # Relative to attack peak
-                    'curve': 'exponential'   
+                    'gate': 'attack_end',
+                    'time': 0.1,
+                    'level_scale': 1.0,
+                    'curve': 'exponential'
                 },
                 'sustain': {
-                    'gate': 'decay_end',     
-                    'control': None,         # Optional MPE control source
-                    'level': 0.8,            # Fixed level if no control
-                    'curve': 'linear'        
+                    'gate': 'decay_end',
+                    'control': None,
+                    'level': 0.8,
+                    'curve': 'linear'
                 },
                 'release': {
-                    'gate': 'note_off',      
-                    'time': 0.2,             
-                    'level': 0.0,            
-                    'curve': 'exponential'   
+                    'gate': 'note_off',
+                    'time': 0.2,
+                    'level': 0.0,
+                    'curve': 'exponential'
                 }
             },
-            'lfo': {},              # LFO definitions
-            'modulation': [],       # Modulation route definitions
+            'lfo': {},
+            'modulation': [],
             'scaling': {
-                'velocity': 1.0,    # 0-1 scaling of velocity response
-                'pressure': 1.0,    # 0-1 scaling of pressure response
-                'timbre': 1.0,      # 0-1 scaling of timbre response
-                'pitch_bend': 48,   # Semitones of pitch bend range
+                'velocity': 1.0,
+                'pressure': 1.0,
+                'pitch_bend': 48,
             }
+        }
+
+    def add_cc_route(self, cc_number, target, amount=1.0, curve='linear', description=None):
+        """Add CC routing configuration"""
+        if len(self.config['cc_routing']) >= 14:
+            raise ValueError("Maximum of 14 CC routes exceeded")
+            
+        self.config['cc_routing'][cc_number] = {
+            'target': target,
+            'amount': amount,
+            'curve': curve,
+            'description': description
         }
 
     def add_lfo(self, name, rate, shape='triangle', min_value=0.0, max_value=1.0, sync_to_gate=False):
@@ -114,7 +174,7 @@ class InstrumentConfig:
         return self.config
 
 class Piano(InstrumentConfig):
-    """Traditional piano with gate-based envelope control and MPE expression"""
+    """Traditional piano with explicit CC routing"""
     def __init__(self):
         super().__init__("Piano")
         
@@ -130,22 +190,21 @@ class Piano(InstrumentConfig):
                 'resonance': 0.2
             },
             'expression': {
-                'pressure': True,     # Used for sustain control
+                'pressure': True,
                 'pitch_bend': False,
-                'timbre': False,
                 'velocity': True
             },
             'envelope': {
                 'attack': {
                     'gate': 'note_on',
                     'time': 0.001,
-                    'level': None,     # Use velocity
+                    'level': None,
                     'curve': 'linear'
                 },
                 'decay': {
                     'gate': 'attack_end',
                     'time': 0.8,
-                    'level_scale': 0.8,  # 80% of attack
+                    'level_scale': 0.8,
                     'curve': 'exponential'
                 },
                 'sustain': {
@@ -153,10 +212,10 @@ class Piano(InstrumentConfig):
                     'control': {
                         'source': ModSource.PRESSURE,
                         'min_level': 0.0,
-                        'max_level': 0.8,  # 80% of decay level
+                        'max_level': 0.8,
                         'curve': 'linear'
                     },
-                    'level': 0.0,     # Initial level without pressure
+                    'level': 0.0,
                     'curve': 'linear'
                 },
                 'release': {
@@ -165,16 +224,44 @@ class Piano(InstrumentConfig):
                     'level': 0.0,
                     'curve': 'exponential'
                 }
-            },
-            'scaling': {
-                'velocity': 1.0,
-                'pressure': 1.0,
-                'timbre': 0.0,     # Not used
-                'pitch_bend': 0,    # Not used
             }
         })
         
-        # Optional soft pedal modulation
+        # Add explicit CC routing using standard MIDI CCs
+        self.add_cc_route(
+            CCMapping.BRIGHTNESS,
+            ModTarget.FILTER_CUTOFF,
+            amount=1.0,
+            curve='exponential',
+            description="Filter Brightness"
+        )
+        
+        self.add_cc_route(
+            CCMapping.RESONANCE,
+            ModTarget.FILTER_RESONANCE,
+            amount=0.8,
+            curve='linear',
+            description="Filter Resonance"
+        )
+        
+        self.add_cc_route(
+            CCMapping.ATTACK_TIME,
+            ModTarget.ENVELOPE_LEVEL,
+            amount=0.7,
+            curve='exponential',
+            description="Attack Time"
+        )
+        
+        # Using an undefined CC for custom timbre control
+        self.add_cc_route(
+            CCMapping.UNDEFINED1,
+            ModTarget.AMPLITUDE,
+            amount=0.5,
+            curve='linear',
+            description="Custom Timbre Control"
+        )
+        
+        # Optional tremolo effect
         self.add_lfo(
             name='tremolo',
             rate=5.0,
@@ -183,7 +270,7 @@ class Piano(InstrumentConfig):
             sync_to_gate=True
         )
         
-        # Only add modulation for enabled expression
+        # Basic velocity to amplitude routing
         self.add_modulation_route(
             ModSource.VELOCITY,
             ModTarget.AMPLITUDE,

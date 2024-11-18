@@ -156,6 +156,42 @@ class SynthManager:
             return self.current_instrument.get_config()
         return None
 
+    def format_cc_config(self):
+        """Format CC configuration string based on current instrument config"""
+        if not self.current_instrument:
+            return "cc:"  # Return minimal valid config if no instrument
+            
+        config = self.current_instrument.get_config()
+        if not config or 'cc_routing' not in config:
+            return "cc:"
+            
+        # Create pot to CC assignments with names
+        assignments = []
+        pot_number = 0
+        
+        for cc_number, routing in config['cc_routing'].items():
+            # Validate CC number is within range 0-127
+            cc_num = int(cc_number)
+            if not (0 <= cc_num <= 127):
+                continue
+                
+            # Validate pot number is within range 0-13
+            if pot_number > 13:
+                break
+                
+            # Get CC name from routing if available, otherwise use "CC{number}"
+            cc_name = routing.get('name', f"CC{cc_num}")
+            assignments.append(f"{pot_number}={cc_num}:{cc_name}")
+            pot_number += 1
+            
+        # Join assignments with commas
+        config_str = "cc:" + ",".join(assignments)
+        
+        if Constants.DEBUG:
+            print(f"Sending CC config: {config_str}")
+            
+        return config_str
+
 class CandideConnectionManager:
     STANDALONE = 0
     DETECTED = 1
@@ -227,11 +263,12 @@ class CandideConnectionManager:
             
             if (event['data']['value'] == Constants.HANDSHAKE_VALUE and 
                 self.state == self.DETECTED):
-                print("Handshake CC received - sending placeholder config")
+                print("Handshake CC received - sending config")
                 self.state = self.HANDSHAKING
                 self.handshake_start_time = time.monotonic()
-                # Send minimal placeholder config that Bartleby expects
-                self.uart.write("cc:piano:1\n")  # PLACEHOLDER: Basic config to satisfy handshake
+                # Send properly formatted CC config
+                config_str = self.synth_manager.format_cc_config()
+                self.uart.write(f"{config_str}\n")
                 self.state = self.CONNECTED
                 print("Connection established")
                 
@@ -349,7 +386,8 @@ class Candide:
                         print(f"Switching to instrument: {new_instrument}")
                         self.synth_manager.set_instrument(new_instrument)
                         if self.connection_manager.state == CandideConnectionManager.CONNECTED:
-                            self.connection_manager._send_config()
+                            config_str = self.synth_manager.format_cc_config()
+                            self.text_uart.write(f"{config_str}\n")
             
             self.last_encoder_scan = current_time
 

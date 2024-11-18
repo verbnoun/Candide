@@ -173,6 +173,7 @@ class ModulationMatrix:
         self.synth = synth
         self.audio_output = audio_output
         self.routes = {}  # (source, target, channel): ModulationRoute
+        self.cc_routes = {}  # cc_number: ModulationRoute
         self.source_values = {}  # source: {channel: value}
         self.blocks = []  # Active synthio blocks (LFOs etc)
         self.gate_states = {}  # For tracking envelope gate states
@@ -187,9 +188,10 @@ class ModulationMatrix:
             
         # Clear existing routes
         self.routes.clear()
+        self.cc_routes.clear()
         self.blocks.clear()
         
-        # Add routes from config
+        # Add standard modulation routes from config
         for route in config.get('modulation', []):
             source = route['source']
             target = route['target']
@@ -201,6 +203,21 @@ class ModulationMatrix:
                 print(f"      Amount: {amount:.3f}, Curve: {curve}")
                 
             self.add_route(source, target, amount, curve=curve)
+            
+        # Add CC routes from config
+        for cc_number, route_config in config.get('cc_routing', {}).items():
+            target = route_config['target']
+            amount = route_config.get('amount', 1.0)
+            curve = route_config.get('curve', 'linear')
+            description = route_config.get('description', '')
+            
+            if Constants.DEBUG:
+                print(f"[MOD] Adding CC route: CC {cc_number} -> {get_target_name(target)}")
+                print(f"      Amount: {amount:.3f}, Curve: {curve}")
+                if description:
+                    print(f"      Description: {description}")
+                
+            self.add_cc_route(int(cc_number), target, amount, curve)
         
     def add_route(self, source, target, amount=1.0, channel=None, curve='linear'):
         """Add a modulation route with optional per-channel routing"""
@@ -218,6 +235,42 @@ class ModulationMatrix:
                 print(f"      Target: {get_target_name(target)}")
                 print(f"      Channel: {channel if channel is not None else 'all'}")
                 print(f"      Amount: {amount:.3f}")
+    
+    def add_cc_route(self, cc_number, target, amount=1.0, curve='linear'):
+        """Add a CC-specific modulation route"""
+        route = ModulationRoute(ModSource.NONE, target, amount, curve)
+        self.cc_routes[cc_number] = route
+        
+        if route.math_block:
+            self.blocks.append(route.math_block)
+            
+        if Constants.DEBUG:
+            print(f"[MOD] CC route added:")
+            print(f"      CC: {cc_number}")
+            print(f"      Target: {get_target_name(target)}")
+            print(f"      Amount: {amount:.3f}")
+            print(f"      Curve: {curve}")
+    
+    def process_cc(self, cc_number, value, channel):
+        """Process CC value if it has a configured route"""
+        if cc_number not in self.cc_routes:
+            if Constants.DEBUG:
+                print(f"[MOD] Ignoring unrouted CC {cc_number}")
+            return  # Ignore CCs that aren't configured
+            
+        route = self.cc_routes[cc_number]
+        normalized_value = value / 127.0  # Convert MIDI CC range to 0-1
+        
+        if Constants.DEBUG:
+            print(f"[MOD] Processing CC {cc_number}:")
+            print(f"      Value: {value}")
+            print(f"      Target: {get_target_name(route.target)}")
+        
+        # Process through route and update target
+        processed = route.process(normalized_value)
+        self.set_target_value(route.target, channel, processed)
+        
+        return processed
             
     def remove_route(self, source, target, channel=None):
         """Remove a modulation route"""
