@@ -70,16 +70,21 @@ class PerformanceMonitor:
             print("[PERF] Audio error registered")
 
     def should_throttle(self):
-        if Constants.DISABLE_THROTTLING:
-            return False
-        elif self.load_factor > 0.8:
-            return True
-        elif self.buffer_status < 0.2:
-            return True
-        elif self.audio_errors > 5:
-            return True
-        else:
-            return False
+        # disabled throttling
+        return False
+    
+        # we will do throttling once the routes work 
+
+        # if Constants.DISABLE_THROTTLING:
+        #     return False
+        # elif self.load_factor > 0.8:
+        #     return True
+        # elif self.buffer_status < 0.2:
+        #     return True
+        # elif self.audio_errors > 5:
+        #     return True
+        # else:
+        #     return False
 
     def bypass_throttling(self):
         """Bypass performance throttling for debugging"""
