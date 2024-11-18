@@ -3,7 +3,7 @@ import array
 import math
 import synthio
 from fixed_point_math import FixedPoint
-from synth_constants import Constants, FilterType
+from synth_constants import Constants, FilterType, ModSource
 
 class WaveformManager:
     """Manages wavetable generation and morphing"""
@@ -62,13 +62,32 @@ class WaveformManager:
         return self.waveforms.get(name)
 
 class EnvelopeManager:
-    """Manages gate-based envelope generation"""
+    """Manages gate-based envelope generation with flexible parameter mapping"""
     def __init__(self):
         self.current_config = None
         
-    def create_envelope(self, config=None):
-        """Create envelope based on gate configuration"""
-        self.current_config = config or {
+    def _map_parameter(self, param_config, value, velocity=1.0):
+        """Map a parameter value based on configuration"""
+        if not param_config:
+            return value
+        
+        # Check for velocity source
+        if param_config.get('level', {}).get('source') == ModSource.VELOCITY:
+            # Scale value by velocity
+            value *= velocity
+        
+        return value
+    
+    def create_envelope(self, config=None, velocity=1.0):
+        """
+        Create envelope based on instrument configuration
+        
+        Args:
+            config (dict): Instrument envelope configuration
+            velocity (float): Note velocity for dynamic level scaling
+        """
+        # Default fallback configuration
+        default_config = {
             'attack': {
                 'time': 0.01,
                 'level': 1.0,
@@ -90,12 +109,46 @@ class EnvelopeManager:
             }
         }
         
-        # Convert envelope config to synthio envelope
+        # Merge provided config with defaults
+        if config:
+            for stage in ['attack', 'decay', 'sustain', 'release']:
+                if stage in config:
+                    default_config[stage].update(config[stage])
+        
+        # Map parameters, potentially using velocity
+        attack_time = self._map_parameter(
+            config.get('attack', {}), 
+            default_config['attack']['time']
+        )
+        
+        attack_level = self._map_parameter(
+            config.get('attack', {}).get('level', {}), 
+            default_config['attack']['level'], 
+            velocity
+        )
+        
+        decay_time = self._map_parameter(
+            config.get('decay', {}), 
+            default_config['decay']['time']
+        )
+        
+        sustain_level = self._map_parameter(
+            config.get('sustain', {}), 
+            default_config['sustain']['level']
+        )
+        
+        release_time = self._map_parameter(
+            config.get('release', {}), 
+            default_config['release']['time']
+        )
+        
+        # Convert to synthio envelope
         return synthio.Envelope(
-            attack_time=self.current_config['attack']['time'],
-            decay_time=self.current_config['decay']['time'],
-            sustain_level=self.current_config['sustain']['level'],
-            release_time=self.current_config['release']['time']
+            attack_time=attack_time,
+            decay_time=decay_time,
+            sustain_level=sustain_level,
+            release_time=release_time,
+            attack_level=attack_level
         )
 
 class FilterManager:
@@ -139,29 +192,40 @@ class SynthesisEngine:
         self.envelope_manager = EnvelopeManager()
         self.current_instrument = None
         
-    def create_note(self, frequency, amplitude=0.0, waveform_name='sine'):
+    def create_note(self, frequency, amplitude=0.0, waveform_name='sine', velocity=1.0):
         """Create new note with gate-based envelope"""
         waveform = self.waveform_manager.get_waveform(waveform_name)
         
         # Get envelope from current instrument config
         if self.current_instrument and 'envelope' in self.current_instrument:
             envelope = self.envelope_manager.create_envelope(
-                self.current_instrument['envelope']
+                self.current_instrument['envelope'], 
+                velocity
             )
         else:
             envelope = self.envelope_manager.create_envelope()
+        
+        # Check if filter routes exist in instrument config
+        filter_obj = None
+        if (self.current_instrument and 
+            'modulation' in self.current_instrument and 
+            any(route.get('target') == ModTarget.FILTER_CUTOFF or 
+                route.get('target') == ModTarget.FILTER_RESONANCE 
+                for route in self.current_instrument['modulation'])):
+            filter_obj = self.filter_manager.create_filter()
             
         note = synthio.Note(
             frequency=frequency,
             waveform=waveform,
             envelope=envelope,
             amplitude=amplitude,
-            filter=self.filter_manager.create_filter()
+            filter=filter_obj
         )
         
         if Constants.DEBUG:
             print(f"[SYNTH] Created note: freq={frequency:.2f}Hz, amp={amplitude:.2f}")
             print(f"[ENV] Starting attack stage: start={amplitude:.3f} target={amplitude:.3f}")
+            print(f"[FILTER] Filter applied: {filter_obj is not None}")
         
         return note
     
@@ -179,18 +243,19 @@ class SynthesisEngine:
             voice.synth_note.frequency = params['frequency']
 
         if 'amplitude' in params:
-            # Get envelope configuration
-            env_config = (self.current_instrument.get('envelope', {}) 
-                        if self.current_instrument else {})
-            
             # Update amplitude
             voice.synth_note.amplitude = params['amplitude']
             
             if Constants.DEBUG:
                 print(f"[ENV] Updating amplitude: {params['amplitude']:.3f}")
 
-        # Filter updates if needed
-        if 'filter_cutoff' in params or 'filter_resonance' in params:
+        # Filter updates only if filter routes exist
+        if ('filter_cutoff' in params or 'filter_resonance' in params) and \
+           (self.current_instrument and 
+            'modulation' in self.current_instrument and 
+            any(route.get('target') == ModTarget.FILTER_CUTOFF or 
+                route.get('target') == ModTarget.FILTER_RESONANCE 
+                for route in self.current_instrument['modulation'])):
             self.filter_manager.update_filter(
                 voice,
                 params.get('filter_cutoff'),

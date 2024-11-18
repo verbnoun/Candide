@@ -106,33 +106,34 @@ class Piano(InstrumentConfig):
         # Piano-specific configuration
         self.config.update({
             'oscillator': {
-                'waveform': 'triangle',
-                # Detune is now optional and controlled via CC
-                'detune_control': {
-                    'cc': 75,
-                    'name': 'Piano Detune',
-                    'range': {'min': -0.01, 'max': 0.01},
-                    'curve': 'linear',
-                    'default': 0.001,
-                    'initial_value': 0.001  # Default detune value
-                }
+                'waveform': 'triangle'
             },
             'envelope': {
                 'attack': {
                     'time': 0.001,
                     'control': {
                         'cc': 73,
-                        'name': 'Piano Attack',
+                        'name': 'Piano Attack Time',
                         'range': {'min': 0.0001, 'max': 0.1},
                         'curve': 'logarithmic',
                         'default': 0.001
+                    },
+                    'level': {
+                        'source': ModSource.VELOCITY,
+                        'control': {
+                            'cc': 81,  # New CC for attack level
+                            'name': 'Piano Attack Level',
+                            'range': {'min': 0.0, 'max': 1.0},
+                            'curve': 'exponential',
+                            'default': 1.0
+                        }
                     }
                 },
                 'decay': {
                     'time': 0.8,
                     'control': {
                         'cc': 72,
-                        'name': 'Piano Decay',
+                        'name': 'Piano Decay Time',
                         'range': {'min': 0.1, 'max': 2.0},
                         'curve': 's_curve',
                         'default': 0.8
@@ -152,13 +153,22 @@ class Piano(InstrumentConfig):
                     'time': 0.5,
                     'control': {
                         'cc': 74,
-                        'name': 'Piano Release',
+                        'name': 'Piano Release Time',
                         'range': {'min': 0.01, 'max': 3.0},
                         'curve': 'exponential',
                         'default': 0.5
                     }
                 }
-            }
+            },
+            # Add amplitude modulation route
+            'modulation': [
+                {
+                    'source': ModSource.VELOCITY,
+                    'target': ModTarget.AMPLITUDE,
+                    'amount': 1.0,
+                    'curve': 'exponential'
+                }
+            ]
         })
 
 def create_instrument(name):

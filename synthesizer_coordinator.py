@@ -79,7 +79,7 @@ class MPESynthesizer:
                 print(f"\n[SYNTH] Allocating voice:")
                 print(f"      Channel: {voice.channel}")
                 print(f"      Note: {voice.note}")
-                print(f"      Velocity: {FixedPoint.to_float(voice.initial_state['velocity']):.3f}")
+                print(f"      Raw Velocity: {voice.initial_state['velocity']}")
             
             # Calculate initial frequency
             frequency = synthio.midi_to_hz(voice.note)
@@ -91,7 +91,18 @@ class MPESynthesizer:
                 FixedPoint.to_float(FixedPoint.midi_note_to_fixed(voice.note))
             )
             
-            initial_velocity = FixedPoint.to_float(voice.initial_state['velocity'])
+            # Normalize velocity to 0-1 range
+            raw_velocity = voice.initial_state['velocity']
+            if isinstance(raw_velocity, int) and raw_velocity > 127:
+                # Assume fixed-point representation
+                initial_velocity = min(1.0, max(0.0, FixedPoint.to_float(raw_velocity) / 127.0))
+            else:
+                # Standard MIDI velocity normalization
+                initial_velocity = min(1.0, max(0.0, float(raw_velocity) / 127.0))
+            
+            if Constants.DEBUG:
+                print(f"      Normalized Velocity: {initial_velocity:.3f}")
+            
             self.mod_matrix.set_source_value(
                 ModSource.VELOCITY,
                 voice.channel,
@@ -101,16 +112,30 @@ class MPESynthesizer:
             # Get initial parameters through modulation
             params = self._collect_voice_parameters(voice)
             
+            # Ensure params is a dictionary with float values
+            if not isinstance(params, dict):
+                print(f"[ERROR] Params is not a dictionary: {type(params)}")
+                params = {}
+            
+            # Ensure all parameters are floats with safe defaults
+            safe_params = {
+                'frequency': float(params.get('frequency', frequency)),
+                'amplitude': float(min(1.0, params.get('amplitude', initial_velocity))),
+                'filter_cutoff': float(params.get('filter_cutoff', 1000)),
+                'filter_resonance': float(params.get('filter_resonance', 0.7)),
+                'detune': float(params.get('detune', 0.0))
+            }
+            
             # Create note with instrument's config
             voice.synth_note = self.engine.create_note(
-                frequency=params.get('frequency', frequency),
-                amplitude=min(1.0, params['amplitude']),
+                frequency=safe_params['frequency'],
+                amplitude=safe_params['amplitude'],
                 waveform_name=self.current_instrument.get('oscillator', {}).get('waveform', 'sine')
             )
             
             # Store initial state
             self.active_notes[channel_note] = {
-                'params': params,
+                'params': safe_params,
                 'last_update': time.monotonic(),
                 'note_obj': voice.synth_note
             }
@@ -124,6 +149,7 @@ class MPESynthesizer:
 
             if Constants.DEBUG:
                 print("[SYNTH] Voice successfully allocated")
+                print(f"[SYNTH] Note parameters: {safe_params}")
             
         except Exception as e:
             print(f"[ERROR] Voice allocation failed: {str(e)}")
@@ -223,33 +249,48 @@ class MPESynthesizer:
     def _collect_voice_parameters(self, voice):
         """Get all modulated parameters for a voice"""
         try:
+            # Validate input voice
+            if not hasattr(voice, 'channel') or not hasattr(voice, 'note'):
+                print(f"[ERROR] Invalid voice object: {type(voice)}")
+                return {}
+
+            # Validate initial_state
+            if not hasattr(voice, 'initial_state'):
+                print("[ERROR] Voice missing initial_state")
+                return {}
+            
+            if not isinstance(voice.initial_state, dict):
+                print(f"[ERROR] Initial state is not a dictionary: {type(voice.initial_state)}")
+                return {}
+
+            # Normalize velocity
+            raw_velocity = voice.initial_state.get('velocity', 1.0)
+            if isinstance(raw_velocity, int) and raw_velocity > 127:
+                # Assume fixed-point representation
+                initial_velocity = min(1.0, max(0.0, FixedPoint.to_float(raw_velocity) / 127.0))
+            else:
+                # Standard MIDI velocity normalization
+                initial_velocity = min(1.0, max(0.0, float(raw_velocity) / 127.0))
+
             # Get envelope level using note_info
             envelope_level = 1.0
-            current_stage = 'attack'
-            
             if voice.synth_note:
-                envelope_state, envelope_value = self.synth.note_info(voice.synth_note)
-                
-                if envelope_state is not None:
-                    # Map envelope state to stage names
-                    stage_map = {
-                        synthio.EnvelopeState.ATTACK: 'attack',
-                        synthio.EnvelopeState.DECAY: 'decay',
-                        synthio.EnvelopeState.SUSTAIN: 'sustain',
-                        synthio.EnvelopeState.RELEASE: 'release'
-                    }
-                    
-                    envelope_level = envelope_value
-                    current_stage = stage_map.get(envelope_state, 'attack')
-                    
-                    if Constants.DEBUG:
-                        print(f"[ENV] Envelope State: {current_stage}")
-                        print(f"[ENV] Envelope Level: {envelope_level:.3f}")
+                try:
+                    envelope_state, envelope_value = self.synth.note_info(voice.synth_note)
+                    envelope_level = float(envelope_value) if envelope_value is not None else 1.0
+                except Exception as e:
+                    print(f"[ERROR] Note info retrieval failed: {str(e)}")
+                    envelope_level = 1.0
             
             # Retrieve base frequency from modulation matrix
-            base_frequency = FixedPoint.to_float(
-                self.mod_matrix.get_target_value(ModTarget.OSC_PITCH, voice.channel)
-            )
+            try:
+                base_frequency = synthio.midi_to_hz(voice.note)  # Default to MIDI note frequency
+                freq_mod = self.mod_matrix.get_target_value(ModTarget.OSC_PITCH, voice.channel)
+                if freq_mod is not None:
+                    base_frequency = float(freq_mod)
+            except Exception as e:
+                print(f"[ERROR] Frequency retrieval failed: {str(e)}")
+                base_frequency = synthio.midi_to_hz(voice.note)
             
             # Handle detune configuration
             detune_value = 0.0
@@ -258,32 +299,51 @@ class MPESynthesizer:
                 'detune_control' in self.current_instrument['oscillator']):
                 detune_config = self.current_instrument['oscillator']['detune_control']
                 
-                # Check for initial static value
-                detune_value = detune_config.get('initial_value', 0.0)
-                
-                # If CC is defined, it takes precedence
-                if 'cc' in detune_config:
-                    # Retrieve CC value from tracked values
-                    cc_value = self._cc_values.get((voice.channel, detune_config['cc']), 0.0)
+                # Check if detune is explicitly configured
+                if detune_config:
+                    # Check for initial static value
+                    detune_value = float(detune_config.get('initial_value', 0.0))
                     
-                    # Map CC value to detune range
-                    min_detune = detune_config.get('range', {}).get('min', -0.01)
-                    max_detune = detune_config.get('range', {}).get('max', 0.01)
-                    detune_value = min_detune + cc_value * (max_detune - min_detune)
+                    # If CC is defined, it takes precedence
+                    if 'cc' in detune_config:
+                        # Retrieve CC value from tracked values
+                        cc_value = float(self._cc_values.get((voice.channel, detune_config['cc']), 0.0))
+                        
+                        # Map CC value to detune range
+                        min_detune = float(detune_config.get('range', {}).get('min', -0.01))
+                        max_detune = float(detune_config.get('range', {}).get('max', 0.01))
+                        detune_value = min_detune + cc_value * (max_detune - min_detune)
             
-            # Collect parameters
+            # Get modulated amplitude value
+            try:
+                amplitude_mod = self.mod_matrix.get_target_value(ModTarget.AMPLITUDE, voice.channel)
+                amplitude_target = float(amplitude_mod if amplitude_mod is not None else initial_velocity)
+            except Exception as e:
+                print(f"[ERROR] Amplitude retrieval failed: {str(e)}")
+                amplitude_target = initial_velocity
+
+            # Get filter parameters with safe defaults
+            try:
+                cutoff_mod = self.mod_matrix.get_target_value(ModTarget.FILTER_CUTOFF, voice.channel)
+                filter_cutoff = float(cutoff_mod if cutoff_mod is not None else 1000.0)
+            except Exception as e:
+                print(f"[ERROR] Filter cutoff retrieval failed: {str(e)}")
+                filter_cutoff = 1000.0
+
+            try:
+                res_mod = self.mod_matrix.get_target_value(ModTarget.FILTER_RESONANCE, voice.channel)
+                filter_resonance = float(res_mod if res_mod is not None else 0.7)
+            except Exception as e:
+                print(f"[ERROR] Filter resonance retrieval failed: {str(e)}")
+                filter_resonance = 0.7
+            
+            # Construct params dictionary with explicit float conversions
             params = {
-                'frequency': base_frequency * (1 + detune_value),
-                'amplitude': min(1.0, FixedPoint.to_float(
-                    self.mod_matrix.get_target_value(ModTarget.AMPLITUDE, voice.channel)
-                ) * envelope_level),
-                'filter_cutoff': FixedPoint.to_float(
-                    self.mod_matrix.get_target_value(ModTarget.FILTER_CUTOFF, voice.channel)
-                ),
-                'filter_resonance': FixedPoint.to_float(
-                    self.mod_matrix.get_target_value(ModTarget.FILTER_RESONANCE, voice.channel)
-                ),
-                'detune': detune_value
+                'frequency': float(base_frequency * (1 + detune_value) if detune_value != 0 else base_frequency),
+                'amplitude': float(min(1.0, amplitude_target * envelope_level)),
+                'filter_cutoff': float(filter_cutoff),
+                'filter_resonance': float(filter_resonance),
+                'detune': float(detune_value)
             }
             
             if Constants.DEBUG:
@@ -293,7 +353,6 @@ class MPESynthesizer:
                 print(f"      Base Frequency: {base_frequency:.3f}")
                 print(f"      Detune Value: {detune_value:.3f}")
                 print(f"      Final Frequency: {params['frequency']:.3f}")
-                print(f"      Envelope Stage: {current_stage}")
                 print(f"      Envelope Level: {envelope_level:.3f}")
                 for k, v in params.items():
                     print(f"      {k}: {v:.3f}")
