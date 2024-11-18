@@ -1,3 +1,4 @@
+"""Main synthesis engine with gate-based envelope control"""
 import array
 import math
 import synthio
@@ -69,25 +70,20 @@ class EnvelopeManager:
         """Create envelope based on gate configuration"""
         self.current_config = config or {
             'attack': {
-                'gate': 'note_on',
                 'time': 0.01,
                 'level': 1.0,
                 'curve': 'linear'
             },
             'decay': {
-                'gate': 'attack_end',
                 'time': 0.1,
                 'level_scale': 1.0,
                 'curve': 'exponential'
             },
             'sustain': {
-                'gate': 'decay_end',
-                'control': None,
                 'level': 0.8,
                 'curve': 'linear'
             },
             'release': {
-                'gate': 'note_off',
                 'time': 0.2,
                 'level': 0.0,
                 'curve': 'exponential'
@@ -144,14 +140,7 @@ class SynthesisEngine:
         self.current_instrument = None
         
     def create_note(self, frequency, amplitude=0.0, waveform_name='sine'):
-        """Create new note with gate-based envelope
-        
-        Envelope follows configured gate sequence:
-        1. Note-on gates attack
-        2. Attack completion gates decay
-        3. Decay completion gates sustain
-        4. Note-off gates release
-        """
+        """Create new note with gate-based envelope"""
         waveform = self.waveform_manager.get_waveform(waveform_name)
         
         # Get envelope from current instrument config
@@ -161,7 +150,7 @@ class SynthesisEngine:
             )
         else:
             envelope = self.envelope_manager.create_envelope()
-        
+            
         note = synthio.Note(
             frequency=frequency,
             waveform=waveform,
@@ -172,12 +161,13 @@ class SynthesisEngine:
         
         if Constants.DEBUG:
             print(f"[SYNTH] Created note: freq={frequency:.2f}Hz, amp={amplitude:.2f}")
+            print(f"[ENV] Starting attack stage: start={amplitude:.3f} target={amplitude:.3f}")
         
         return note
     
-    def update_note_parameters(self, note, params):
+    def update_note_parameters(self, voice, params):
         """Update parameters based on modulation and gate states"""
-        if not note.synth_note:
+        if not voice.synth_note:
             return
 
         if Constants.DEBUG:
@@ -186,23 +176,23 @@ class SynthesisEngine:
 
         # Basic parameter updates
         if 'frequency' in params:
-            note.synth_note.frequency = params['frequency']
+            voice.synth_note.frequency = params['frequency']
 
         if 'amplitude' in params:
-            # Amplitude is controlled by envelope and modulation
-            base_amplitude = params['amplitude']
-            if note.envelope_state:
-                # Get current envelope level
-                env_level = FixedPoint.to_float(note.envelope_state.stage_target_level)
-                if note.envelope_state.current_stage == 'sustain':
-                    env_level = FixedPoint.to_float(note.envelope_state.control_level)
-                # Combine envelope and modulation
-                note.synth_note.amplitude = base_amplitude * env_level
+            # Get envelope configuration
+            env_config = (self.current_instrument.get('envelope', {}) 
+                        if self.current_instrument else {})
+            
+            # Update amplitude
+            voice.synth_note.amplitude = params['amplitude']
+            
+            if Constants.DEBUG:
+                print(f"[ENV] Updating amplitude: {params['amplitude']:.3f}")
 
         # Filter updates if needed
         if 'filter_cutoff' in params or 'filter_resonance' in params:
             self.filter_manager.update_filter(
-                note,
+                voice,
                 params.get('filter_cutoff'),
                 params.get('filter_resonance')
             )

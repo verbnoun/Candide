@@ -1,7 +1,7 @@
 """Main synthesizer coordinator with gate-based envelope and config-driven routing"""
 import time
 import synthio
-from synth_constants import Constants, ModSource, ModTarget
+from synth_constants import Constants, ModSource, ModTarget, CCMapping
 from mpe_handling import MPEVoiceManager, MPEParameterProcessor, MPEMessageRouter
 from modulation_system import ModulationMatrix, LFOManager
 from synthesis_engine import SynthesisEngine
@@ -58,6 +58,7 @@ class MPESynthesizer:
         self.current_instrument = None
         self.active_notes = {}
         self._last_update = time.monotonic()
+        self._cc_values = {}  # Track CC values per channel
 
         if Constants.DEBUG:
             print("[SYNTH] All subsystems initialized")
@@ -110,7 +111,8 @@ class MPESynthesizer:
             # Store initial state
             self.active_notes[channel_note] = {
                 'params': params,
-                'last_update': time.monotonic()
+                'last_update': time.monotonic(),
+                'note_obj': voice.synth_note
             }
             
             # Start note and trigger envelope
@@ -221,12 +223,28 @@ class MPESynthesizer:
     def _collect_voice_parameters(self, voice):
         """Get all modulated parameters for a voice"""
         try:
-            # Get envelope level
+            # Get envelope level using note_info
             envelope_level = 1.0
-            if voice.envelope_state:
-                envelope_level = voice.envelope_state.stage_target_level
-                if voice.envelope_state.current_stage == 'sustain':
-                    envelope_level = voice.envelope_state.control_level
+            current_stage = 'attack'
+            
+            if voice.synth_note:
+                envelope_state, envelope_value = self.synth.note_info(voice.synth_note)
+                
+                if envelope_state is not None:
+                    # Map envelope state to stage names
+                    stage_map = {
+                        synthio.EnvelopeState.ATTACK: 'attack',
+                        synthio.EnvelopeState.DECAY: 'decay',
+                        synthio.EnvelopeState.SUSTAIN: 'sustain',
+                        synthio.EnvelopeState.RELEASE: 'release'
+                    }
+                    
+                    envelope_level = envelope_value
+                    current_stage = stage_map.get(envelope_state, 'attack')
+                    
+                    if Constants.DEBUG:
+                        print(f"[ENV] Envelope State: {current_stage}")
+                        print(f"[ENV] Envelope Level: {envelope_level:.3f}")
             
             # Retrieve base frequency from modulation matrix
             base_frequency = FixedPoint.to_float(
@@ -245,18 +263,13 @@ class MPESynthesizer:
                 
                 # If CC is defined, it takes precedence
                 if 'cc' in detune_config:
-                    # Retrieve CC value from modulation matrix if available
-                    # This allows for dynamic CC-based detune
-                    cc_value = self.mod_matrix.get_source_value(
-                        ModSource.CC, 
-                        voice.channel, 
-                        detune_config['cc']
-                    )
-                    if cc_value is not None:
-                        # Map CC value to detune range
-                        min_detune = detune_config.get('range', {}).get('min', -0.01)
-                        max_detune = detune_config.get('range', {}).get('max', 0.01)
-                        detune_value = min_detune + cc_value * (max_detune - min_detune)
+                    # Retrieve CC value from tracked values
+                    cc_value = self._cc_values.get((voice.channel, detune_config['cc']), 0.0)
+                    
+                    # Map CC value to detune range
+                    min_detune = detune_config.get('range', {}).get('min', -0.01)
+                    max_detune = detune_config.get('range', {}).get('max', 0.01)
+                    detune_value = min_detune + cc_value * (max_detune - min_detune)
             
             # Collect parameters
             params = {
@@ -280,7 +293,7 @@ class MPESynthesizer:
                 print(f"      Base Frequency: {base_frequency:.3f}")
                 print(f"      Detune Value: {detune_value:.3f}")
                 print(f"      Final Frequency: {params['frequency']:.3f}")
-                print(f"      Envelope Stage: {voice.envelope_state.current_stage}")
+                print(f"      Envelope Stage: {current_stage}")
                 print(f"      Envelope Level: {envelope_level:.3f}")
                 for k, v in params.items():
                     print(f"      {k}: {v:.3f}")
@@ -291,30 +304,6 @@ class MPESynthesizer:
             print(f"[ERROR] Parameter collection failed: {str(e)}")
             return {}
 
-    def set_instrument(self, instrument_config):
-        """Configure synthesizer from instrument config"""
-        if not instrument_config:
-            return
-            
-        if Constants.DEBUG:
-            print(f"\n[SYNTH] Setting instrument: {instrument_config['name']}")
-        
-        self.current_instrument = instrument_config
-        self.engine.current_instrument = instrument_config
-        
-        # Configure subsystems in correct order - remove duplicate mod_matrix config
-        self.voice_manager.set_instrument_config(instrument_config)
-        self.parameter_processor.set_instrument_config(instrument_config)
-        
-        # Let message router handle all modulation configuration
-        self.message_router.set_instrument_config(instrument_config)
-        
-        # Configure LFOs after modulation matrix is set up
-        self.lfo_manager.configure_from_instrument(instrument_config, self.synth)
-            
-        if Constants.DEBUG:
-            print("[SYNTH] Instrument configuration complete")
-
     def process_mpe_events(self, events):
         """Process incoming MPE messages"""
         if not events:
@@ -322,6 +311,21 @@ class MPESynthesizer:
             
         if Constants.DISABLE_THROTTLING or not self.output_manager.performance.should_throttle():
             for event in events:
+                # Track CC values only for routed CCs
+                if event.get('type') == 'cc':
+                    channel = event.get('channel', 0)
+                    cc_number = event.get('cc', 0)
+                    
+                    # Process CC through modulation matrix
+                    processed_value = self.mod_matrix.process_cc(cc_number, event.get('value', 0), channel)
+                    
+                    # Only store and track if CC is routed
+                    if processed_value is not None:
+                        self._cc_values[(channel, cc_number)] = processed_value
+                        
+                        if Constants.DEBUG:
+                            print(f"[SYNTH] Tracked routed CC: {cc_number}, Value: {processed_value:.3f}")
+                
                 result = self.message_router.route_message(event)
                 if result:
                     if result['type'] == 'voice_allocated':
@@ -339,6 +343,30 @@ class MPESynthesizer:
                         self._handle_voice_allocation(result['voice'])
                     elif result['type'] == 'voice_released':
                         self._handle_voice_release(result['voice'])
+
+    def set_instrument(self, instrument_config):
+        """Configure synthesizer from instrument config"""
+        if not instrument_config:
+            return
+            
+        if Constants.DEBUG:
+            print(f"\n[SYNTH] Setting instrument: {instrument_config['name']}")
+        
+        self.current_instrument = instrument_config
+        self.engine.current_instrument = instrument_config
+        
+        # Configure subsystems in correct order
+        self.voice_manager.set_instrument_config(instrument_config)
+        self.parameter_processor.set_instrument_config(instrument_config)
+        
+        # Let message router handle all modulation configuration
+        self.message_router.set_instrument_config(instrument_config)
+        
+        # Configure LFOs after modulation matrix is set up
+        self.lfo_manager.configure_from_instrument(instrument_config, self.synth)
+            
+        if Constants.DEBUG:
+            print("[SYNTH] Instrument configuration complete")
 
     def cleanup(self):
         """Clean shutdown"""

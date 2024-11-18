@@ -182,28 +182,19 @@ class ModulationMatrix:
         if Constants.DEBUG:
             print("[MOD] Modulation matrix initialized")
     
-    def _find_control_objects(self, config, path=''):
-        """Recursively find all control objects in config"""
-        controls = []
+    def get_source_value(self, source, channel, cc_number=None):
+        """Get current value for a modulation source"""
+        if source not in self.source_values:
+            return None
+            
+        channel_values = self.source_values[source]
+        if cc_number is not None:
+            # For CC sources, check specific CC number
+            return channel_values.get((channel, cc_number), None)
         
-        if isinstance(config, dict):
-            for key, value in config.items():
-                new_path = f"{path}.{key}" if path else key
-                
-                if key == 'control' and isinstance(value, dict):
-                    if all(k in value for k in ['cc', 'name', 'range']):
-                        value['path'] = path  # Store path to parent
-                        controls.append(value)
-                else:
-                    controls.extend(self._find_control_objects(value, new_path))
-                    
-        elif isinstance(config, list):
-            for i, item in enumerate(config):
-                new_path = f"{path}[{i}]"
-                controls.extend(self._find_control_objects(item, new_path))
-                
-        return controls
-
+        # For other sources, just get channel value
+        return channel_values.get(channel, None)
+    
     def configure_from_instrument(self, config):
         """Configure all modulation based on instrument config"""
         if Constants.DEBUG:
@@ -215,20 +206,49 @@ class ModulationMatrix:
         self.blocks.clear()
         self.control_metadata.clear()
         
-        # Find all control objects in config
-        controls = self._find_control_objects(config)
+        # Track used CC numbers to enforce 14 CC limit
+        used_cc_numbers = set()
         
-        # Require at least one control object
-        if not controls:
-            raise ValueError("No control objects found in instrument configuration")
+        # Recursively find control objects in config
+        def find_controls(obj, path=''):
+            controls = []
+            
+            if isinstance(obj, dict):
+                for key, value in obj.items():
+                    new_path = f"{path}.{key}" if path else key
+                    
+                    if key == 'control' and isinstance(value, dict):
+                        if all(k in value for k in ['cc', 'name', 'range']):
+                            value['path'] = path  # Store path to parent
+                            controls.append(value)
+                    else:
+                        controls.extend(find_controls(value, new_path))
+                        
+            elif isinstance(obj, list):
+                for i, item in enumerate(obj):
+                    new_path = f"{path}[{i}]"
+                    controls.extend(find_controls(item, new_path))
+                    
+            return controls
         
-        # Set up CC routes for control objects
+        # Find all control objects
+        controls = find_controls(config)
+        
+        # Process each control object
         for control in controls:
             cc = control['cc']
             name = control['name']
             value_range = control['range']
             curve = control.get('curve', 'linear')
             path = control['path']
+            
+            # Enforce 14 CC limit
+            if cc in used_cc_numbers or len(used_cc_numbers) >= 14:
+                if Constants.DEBUG:
+                    print(f"[MOD] Skipping CC {cc}: Limit reached or already used")
+                continue
+            
+            used_cc_numbers.add(cc)
             
             if Constants.DEBUG:
                 print(f"[MOD] Adding flexible CC route:")
@@ -318,7 +338,7 @@ class ModulationMatrix:
         if cc_number not in self.cc_routes:
             if Constants.DEBUG:
                 print(f"[MOD] Ignoring unrouted CC {cc_number}")
-            return  # Ignore CCs that aren't configured
+            return None  # Explicitly return None for unrouted CCs
             
         route = self.cc_routes[cc_number]
         normalized_value = value / 127.0  # Convert MIDI CC range to 0-1
