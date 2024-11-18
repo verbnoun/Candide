@@ -26,7 +26,7 @@ class Constants:
     HANDSHAKE_TIMEOUT = 5.0  # in seconds
     HANDSHAKE_MAX_RETRIES = 10
     
-    # New Connection Constants
+    # Connection Constants
     STARTUP_DELAY = 1.0  # in seconds
     RETRY_DELAY = 5.0  # in seconds
     RETRY_INTERVAL = 0.25  # in seconds
@@ -91,18 +91,6 @@ class TextUart:
         self.last_write = time.monotonic()
         return result
 
-class AudioManager:
-    def __init__(self):
-        self.audio = None
-        self._setup_audio()
-
-    def _setup_audio(self):
-        print("Setting up audio...")
-        self.audio = AudioOutputManager()
-
-    def set_volume(self, volume):
-        self.audio.set_volume(volume)
-
 class HardwareManager:
     def __init__(self):
         print("Setting up hardware...")
@@ -125,17 +113,24 @@ class HardwareManager:
 
     def read_pot(self):
         return self.volume_pot.read_pot()
+        
+    def cleanup(self):
+        """Clean up hardware resources"""
+        if self.encoder:
+            self.encoder.cleanup()
+        if self.volume_pot and self.volume_pot.pot:
+            self.volume_pot.pot.deinit()
 
 class SynthManager:
-    def __init__(self, audio_manager):
+    def __init__(self, output_manager):
         self.synth = None
         self.current_instrument = None
-        self.audio_manager = audio_manager
+        self.output_manager = output_manager
         self._setup_synth()
 
     def _setup_synth(self):
         print("Setting up synthesizer...")
-        self.synth = MPESynthesizer(output_manager=self.audio_manager.audio)
+        self.synth = MPESynthesizer(output_manager=self.output_manager)
         
         self.current_instrument = create_instrument('piano')
         if self.current_instrument:
@@ -287,9 +282,12 @@ class CandideConnectionManager:
 class Candide:
     def __init__(self):
         print("\nWakeup Candide!")
-        self.audio_manager = AudioManager()
+        
+        # Initialize audio output first
+        self.output_manager = AudioOutputManager()
+        
         self.hardware_manager = HardwareManager()
-        self.synth_manager = SynthManager(self.audio_manager)
+        self.synth_manager = SynthManager(self.output_manager)
         
         self.transport = TransportManager(
             tx_pin=Constants.UART_TX,
@@ -318,7 +316,7 @@ class Candide:
             initial_volume = self.hardware_manager.get_initial_volume()
             if Constants.DEBUG:
                 print(f"Initial volume: {initial_volume:.3f}")
-            self.audio_manager.set_volume(initial_volume)
+            self.output_manager.set_volume(initial_volume)
             print("\nCandide (v1.0) is awake!... ( ◔◡◔)♬")
         except Exception as e:
             print(f"Initialization error: {str(e)}")
@@ -339,7 +337,7 @@ class Candide:
         if current_time - self.last_volume_scan >= HWConstants.UPDATE_INTERVAL:
             new_volume = self.hardware_manager.read_pot()
             if new_volume is not None:
-                self.audio_manager.set_volume(new_volume)
+                self.output_manager.set_volume(new_volume)
             self.last_volume_scan = current_time
 
     def _check_encoder(self):
@@ -404,11 +402,12 @@ class Candide:
         if self.connection_manager:
             print("Cleaning up connection manager...")
             self.connection_manager.cleanup()
-        if self.hardware_manager.encoder:
-            print("Cleaning up encoder...")
-            self.hardware_manager.encoder.cleanup()
-        if self.hardware_manager.volume_pot:
-            self.hardware_manager.volume_pot.pot.deinit()
+        if self.hardware_manager:
+            print("Cleaning up hardware...")
+            self.hardware_manager.cleanup()
+        if self.output_manager:
+            print("Cleaning up audio...")
+            self.output_manager.cleanup()
         print("\nCandide goes to sleep... ( ◡_◡)ᶻ 𝗓 𐰁")
 
 def main():
