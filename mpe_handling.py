@@ -10,8 +10,20 @@ class EnvelopeGateState:
         self.stage_start_time = 0
         self.stage_start_level = FixedPoint.ZERO
         self.stage_target_level = FixedPoint.ZERO
-        self.control_level = FixedPoint.ZERO  # For pressure etc
+        self.control_level = FixedPoint.ZERO
         self._debug_last_level = None
+        self._control_objects = {}  # Store control objects for each stage
+        
+        # Find and store control objects
+        self._find_control_objects(envelope_config)
+        
+    def _find_control_objects(self, config):
+        """Recursively find control objects in envelope config"""
+        for stage, stage_config in config.items():
+            if isinstance(stage_config, dict) and 'control' in stage_config:
+                control = stage_config['control']
+                if all(k in control for k in ['cc', 'name', 'range']):
+                    self._control_objects[stage] = control
         
     def start_stage(self, stage, start_level):
         """Start a new envelope stage"""
@@ -20,40 +32,54 @@ class EnvelopeGateState:
         self.stage_start_level = FixedPoint.from_float(start_level)
         
         stage_config = self.config.get(stage, {})
-        if stage == 'sustain' and 'control' in stage_config:
-            control_config = stage_config['control']
-            min_level = FixedPoint.from_float(control_config.get('min_level', 0.0))
-            self.stage_target_level = min_level
-        else:
-            if 'level' in stage_config:
-                self.stage_target_level = FixedPoint.from_float(stage_config['level'])
-            elif 'level_scale' in stage_config:
-                scale = FixedPoint.from_float(stage_config['level_scale'])
-                self.stage_target_level = FixedPoint.multiply(self.stage_start_level, scale)
+        if 'level' in stage_config:
+            self.stage_target_level = FixedPoint.from_float(stage_config['level'])
+        elif 'level_scale' in stage_config:
+            scale = FixedPoint.from_float(stage_config['level_scale'])
+            self.stage_target_level = FixedPoint.multiply(self.stage_start_level, scale)
         
         if Constants.DEBUG:
             print(f"[ENV] Starting {stage} stage: start={FixedPoint.to_float(self.stage_start_level):.3f} target={FixedPoint.to_float(self.stage_target_level):.3f}")
     
-    def update_control(self, value):
-        """Update control value (e.g. pressure) for sustain"""
-        if self.current_stage == 'sustain':
-            stage_config = self.config.get('sustain', {})
-            if 'control' in stage_config:
-                control_config = stage_config['control']
-                min_level = FixedPoint.from_float(control_config.get('min_level', 0.0))
-                max_level = FixedPoint.from_float(control_config.get('max_level', 1.0))
+    def update_control(self, cc_number, value):
+        """Update control value for current stage"""
+        # Check if current stage has a control object
+        if self.current_stage in self._control_objects:
+            control = self._control_objects[self.current_stage]
+            
+            # Check if this CC matches the stage's control
+            if control['cc'] == cc_number:
+                min_val = control['range']['min']
+                max_val = control['range']['max']
+                curve = control.get('curve', 'linear')
                 
-                # Scale control value between min and max
-                self.control_level = FixedPoint.multiply(
-                    max_level - min_level,
-                    FixedPoint.from_float(value)
-                ) + min_level
+                # Normalize MIDI value to 0-1
+                normalized_value = value / 127.0
+                
+                # Apply curve
+                if curve == 'exponential':
+                    scaled_value = normalized_value * normalized_value
+                elif curve == 'logarithmic':
+                    scaled_value = 1 - ((1 - normalized_value) ** 2)
+                elif curve == 's_curve':
+                    scaled_value = 3 * (normalized_value ** 2) - 2 * (normalized_value ** 3)
+                else:  # linear
+                    scaled_value = normalized_value
+                
+                # Scale to parameter range
+                param_value = min_val + (scaled_value * (max_val - min_val))
+                
+                # Update stage parameter
+                stage_config = self.config.get(self.current_stage, {})
+                if 'time' in stage_config:
+                    stage_config['time'] = param_value
                 
                 if Constants.DEBUG:
-                    control_float = FixedPoint.to_float(self.control_level)
-                    if self._debug_last_level is None or abs(control_float - self._debug_last_level) > 0.01:
-                        print(f"[ENV] Sustain control updated: {control_float:.3f}")
-                        self._debug_last_level = control_float
+                    print(f"[ENV] Control update for {self.current_stage}:")
+                    print(f"      CC: {cc_number}")
+                    print(f"      Raw Value: {value}")
+                    print(f"      Normalized: {normalized_value:.3f}")
+                    print(f"      Scaled Value: {param_value:.3f}")
     
     def should_transition(self):
         """Check if current stage should transition"""
@@ -268,18 +294,17 @@ class MPEParameterProcessor:
             )
             
             if voice.envelope_state:
-                voice.envelope_state.update_control(FixedPoint.to_float(normalized))
+                voice.envelope_state.update_control(ModSource.PRESSURE, FixedPoint.to_float(normalized))
             
             voice.pressure = normalized
             voice.last_values['pressure'] = normalized
             
-            # Only route to mod matrix if explicitly configured
-            if self.config.get('modulation'):
-                self.mod_matrix.set_source_value(
-                    ModSource.PRESSURE, 
-                    voice.channel,
-                    FixedPoint.to_float(normalized)
-                )
+            # Route to mod matrix
+            self.mod_matrix.set_source_value(
+                ModSource.PRESSURE, 
+                voice.channel,
+                FixedPoint.to_float(normalized)
+            )
             return True
         return False
 
@@ -305,12 +330,12 @@ class MPEParameterProcessor:
                 voice.pitch_bend = scaled
                 voice.last_values['bend'] = scaled
                 
-                if self.config.get('modulation'):
-                    self.mod_matrix.set_source_value(
-                        ModSource.PITCH_BEND,
-                        voice.channel,
-                        FixedPoint.to_float(scaled)
-                    )
+                # Route to mod matrix
+                self.mod_matrix.set_source_value(
+                    ModSource.PITCH_BEND,
+                    voice.channel,
+                    FixedPoint.to_float(scaled)
+                )
                 return True
         return False
 
@@ -321,12 +346,38 @@ class MPEMessageRouter:
         self.parameter_processor = parameter_processor
         self.modulation_matrix = modulation_matrix
         self.current_instrument_config = None
+        self._control_map = {}  # Map CC numbers to control objects
 
     def set_instrument_config(self, config):
         """Set the current instrument configuration"""
         self.current_instrument_config = config
-        # Configure modulation matrix when instrument changes
+        
+        # Build CC control map
+        self._control_map.clear()
+        self._find_control_objects(config)
+        
+        # Configure modulation matrix
         self.modulation_matrix.configure_from_instrument(config)
+
+    def _find_control_objects(self, config, path=''):
+        """Recursively find all control objects in config"""
+        if isinstance(config, dict):
+            for key, value in config.items():
+                new_path = f"{path}.{key}" if path else key
+                
+                if key == 'control' and isinstance(value, dict):
+                    if all(k in value for k in ['cc', 'name', 'range']):
+                        self._control_map[value['cc']] = {
+                            'path': path,
+                            'control': value
+                        }
+                else:
+                    self._find_control_objects(value, new_path)
+                    
+        elif isinstance(config, list):
+            for i, item in enumerate(config):
+                new_path = f"{path}[{i}]"
+                self._find_control_objects(item, new_path)
 
     def route_message(self, message):
         """Route incoming MPE message to appropriate handler"""
@@ -346,20 +397,26 @@ class MPEMessageRouter:
         elif msg_type == 'pitch_bend':
             self.parameter_processor.handle_pitch_bend(channel, data.get('value', 8192), key)
         elif msg_type == 'cc':
-            # Route CC through modulation matrix if configured
-            cc_number = data.get('number')
-            cc_value = data.get('value', 0)
-            
             # Get voice if this is a note-specific CC
             voice = self.voice_manager.get_voice(channel, key) if key is not None else None
             
-            # Process through modulation matrix
-            self.modulation_matrix.process_cc(cc_number, cc_value, channel)
+            cc_number = data.get('number')
+            cc_value = data.get('value', 0)
             
-            if Constants.DEBUG:
-                print(f"[MPE] CC: ch={channel} cc={cc_number} value={cc_value}")
+            # Check if this CC is mapped to a control
+            if cc_number in self._control_map:
+                control_info = self._control_map[cc_number]
                 
-        # Note events are always processed, even if expression disabled
+                if voice and voice.envelope_state:
+                    # Update envelope stage if applicable
+                    voice.envelope_state.update_control(cc_number, cc_value)
+                
+                if Constants.DEBUG:
+                    print(f"[MPE] Flexible CC: ch={channel} cc={cc_number} value={cc_value}")
+                    print(f"      Path: {control_info['path']}")
+                    print(f"      Name: {control_info['control']['name']}")
+            
+        # Note events are always processed
         elif msg_type == 'note_on':
             note = data.get('note')
             velocity = data.get('velocity', 127)

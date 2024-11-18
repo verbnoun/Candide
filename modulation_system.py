@@ -59,16 +59,16 @@ class LFOManager:
         for name, lfo_config in lfo_configs.items():
             if Constants.DEBUG:
                 print(f"[LFO] Creating LFO '{name}':")
-                print(f"      Rate: {lfo_config['rate']}Hz")
-                print(f"      Shape: {lfo_config['shape']}")
-                print(f"      Range: {lfo_config['min_value']} to {lfo_config['max_value']}")
+                print(f"      Rate: {lfo_config.get('rate', 'N/A')}Hz")
+                print(f"      Shape: {lfo_config.get('shape', 'N/A')}")
+                print(f"      Range: {lfo_config.get('min_value', 'N/A')} to {lfo_config.get('max_value', 'N/A')}")
             
             lfo = self.create_lfo(name, **lfo_config)
             if lfo and lfo.lfo_block:
                 synth.blocks.append(lfo.lfo_block)
     
     def create_lfo(self, name, rate=1.0, shape='triangle', min_value=0.0, max_value=1.0, 
-                  sync_to_gate=False):
+                  sync_to_gate=False, **kwargs):
         """Create new LFO with specified parameters"""
         if name in self.active_lfos:
             if Constants.DEBUG:
@@ -218,6 +218,10 @@ class ModulationMatrix:
         # Find all control objects in config
         controls = self._find_control_objects(config)
         
+        # Require at least one control object
+        if not controls:
+            raise ValueError("No control objects found in instrument configuration")
+        
         # Set up CC routes for control objects
         for control in controls:
             cc = control['cc']
@@ -257,21 +261,6 @@ class ModulationMatrix:
                 print(f"      Amount: {amount:.3f}, Curve: {curve}")
                 
             self.add_route(source, target, amount, curve=curve)
-            
-        # Add legacy CC routes from config
-        for cc_number, route_config in config.get('cc_routing', {}).items():
-            target = route_config['target']
-            amount = route_config.get('amount', 1.0)
-            curve = route_config.get('curve', 'linear')
-            description = route_config.get('description', '')
-            
-            if Constants.DEBUG:
-                print(f"[MOD] Adding legacy CC route: CC {cc_number} -> {get_target_name(target)}")
-                print(f"      Amount: {amount:.3f}, Curve: {curve}")
-                if description:
-                    print(f"      Description: {description}")
-                
-            self.add_cc_route(int(cc_number), target, amount, curve)
     
     def scale_cc_value(self, value, control):
         """Scale normalized CC value using control's range and curve"""
@@ -350,15 +339,8 @@ class ModulationMatrix:
                 
             return scaled_value
         
-        # Legacy CC processing
-        if route.target != ModTarget.NONE:
-            if Constants.DEBUG:
-                print(f"      Target: {get_target_name(route.target)}")
-            
-            # Process through route and update target
-            processed = route.process(normalized_value)
-            self.set_target_value(route.target, channel, processed)
-            return processed
+        # Removed legacy route handling
+        raise ValueError(f"No control metadata found for CC {cc_number}")
             
     def remove_route(self, source, target, channel=None):
         """Remove a modulation route"""

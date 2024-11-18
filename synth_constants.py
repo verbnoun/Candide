@@ -102,3 +102,43 @@ class FilterType:
             cls.BAND_PASS: "Band Pass"
         }
         return names.get(filter_type, f"Unknown Filter ({filter_type})")
+
+class CCMapping:
+    """Standard MIDI CC number definitions"""
+    # Standard MIDI CCs
+    MODULATION_WHEEL = 1
+    BREATH = 2
+    FOOT = 4
+    PORTAMENTO_TIME = 5
+    VOLUME = 7
+    BALANCE = 8
+    PAN = 10
+    EXPRESSION = 11
+    EFFECT1 = 12
+    EFFECT2 = 13
+    
+    # Sound Controllers
+    SOUND_VARIATION = 70
+    RESONANCE = 71
+    RELEASE_TIME = 72
+    ATTACK_TIME = 73
+    BRIGHTNESS = 74
+    SOUND_CTRL6 = 75
+    SOUND_CTRL7 = 76
+    SOUND_CTRL8 = 77
+    SOUND_CTRL9 = 78
+    SOUND_CTRL10 = 79
+    
+    # Effect Depths
+    REVERB = 91
+    TREMOLO = 92
+    CHORUS = 93
+    DETUNE = 94
+    PHASER = 95
+    
+    # Undefined CCs available for custom use
+    UNDEFINED1 = 3
+    UNDEFINED2 = 9
+    UNDEFINED3 = 14
+    UNDEFINED4 = 15
+    UNDEFINED5 = 20  # 20-31 range available

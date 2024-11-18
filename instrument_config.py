@@ -14,14 +14,14 @@ Signal Flow:
    → Uses standard MIDI CC numbers where appropriate
 
 3. CC Routing
-   → Explicit CC assignments for all controls
-   → Uses standard MIDI CC numbers (1-127)
-   → Can use undefined CCs (3,9,14,15,20-31) for custom controls
+   → Flexible CC controls for any parameter
+   → Supports multiple curve types
+   → Configurable value ranges
    → Maximum 14 CC assignments per instrument
 
 4. Envelope System
    → Gates triggered by note events
-   → Each stage can be controlled by MPE signals
+   → Each stage can be controlled by CC
    → Controls amplitude over time
 
 5. LFO System
@@ -29,55 +29,11 @@ Signal Flow:
    → Can modulate any parameter
    → Can be synced to note events
 
-6. Filter System
-   → Parameters controlled via modulation matrix
-   → Can respond to envelopes, LFOs, and MPE controls
-
 Every signal path must be explicitly defined in the instrument config.
 No routing occurs unless specified here.
 """
 
-from synth_constants import ModSource, ModTarget
-
-class CCMapping:
-    """Standard MIDI CC number definitions"""
-    # Standard MIDI CCs
-    MODULATION_WHEEL = 1
-    BREATH = 2
-    FOOT = 4
-    PORTAMENTO_TIME = 5
-    VOLUME = 7
-    BALANCE = 8
-    PAN = 10
-    EXPRESSION = 11
-    EFFECT1 = 12
-    EFFECT2 = 13
-    
-    # Sound Controllers
-    SOUND_VARIATION = 70
-    RESONANCE = 71
-    RELEASE_TIME = 72
-    ATTACK_TIME = 73
-    BRIGHTNESS = 74
-    SOUND_CTRL6 = 75
-    SOUND_CTRL7 = 76
-    SOUND_CTRL8 = 77
-    SOUND_CTRL9 = 78
-    SOUND_CTRL10 = 79
-    
-    # Effect Depths
-    REVERB = 91
-    TREMOLO = 92
-    CHORUS = 93
-    DETUNE = 94
-    PHASER = 95
-    
-    # Undefined CCs available for custom use
-    UNDEFINED1 = 3
-    UNDEFINED2 = 9
-    UNDEFINED3 = 14
-    UNDEFINED4 = 15
-    UNDEFINED5 = 20  # 20-31 range available
+from synth_constants import ModSource, ModTarget, CCMapping
 
 class InstrumentConfig:
     """Base class for instrument configurations"""
@@ -87,7 +43,14 @@ class InstrumentConfig:
             'name': name,
             'oscillator': {
                 'waveform': 'sine',
-                'detune': 0.0
+                'detune': 0.0,
+                'control': {
+                    'cc': 74,
+                    'name': 'Oscillator Detune',
+                    'range': {'min': -1.0, 'max': 1.0},
+                    'curve': 'linear',
+                    'default': 0.0
+                }
             },
             'filter': {
                 'type': 'low_pass',
@@ -98,15 +61,17 @@ class InstrumentConfig:
                         'name': 'Brightness',
                         'cc': CCMapping.BRIGHTNESS,
                         'target': ModTarget.FILTER_CUTOFF,
-                        'amount': 1.0,
-                        'curve': 'exponential'
+                        'range': {'min': 500, 'max': 8000},
+                        'curve': 'exponential',
+                        'default': 2000
                     },
                     {
                         'name': 'Resonance',
                         'cc': CCMapping.RESONANCE,
                         'target': ModTarget.FILTER_RESONANCE,
-                        'amount': 0.8,
-                        'curve': 'linear'
+                        'range': {'min': 0.1, 'max': 2.0},
+                        'curve': 's_curve',
+                        'default': 0.7
                     }
                 ]
             },
@@ -117,45 +82,50 @@ class InstrumentConfig:
                     'level': 1.0,
                     'curve': 'linear',
                     'control': {
-                        'name': 'Attack Time',
                         'cc': CCMapping.ATTACK_TIME,
-                        'target': ModTarget.ENVELOPE_LEVEL,
-                        'amount': 0.7,
-                        'curve': 'exponential'
+                        'name': 'Attack Time',
+                        'range': {'min': 0.001, 'max': 2.0},
+                        'curve': 'logarithmic',
+                        'default': 0.01
                     }
                 },
                 'decay': {
                     'gate': 'attack_end',
                     'time': 0.1,
                     'level_scale': 0.8,
-                    'curve': 'exponential'
+                    'curve': 'exponential',
+                    'control': {
+                        'cc': 75,
+                        'name': 'Decay Time',
+                        'range': {'min': 0.01, 'max': 1.0},
+                        'curve': 'linear',
+                        'default': 0.1
+                    }
                 },
                 'sustain': {
                     'gate': 'decay_end',
+                    'level': 0.5,
                     'control': {
                         'source': ModSource.PRESSURE,
                         'min_level': 0.0,
                         'max_level': 0.8,
                         'curve': 'linear'
-                    },
-                    'level': 0.0,
-                    'curve': 'linear'
+                    }
                 },
                 'release': {
                     'gate': 'note_off',
                     'time': 0.3,
                     'level': 0.0,
-                    'curve': 'exponential'
+                    'control': {
+                        'cc': CCMapping.RELEASE_TIME,
+                        'name': 'Release Time',
+                        'range': {'min': 0.01, 'max': 3.0},
+                        'curve': 's_curve',
+                        'default': 0.3
+                    }
                 }
             },
             'modulation': [
-                {
-                    'name': 'Custom Timbre',
-                    'cc': CCMapping.UNDEFINED1,
-                    'target': ModTarget.AMPLITUDE,
-                    'amount': 0.5,
-                    'curve': 'linear'
-                },
                 {
                     'source': ModSource.VELOCITY,
                     'target': ModTarget.AMPLITUDE,
@@ -169,11 +139,18 @@ class InstrumentConfig:
                     'shape': 'sine',
                     'min_value': 0.7,
                     'max_value': 1.0,
-                    'sync_to_gate': True
+                    'sync_to_gate': True,
+                    'control': {
+                        'cc': 1,
+                        'name': 'LFO Rate',
+                        'range': {'min': 0.1, 'max': 20.0},
+                        'curve': 'logarithmic',
+                        'default': 5.0
+                    }
                 }
             },
             'expression': {
-                'pressure': False,
+                'pressure': True,
                 'pitch_bend': False,
                 'velocity': True
             },
@@ -184,16 +161,78 @@ class InstrumentConfig:
             }
         }
 
+    def _find_controls(self, config):
+        """Recursively find all control objects with CC numbers"""
+        controls = []
+        
+        def extract_controls(obj):
+            if isinstance(obj, dict):
+                # Check if this is a control object
+                if all(key in obj for key in ['cc', 'name']):
+                    controls.append(obj)
+                
+                # Recursively search nested dictionaries
+                for value in obj.values():
+                    extract_controls(value)
+            
+            # Recursively search lists
+            elif isinstance(obj, list):
+                for item in obj:
+                    extract_controls(item)
+        
+        extract_controls(config)
+        return controls
+
+    def get_config(self):
+        """Return the instrument configuration with CC routing"""
+        # Find all controls with CC numbers
+        controls = self._find_controls(self.config)
+        
+        # Generate CC routing
+        cc_routing = {}
+        used_cc_numbers = set()
+        
+        for control in controls:
+            cc_num = control['cc']
+            
+            # Skip if CC number already used or out of range
+            if cc_num in used_cc_numbers or not (0 <= cc_num <= 127):
+                continue
+            
+            # Add to routing
+            cc_routing[cc_num] = {
+                'name': control['name'],
+                'target': control.get('target', ModTarget.NONE)
+            }
+            used_cc_numbers.add(cc_num)
+            
+            # Stop if we've reached 14 CC routes
+            if len(cc_routing) >= 14:
+                break
+        
+        # Create a copy of the config with CC routing
+        config_copy = self.config.copy()
+        config_copy['cc_routing'] = cc_routing
+        
+        return config_copy
+
 class Piano(InstrumentConfig):
     """Traditional piano with explicit CC routing"""
     def __init__(self):
         super().__init__("Piano")
         
-        # Basic piano configuration
+        # Piano-specific configuration
         self.config.update({
             'oscillator': {
                 'waveform': 'triangle',
-                'detune': 0.001
+                'detune': 0.001,
+                'control': {
+                    'cc': 75,
+                    'name': 'Piano Detune',
+                    'range': {'min': -0.01, 'max': 0.01},
+                    'curve': 'linear',
+                    'default': 0.001
+                }
             },
             'filter': {
                 'type': 'low_pass',
@@ -204,84 +243,33 @@ class Piano(InstrumentConfig):
                         'name': 'Brightness',
                         'cc': CCMapping.BRIGHTNESS,
                         'target': ModTarget.FILTER_CUTOFF,
-                        'amount': 1.0,
-                        'curve': 'exponential'
-                    },
-                    {
-                        'name': 'Resonance',
-                        'cc': CCMapping.RESONANCE,
-                        'target': ModTarget.FILTER_RESONANCE,
-                        'amount': 0.8,
-                        'curve': 'linear'
+                        'range': {'min': 1000, 'max': 10000},
+                        'curve': 'exponential',
+                        'default': 5000
                     }
                 ]
             },
             'envelope': {
                 'attack': {
-                    'gate': 'note_on',
                     'time': 0.001,
-                    'level': 1.0,
-                    'curve': 'linear',
                     'control': {
-                        'name': 'Attack Time',
-                        'cc': CCMapping.ATTACK_TIME,
-                        'target': ModTarget.ENVELOPE_LEVEL,
-                        'amount': 0.7,
-                        'curve': 'exponential'
+                        'cc': 73,
+                        'name': 'Piano Attack',
+                        'range': {'min': 0.0001, 'max': 0.1},
+                        'curve': 'logarithmic',
+                        'default': 0.001
                     }
                 },
                 'decay': {
-                    'gate': 'attack_end',
                     'time': 0.8,
-                    'level_scale': 0.8,
-                    'curve': 'exponential'
-                },
-                'sustain': {
-                    'gate': 'decay_end',
                     'control': {
-                        'source': ModSource.PRESSURE,
-                        'min_level': 0.0,
-                        'max_level': 0.8,
-                        'curve': 'linear'
-                    },
-                    'level': 0.0,
-                    'curve': 'linear'
-                },
-                'release': {
-                    'gate': 'note_off',
-                    'time': 0.3,
-                    'level': 0.0,
-                    'curve': 'exponential'
+                        'cc': 72,
+                        'name': 'Piano Decay',
+                        'range': {'min': 0.1, 'max': 2.0},
+                        'curve': 's_curve',
+                        'default': 0.8
+                    }
                 }
-            },
-            'modulation': [
-                {
-                    'name': 'Custom Timbre',
-                    'cc': CCMapping.UNDEFINED1,
-                    'target': ModTarget.AMPLITUDE,
-                    'amount': 0.5,
-                    'curve': 'linear'
-                },
-                {
-                    'source': ModSource.VELOCITY,
-                    'target': ModTarget.AMPLITUDE,
-                    'amount': 1.0,
-                    'curve': 'exponential'
-                }
-            ],
-            'lfo': {
-                'tremolo': {
-                    'rate': 5.0,
-                    'shape': 'sine',
-                    'min_value': 0.7,
-                    'max_value': 1.0,
-                    'sync_to_gate': True
-                }
-            },
-            'expression': {
-                'pressure': True,
-                'pitch_bend': False,
-                'velocity': True
             }
         })
 
