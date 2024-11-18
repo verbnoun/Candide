@@ -288,21 +288,25 @@ class MPESynthesizer:
         if not events:
             return
             
-        if self.output_manager.performance.should_throttle():
+        if Constants.DISABLE_THROTTLING or not self.output_manager.performance.should_throttle():
+            for event in events:
+                result = self.message_router.route_message(event)
+                if result:
+                    if result['type'] == 'voice_allocated':
+                        self._handle_voice_allocation(result['voice'])
+                    elif result['type'] == 'voice_released':
+                        self._handle_voice_release(result['voice'])
+        else:
             events = [e for e in events if e.get('type') in ('note_on', 'note_off')]
             if Constants.DEBUG:
                 print("[SYNTH] System loaded - throttling to note events only")
-            
-        for event in events:
-            if Constants.DEBUG:
-                print(f"\n[SYNTH] Processing MPE event: {event['type']}")
-                
-            result = self.message_router.route_message(event)
-            if result:
-                if result['type'] == 'voice_allocated':
-                    self._handle_voice_allocation(result['voice'])
-                elif result['type'] == 'voice_released':
-                    self._handle_voice_release(result['voice'])
+            for event in events:
+                result = self.message_router.route_message(event)
+                if result:
+                    if result['type'] == 'voice_allocated':
+                        self._handle_voice_allocation(result['voice'])
+                    elif result['type'] == 'voice_released':
+                        self._handle_voice_release(result['voice'])
 
     def cleanup(self):
         """Clean shutdown"""

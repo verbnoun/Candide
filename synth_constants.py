@@ -39,6 +39,9 @@ class Constants:
     MAX_AMPLITUDE = 32767
     MIN_AMPLITUDE = -32768
 
+    # System Monitor
+    DISABLE_THROTTLING = False
+
 # Modulation sources and targets
 class ModSource:
     NONE = 0
