@@ -59,34 +59,51 @@ class WaveformManager:
     def get_waveform(self, name):
         """Get waveform by name"""
         return self.waveforms.get(name)
-    
-    def morph_waveforms(self, wave1, wave2, amount):
-        """Create new waveform by morphing between two others"""
-        if not isinstance(wave1, array.array):
-            wave1 = self.get_waveform(wave1)
-        if not isinstance(wave2, array.array):
-            wave2 = self.get_waveform(wave2)
+
+class EnvelopeManager:
+    """Manages gate-based envelope generation"""
+    def __init__(self):
+        self.current_config = None
         
-        if not wave1 or not wave2:
-            return None
-            
-        size = len(wave1)
-        if len(wave2) != size:
-            return None
-            
-        result = array.array('h', [0] * size)
-        for i in range(size):
-            result[i] = int(wave1[i] * (1 - amount) + wave2[i] * amount)
-        return result
+    def create_envelope(self, config=None):
+        """Create envelope based on gate configuration"""
+        self.current_config = config or {
+            'attack': {
+                'gate': 'note_on',
+                'time': 0.01,
+                'level': 1.0,
+                'curve': 'linear'
+            },
+            'decay': {
+                'gate': 'attack_end',
+                'time': 0.1,
+                'level_scale': 1.0,
+                'curve': 'exponential'
+            },
+            'sustain': {
+                'gate': 'decay_end',
+                'control': None,
+                'level': 0.8,
+                'curve': 'linear'
+            },
+            'release': {
+                'gate': 'note_off',
+                'time': 0.2,
+                'level': 0.0,
+                'curve': 'exponential'
+            }
+        }
+        
+        # Convert envelope config to synthio envelope
+        return synthio.Envelope(
+            attack_time=self.current_config['attack']['time'],
+            decay_time=self.current_config['decay']['time'],
+            sustain_level=self.current_config['sustain']['level'],
+            release_time=self.current_config['release']['time']
+        )
 
 class FilterManager:
-    """Manages filter configurations and updates
-    
-    MPE Signal Flow:
-    1. Receives filter parameters from modulation matrix
-    2. Timbre (CC74) often maps to filter cutoff
-    3. Pressure can affect filter resonance
-    """
+    """Manages filter configurations and gate-based updates"""
     def __init__(self, synth):
         self.synth = synth
         self.current_type = FilterType.LOW_PASS
@@ -108,7 +125,7 @@ class FilterManager:
         return None
     
     def update_filter(self, note, cutoff=None, resonance=None):
-        """Update filter parameters for a note based on MPE modulation"""
+        """Update filter parameters based on modulation"""
         if cutoff:
             self.current_cutoff = max(20, min(20000, cutoff))
         if resonance:
@@ -117,54 +134,33 @@ class FilterManager:
         if note.synth_note:
             note.synth_note.filter = self.create_filter()
 
-class EnvelopeManager:
-    """Manages envelope generation and updates"""
-    def __init__(self):
-        self.default_envelope = {
-            'attack': 0.01,
-            'decay': 0.1,
-            'sustain': 0.8,
-            'release': 0.2
-        }
-    
-    def create_envelope(self, params=None):
-        """Create new envelope with given or default parameters"""
-        if params is None:
-            params = self.default_envelope
-        
-        return synthio.Envelope(
-            attack_time=max(0.001, params.get('attack', self.default_envelope['attack'])),
-            decay_time=max(0.001, params.get('decay', self.default_envelope['decay'])),
-            sustain_level=max(0.0, min(1.0, params.get('sustain', self.default_envelope['sustain']))),
-            release_time=max(0.001, params.get('release', self.default_envelope['release']))
-        )
-
 class SynthesisEngine:
-    """Main synthesis engine coordinating voices and parameters
-    
-    MPE Signal Flow:
-    1. Receives modulated parameters from modulation matrix
-    2. Note number -> oscillator frequency
-    3. Velocity -> amplitude (via modulation matrix)
-    4. Pressure -> ongoing amplitude modulation
-    5. Pitch bend -> frequency modulation
-    6. Timbre (CC74) -> filter cutoff modulation
-    """
+    """Main synthesis engine with gate-based envelope control"""
     def __init__(self, synth):
         self.synth = synth
         self.waveform_manager = WaveformManager()
         self.filter_manager = FilterManager(synth)
         self.envelope_manager = EnvelopeManager()
+        self.current_instrument = None
         
     def create_note(self, frequency, amplitude=0.0, waveform_name='sine'):
-        """Create new synthio Note with current parameters
+        """Create new note with gate-based envelope
         
-        MPE parameters affect:
-        - frequency: Base pitch + pitch bend modulation
-        - amplitude: Set by modulation matrix (velocity + pressure)
+        Envelope follows configured gate sequence:
+        1. Note-on gates attack
+        2. Attack completion gates decay
+        3. Decay completion gates sustain
+        4. Note-off gates release
         """
         waveform = self.waveform_manager.get_waveform(waveform_name)
-        envelope = self.envelope_manager.create_envelope()
+        
+        # Get envelope from current instrument config
+        if self.current_instrument and 'envelope' in self.current_instrument:
+            envelope = self.envelope_manager.create_envelope(
+                self.current_instrument['envelope']
+            )
+        else:
+            envelope = self.envelope_manager.create_envelope()
         
         note = synthio.Note(
             frequency=frequency,
@@ -175,61 +171,38 @@ class SynthesisEngine:
         )
         
         if Constants.DEBUG:
-            print("[SYNTH] Created note: freq={0:.2f}Hz, amp={1:.2f}".format(frequency, amplitude))
-        
-        return note
-    
-    def create_ring_modulated_note(self, frequency, ring_freq, amplitude=0.0,
-                                 carrier_wave='sine', modulator_wave='sine'):
-        """Create note with ring modulation"""
-        carrier = self.waveform_manager.get_waveform(carrier_wave)
-        modulator = self.waveform_manager.get_waveform(modulator_wave)
-        envelope = self.envelope_manager.create_envelope()
-        
-        note = synthio.Note(
-            frequency=frequency,
-            waveform=carrier,
-            envelope=envelope,
-            amplitude=amplitude,
-            filter=self.filter_manager.create_filter(),
-            ring_frequency=ring_freq,
-            ring_waveform=modulator
-        )
-        
-        if Constants.DEBUG:
-            print("[SYNTH] Created ring mod note: freq={0:.2f}Hz, ring={1:.2f}Hz".format(frequency, ring_freq))
+            print(f"[SYNTH] Created note: freq={frequency:.2f}Hz, amp={amplitude:.2f}")
         
         return note
     
     def update_note_parameters(self, note, params):
-        """Update parameters for an existing note based on MPE modulation"""
+        """Update parameters based on modulation and gate states"""
         if not note.synth_note:
             return
 
         if Constants.DEBUG:
-            param_str = ", ".join("{0}={1:.2f}".format(k, v) for k, v in params.items())
-            print("[SYNTH] Updating note params: {0}".format(param_str))
+            param_str = ", ".join(f"{k}={v:.2f}" for k, v in params.items())
+            print(f"[SYNTH] Updating note params: {param_str}")
 
+        # Basic parameter updates
         if 'frequency' in params:
             note.synth_note.frequency = params['frequency']
 
         if 'amplitude' in params:
-            if self.current_instrument and self.current_instrument['performance'].get('pressure_enabled', False):
-                note.synth_note.amplitude = params['amplitude']
+            # Amplitude is controlled by envelope and modulation
+            base_amplitude = params['amplitude']
+            if note.envelope_state:
+                # Get current envelope level
+                env_level = FixedPoint.to_float(note.envelope_state.stage_target_level)
+                if note.envelope_state.current_stage == 'sustain':
+                    env_level = FixedPoint.to_float(note.envelope_state.control_level)
+                # Combine envelope and modulation
+                note.synth_note.amplitude = base_amplitude * env_level
 
-        if 'bend' in params:
-            if self.current_instrument and self.current_instrument['performance'].get('pitch_bend_enabled', False):
-                note.synth_note.bend = params['bend']
-
+        # Filter updates if needed
         if 'filter_cutoff' in params or 'filter_resonance' in params:
             self.filter_manager.update_filter(
                 note,
                 params.get('filter_cutoff'),
                 params.get('filter_resonance')
             )
-
-        if 'ring_frequency' in params:
-            note.synth_note.ring_frequency = params['ring_frequency']
-
-        if 'ring_bend' in params:
-            note.synth_note.ring_bend = params['ring_bend']

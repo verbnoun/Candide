@@ -1,4 +1,4 @@
-"""Main synthesizer coordinator with fixed voice handling and parameter updates"""
+"""Main synthesizer coordinator with gate-based envelope and config-driven routing"""
 import time
 import synthio
 from synth_constants import Constants, ModSource, ModTarget
@@ -9,37 +9,47 @@ from output_system import AudioOutputManager
 from fixed_point_math import FixedPoint
 
 class MPESynthesizer:
-    def __init__(self, output_manager=None):
-        self.output_manager = output_manager or AudioOutputManager()
+    def __init__(self, voice_manager, parameter_processor, modulation_matrix, lfo_manager, synthesis_engine, audio_output, output_manager=None):
+        if Constants.DEBUG:
+            print("\n[SYNTH] Initializing MPE Synthesizer")
+
+        self.audio_output = audio_output
+        self.output_manager = output_manager  # Added output_manager parameter
+
         self.synth = synthio.Synthesizer(
             sample_rate=Constants.SAMPLE_RATE,
             channel_count=2
         )
-        
+
         if Constants.DEBUG:
-            print("[SYNTH] Synthesizer initialized")
-        
-        self.mod_matrix = ModulationMatrix()
-        self.lfo_manager = LFOManager(self.mod_matrix)
-        self.voice_manager = MPEVoiceManager()
-        self.parameter_processor = MPEParameterProcessor(
-            self.voice_manager,
-            self.mod_matrix
-        )
+            print("[SYNTH] Base synthesizer initialized")
+
+        # Initialize subsystems
+        self.mod_matrix = modulation_matrix
+        self.lfo_manager = lfo_manager
+        self.voice_manager = voice_manager
+        self.parameter_processor = parameter_processor
         self.message_router = MPEMessageRouter(
             self.voice_manager,
-            self.parameter_processor
+            self.parameter_processor,
+            self.mod_matrix
         )
-        
-        self.engine = SynthesisEngine(self.synth)
-        self.output_manager.attach_synthesizer(self.synth)
-        self.lfo_manager.attach_to_synth(self.synth)
+
+        self.engine = synthesis_engine
+        self.audio_output.attach_synthesizer(self.synth)
+
+        if self.output_manager:  # Check if output_manager is provided
+            self.output_manager.attach_synthesizer(self.synth)  # Attach synthesizer to output_manager
 
         self.current_instrument = None
-        self.active_notes = {}  # {(channel, note): last_params}
+        self.active_notes = {}
         self._last_update = time.monotonic()
+
+        if Constants.DEBUG:
+            print("[SYNTH] All subsystems initialized")
         
     def _handle_voice_allocation(self, voice):
+        """Handle new voice allocation with envelope gating"""
         if not voice:
             return
             
@@ -50,19 +60,39 @@ class MPESynthesizer:
             return
             
         try:
+            if Constants.DEBUG:
+                print(f"\n[SYNTH] Allocating voice:")
+                print(f"      Channel: {voice.channel}")
+                print(f"      Note: {voice.note}")
+                print(f"      Velocity: {FixedPoint.to_float(voice.initial_state['velocity']):.3f}")
+            
             # Calculate initial frequency from MIDI note
             midi_note = voice.note
             frequency = synthio.midi_to_hz(midi_note)
             
-            # Calculate initial amplitude from velocity (0-1)
-            initial_velocity = voice.initial_state.get('velocity', 1.0)
-            self.mod_matrix.set_source_value(ModSource.NOTE, voice.channel, midi_note)
-            self.mod_matrix.set_source_value(ModSource.VELOCITY, voice.channel, initial_velocity)
+            # Set initial modulation values
+            self.mod_matrix.set_source_value(
+                ModSource.NOTE, 
+                voice.channel,
+                FixedPoint.to_float(FixedPoint.midi_note_to_fixed(midi_note))
+            )
             
-            # Get base parameters through modulation
+            initial_velocity = FixedPoint.to_float(voice.initial_state['velocity'])
+            self.mod_matrix.set_source_value(
+                ModSource.VELOCITY,
+                voice.channel,
+                initial_velocity
+            )
+            
+            # Get initial parameters through modulation
             params = self._collect_voice_parameters(voice)
             
-            # Create note with proper frequency
+            if Constants.DEBUG:
+                print("[SYNTH] Initial parameters:")
+                for k, v in params.items():
+                    print(f"      {k}: {v:.3f}")
+            
+            # Create note with instrument's waveform and gated envelope
             voice.synth_note = self.engine.create_note(
                 frequency=frequency,
                 amplitude=min(1.0, params['amplitude']),
@@ -75,12 +105,15 @@ class MPESynthesizer:
                 'last_update': time.monotonic()
             }
             
+            # Start the note and trigger envelope gates
             self.synth.press(voice.synth_note)
+            self.mod_matrix.set_gate_state(voice.channel, 'note_on', True)
+            self.lfo_manager.handle_gate('note_on', True)
+            
             self.output_manager.performance.active_voices += 1
 
             if Constants.DEBUG:
-                print(f"[SYNTH] Voice allocated - ch:{voice.channel} note:{voice.note}")
-                print(f"[SYNTH] Initial freq:{frequency:.1f}Hz amp:{params['amplitude']:.3f}")
+                print("[SYNTH] Voice successfully allocated")
             
         except Exception as e:
             print(f"[ERROR] Voice allocation failed: {str(e)}")
@@ -88,6 +121,7 @@ class MPESynthesizer:
                 del self.active_notes[channel_note]
             
     def _handle_voice_release(self, voice):
+        """Handle voice release with envelope gating"""
         if not voice:
             return
             
@@ -96,13 +130,21 @@ class MPESynthesizer:
         try:
             if voice.synth_note and channel_note in self.active_notes:
                 if Constants.DEBUG:
-                    print(f"[SYNTH] Releasing voice - ch:{voice.channel} note:{voice.note}")
+                    print(f"\n[SYNTH] Releasing voice:")
+                    print(f"      Channel: {voice.channel}")
+                    print(f"      Note: {voice.note}")
                     
+                # Trigger release gates
+                self.mod_matrix.set_gate_state(voice.channel, 'note_off', True)
                 self.synth.release(voice.synth_note)
+                
                 del self.active_notes[channel_note]
                 
                 if self.output_manager.performance.active_voices > 0:
                     self.output_manager.performance.active_voices -= 1
+                    
+                if Constants.DEBUG:
+                    print("[SYNTH] Voice successfully released")
                     
         except Exception as e:
             print(f"[ERROR] Voice release failed: {str(e)}")
@@ -122,10 +164,14 @@ class MPESynthesizer:
         return False
         
     def update(self):
+        """Update all voice parameters and modulation"""
         try:
             current_time = time.monotonic()
             if (current_time - self._last_update) < 0.001:  # Limit update rate
                 return
+                
+            # Process envelope gates and transitions
+            self.message_router.process_updates()
                 
             # Update modulation
             for key, route in self.mod_matrix.routes.items():
@@ -140,14 +186,20 @@ class MPESynthesizer:
                 if not voice or not voice.active or not voice.synth_note:
                     continue
                     
-                # Get new parameters
+                # Get new parameters through modulation matrix
                 new_params = self._collect_voice_parameters(voice)
                 old_params = note_data['params']
                 
                 # Only update if parameters changed significantly
                 if self._should_update_params(old_params, new_params):
                     if Constants.DEBUG:
-                        print(f"[SYNTH] Updating parameters - ch:{channel_note[0]} note:{channel_note[1]}")
+                        print(f"\n[SYNTH] Updating voice parameters:")
+                        print(f"      Channel: {channel_note[0]}")
+                        print(f"      Note: {channel_note[1]}")
+                        for k, v in new_params.items():
+                            if old_params.get(k) != v:
+                                print(f"      {k}: {v:.3f} (was {old_params.get(k, 0):.3f})")
+                                
                     self.engine.update_note_parameters(voice, new_params)
                     note_data['params'] = new_params
                     note_data['last_update'] = current_time
@@ -156,18 +208,26 @@ class MPESynthesizer:
             self.output_manager.update()
             
         except Exception as e:
-            print(f"Update error: {str(e)}")
+            print(f"[ERROR] Update error: {str(e)}")
             
     def _collect_voice_parameters(self, voice):
         """Get all modulated parameters for a voice"""
         try:
+            # Get envelope level based on current gate stage
+            envelope_level = 1.0
+            if voice.envelope_state:
+                envelope_level = voice.envelope_state.stage_target_level
+                if voice.envelope_state.current_stage == 'sustain':
+                    envelope_level = voice.envelope_state.control_level
+            
+            # Collect all modulated parameters
             params = {
                 'frequency': FixedPoint.to_float(
                     self.mod_matrix.get_target_value(ModTarget.OSC_PITCH, voice.channel)
                 ),
                 'amplitude': min(1.0, FixedPoint.to_float(
                     self.mod_matrix.get_target_value(ModTarget.AMPLITUDE, voice.channel)
-                )),
+                ) * envelope_level),
                 'filter_cutoff': FixedPoint.to_float(
                     self.mod_matrix.get_target_value(ModTarget.FILTER_CUTOFF, voice.channel)
                 ),
@@ -175,78 +235,61 @@ class MPESynthesizer:
                     self.mod_matrix.get_target_value(ModTarget.FILTER_RESONANCE, voice.channel)
                 )
             }
+            
+            if Constants.DEBUG:
+                print(f"\n[SYNTH] Collected parameters for voice:")
+                print(f"      Channel: {voice.channel}")
+                print(f"      Note: {voice.note}")
+                print(f"      Envelope Stage: {voice.envelope_state.current_stage}")
+                print(f"      Envelope Level: {envelope_level:.3f}")
+                for k, v in params.items():
+                    print(f"      {k}: {v:.3f}")
+                    
             return params
+            
         except Exception as e:
             print(f"[ERROR] Parameter collection failed: {str(e)}")
             return {}
 
     def set_instrument(self, instrument_config):
+        """Configure synthesizer from instrument config"""
         if not instrument_config:
             return
             
         if Constants.DEBUG:
-            print("[SYNTH] Setting new instrument configuration")
+            print(f"\n[SYNTH] Setting instrument: {instrument_config['name']}")
         
         self.current_instrument = instrument_config
         self.engine.current_instrument = instrument_config
+        
+        # Configure all subsystems
+        self.voice_manager.set_instrument_config(instrument_config)
+        self.parameter_processor.set_instrument_config(instrument_config)
         self.message_router.set_instrument_config(instrument_config)
+        
+        # Configure modulation
+        self.mod_matrix.configure_from_instrument(instrument_config)
+        
+        # Configure LFOs
+        self.lfo_manager.configure_from_instrument(instrument_config, self.synth)
             
-        # Clear and rebuild modulation routing
-        self.mod_matrix.routes.clear()
-        self.mod_matrix.add_route(ModSource.NOTE, ModTarget.OSC_PITCH, amount=1.0)
-        
-        # Get performance settings
-        perf = instrument_config.get('performance', {})
-        velocity_sensitivity = perf.get('velocity_sensitivity', 1.0)
-        
-        if velocity_sensitivity > 0:
-            self.mod_matrix.add_route(
-                ModSource.VELOCITY, 
-                ModTarget.AMPLITUDE,
-                amount=velocity_sensitivity
-            )
-        
-        # Add performance-based routes
-        if perf.get('pressure_enabled', False):
-            if perf.get('pressure_sensitivity', 0) > 0:
-                self.mod_matrix.add_route(
-                    ModSource.PRESSURE,
-                    ModTarget.AMPLITUDE,
-                    amount=perf.get('pressure_sensitivity', Constants.DEFAULT_PRESSURE_SENSITIVITY)
-                )
-        
-        if perf.get('pitch_bend_enabled', False):
-            if perf.get('pitch_bend_range', 0) > 0:
-                self.mod_matrix.add_route(
-                    ModSource.PITCH_BEND,
-                    ModTarget.OSC_PITCH,
-                    amount=perf.get('pitch_bend_range', 2) / 12.0
-                )
-        
-        # Add custom modulation routes
-        if 'modulation' in instrument_config:
-            for route in instrument_config['modulation']:
-                source = route['source']
-                if ((source == ModSource.PRESSURE and not perf.get('pressure_enabled', False)) or
-                    (source == ModSource.PITCH_BEND and not perf.get('pitch_bend_enabled', False))):
-                    continue
-                    
-                self.mod_matrix.add_route(
-                    source,
-                    route['target'],
-                    route.get('amount', 1.0)
-                )
+        if Constants.DEBUG:
+            print("[SYNTH] Instrument configuration complete")
 
     def process_mpe_events(self, events):
+        """Process incoming MPE messages"""
         if not events:
             return
             
         if self.output_manager.performance.should_throttle():
             events = [e for e in events if e.get('type') in ('note_on', 'note_off')]
             if Constants.DEBUG:
-                print("[SYNTH] System loaded - throttling messages")
+                print("[SYNTH] System loaded - throttling to note events only")
             
         for event in events:
+            if Constants.DEBUG:
+                print(f"\n[SYNTH] Processing MPE event: {event['type']}")
+                
             result = self.message_router.route_message(event)
             if result:
                 if result['type'] == 'voice_allocated':
@@ -255,9 +298,10 @@ class MPESynthesizer:
                     self._handle_voice_release(result['voice'])
 
     def cleanup(self):
+        """Clean shutdown of synthesizer"""
         try:
             if Constants.DEBUG:
-                print("[SYNTH] Starting cleanup...")
+                print("\n[SYNTH] Starting cleanup...")
                 
             # Release all active notes
             for voice in self.voice_manager.active_voices.values():
@@ -266,6 +310,7 @@ class MPESynthesizer:
                     
             self.active_notes.clear()
                     
+            # Only cleanup output if we created it
             if not hasattr(self, '_output_manager_provided'):
                 self.output_manager.cleanup()
                 

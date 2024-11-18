@@ -2,7 +2,6 @@ import board
 import busio
 import digitalio
 import time
-import supervisor
 from synthesizer_coordinator import MPESynthesizer
 from hardware import RotaryEncoderHandler, VolumePotHandler, Constants as HWConstants
 from instrument_config import create_instrument, list_instruments

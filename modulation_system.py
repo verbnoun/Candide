@@ -11,11 +11,10 @@ def get_source_name(source):
         ModSource.TIMBRE: "Timbre",
         ModSource.LFO1: "LFO 1",
         ModSource.VELOCITY: "Velocity",
-        ModSource.NOTE: "Note"
+        ModSource.NOTE: "Note",
+        ModSource.GATE: "Gate"
     }
-    if source in source_names:
-        return source_names[source]
-    return "Unknown Source ({})".format(source)
+    return source_names.get(source, f"Unknown Source ({source})")
 
 def get_target_name(target):
     """Convert target enum to human-readable name"""
@@ -25,340 +24,109 @@ def get_target_name(target):
         ModTarget.FILTER_RESONANCE: "Filter Resonance",
         ModTarget.OSC_PITCH: "Oscillator Pitch",
         ModTarget.AMPLITUDE: "Amplitude",
-        ModTarget.RING_FREQUENCY: "Ring Frequency"
+        ModTarget.RING_FREQUENCY: "Ring Frequency",
+        ModTarget.ENVELOPE_LEVEL: "Envelope Level"
     }
-    if target in target_names:
-        return target_names[target]
-    return "Unknown Target ({})".format(target)
-
-class ModulationMatrix:
-    """Modulation routing and processing system for MPE synthesis.
-    
-    Handles:
-    - Base values (note, velocity) 
-    - Control values (pressure, timbre, bend)
-    - LFO modulation
-    - Proper value persistence
-    - Per-channel modulation
-    - Multi-source modulation combining
-    
-    Signal flow:
-    1. Base values set via set_source_value()
-    2. Control values update via set_source_value()
-    3. Routes process values through get_target_value()
-    4. Values combined according to target type
-    """
-    def __init__(self):
-        self.routes = {}  # (source, target, channel): ModulationRoute
-        self.source_values = {}  # source: {channel: value}
-        self.blocks = []  # Active synth blocks (LFOs etc)
-        self.base_values = {}  # (source, channel): value - For persistent values like note freq
-        self._debug_last_values = {}  # For detecting significant changes in debug logging
-        
-    def add_route(self, source, target, amount=1.0, channel=None):
-        """Add a modulation route with optional per-channel routing"""
-        key = (source, target, channel)
-        if key not in self.routes:
-            route = ModulationRoute(source, target, amount, channel)
-            self.routes[key] = route
-            
-            # Create math block if needed
-            if route.needs_math_block():
-                route.create_math_block()
-                self.blocks.append(route.math_block)
-            
-            if Constants.DEBUG:
-                print("[MOD] Added Route: {} -> {} (ch={}, amt={:.3f})".format(
-                    get_source_name(source),
-                    get_target_name(target),
-                    channel if channel is not None else 'all',
-                    amount
-                ))
-                
-    def remove_route(self, source, target, channel=None):
-        """Remove a modulation route"""
-        key = (source, target, channel)
-        if key in self.routes:
-            route = self.routes[key]
-            if route.math_block and route.math_block in self.blocks:
-                self.blocks.remove(route.math_block)
-            del self.routes[key]
-            
-            if Constants.DEBUG:
-                print("[MOD] Removed Route: {} -> {} (ch={})".format(
-                    get_source_name(source),
-                    get_target_name(target),
-                    channel if channel is not None else 'all'
-                ))
-    
-    def set_source_value(self, source, channel, value):
-        """Set value for a modulation source.
-        
-        Handles both persistent base values (NOTE, VELOCITY)
-        and continuous control values (PRESSURE, TIMBRE, PITCH_BEND)
-        """
-        # Store value
-        if source not in self.source_values:
-            self.source_values[source] = {}
-        self.source_values[source][channel] = value
-        
-        # Store base values separately for persistence
-        if source in (ModSource.NOTE, ModSource.VELOCITY):
-            self.base_values[(source, channel)] = value
-        
-        # Debug logging with change detection
-        if Constants.DEBUG:
-            last_value = self._debug_last_values.get((source, channel))
-            if last_value is None or abs(value - last_value) > 0.001:
-                print("\n[MOD] Source Value Updated: {}".format(get_source_name(source)))
-                print("[MOD]   Channel: {}, Value: {:.6f}".format(channel, value))
-                if source == ModSource.VELOCITY:
-                    print("[DEBUG] Velocity value for channel {}: {:.6f}".format(channel, value))
-                self._debug_last_values[(source, channel)] = value
-        
-        # Process routes for control sources
-        if source not in (ModSource.NOTE, ModSource.VELOCITY):
-            self._update_control_routes(source, channel)
-            
-    def get_target_value(self, target, channel):
-        """Get current value for a modulation target.
-        
-        Combines values based on target type:
-        - OSC_PITCH: Base note + pitch bend
-        - AMPLITUDE: Base velocity * pressure
-        - FILTER_*/Others: Sum of modulations
-        """
-        if Constants.DEBUG:
-            print("\n[MOD] Getting Target: {} (ch={})".format(
-                get_target_name(target), channel))
-        
-        # Get base value first
-        base_value = 0.0
-        if target == ModTarget.OSC_PITCH:
-            base_value = self.base_values.get((ModSource.NOTE, channel), 0.0)
-        elif target == ModTarget.AMPLITUDE:
-            base_value = self.base_values.get((ModSource.VELOCITY, channel), 1.0)
-            
-        # Initialize accumulators for different combination types
-        multiplicative_mod = 1.0  # For multiplication (e.g. amplitude)
-        additive_mod = 0.0  # For addition (e.g. pitch bend)
-        greatest_mod = 0.0  # For maximum value (e.g. filter)
-        
-        # Process all routes targeting this parameter
-        for key, route in self.routes.items():
-            source, route_target, route_channel = key
-            
-            # Skip if not matching target or channel
-            if route_target != target:
-                continue
-            if route_channel is not None and route_channel != channel:
-                continue
-                
-            # Get source value for this route
-            source_value = self._get_source_value(source, channel)
-            if source_value == 0.0:
-                continue
-                
-            # Process value through route
-            mod_value = route.process(source_value, context="get_target_value")
-            
-            # Combine based on target type
-            if target == ModTarget.AMPLITUDE:
-                multiplicative_mod *= (1.0 + mod_value)  # Pressure increases amplitude
-            elif target == ModTarget.OSC_PITCH:
-                additive_mod += mod_value  # Pitch bend adds to base
-            else:  # FILTER_CUTOFF, FILTER_RESONANCE, etc
-                greatest_mod = max(greatest_mod, mod_value)
-                
-            if Constants.DEBUG:
-                print("[MOD]   Route {} -> {}: {:.6f}".format(
-                    get_source_name(source),
-                    get_target_name(target),
-                    mod_value
-                ))
-        
-        # Combine base and modulation
-        final_value = base_value
-        if target == ModTarget.AMPLITUDE:
-            final_value *= multiplicative_mod
-        elif target == ModTarget.OSC_PITCH:
-            final_value += additive_mod
-        else:
-            final_value = greatest_mod
-            
-        if Constants.DEBUG:
-            print("[MOD]   Final Value: {:.6f} (base={:.6f})".format(final_value, base_value))
-            
-        return final_value
-        
-    def _get_source_value(self, source, channel):
-        """Get current value for a source, including base values"""
-        # Check base values first for persistent sources
-        if (source, channel) in self.base_values:
-            return self.base_values[(source, channel)]
-            
-        # Otherwise get from source values
-        return self.source_values.get(source, {}).get(channel, 0.0)
-        
-    def _update_control_routes(self, source, channel):
-        """Update routes for control sources (pressure, timbre, pitch bend, LFOs)"""
-        source_value = self.source_values[source][channel]
-        
-        for key, route in list(self.routes.items()):
-            route_source, _, route_channel = key
-            
-            # Only process matching source and channel
-            if route_source != source:
-                continue
-            if route_channel is not None and route_channel != channel:
-                continue
-                
-            if Constants.DEBUG:
-                print("[MOD] Updating Control Route:")
-                print("[MOD]   {} -> {} (ch={})".format(
-                    get_source_name(source),
-                    get_target_name(route.target),
-                    channel
-                ))
-                
-            try:
-                route.process(source_value, context="_update_control_routes")
-            except Exception as e:
-                print(f"[ERROR] Route processing failed: {e}")
-                print(f"Source: {source}, Channel: {channel}, Value: {source_value}")
-                
-    def cleanup(self):
-        """Remove all routes and clear state"""
-        self.routes.clear()
-        self.source_values.clear()
-        self.base_values.clear()
-        self.blocks.clear()
-        self._debug_last_values.clear()
-
-class ModulationRoute:
-    def __init__(self, source, target, amount=1.0, channel=None):
-        self.source = source
-        self.target = target
-        self.amount = amount
-        self.channel = channel
-        self.math_block = None
-        self.last_value = None
-        self.needs_update = False
-        
-    def needs_math_block(self):
-        """Determine if this route needs a synthio.Math block"""
-        return self.target in (
-            ModTarget.FILTER_CUTOFF,
-            ModTarget.FILTER_RESONANCE,
-            ModTarget.RING_FREQUENCY
-        )
-    
-    def create_math_block(self):
-        """Create appropriate synthio.Math block for this route"""
-        if self.target == ModTarget.FILTER_CUTOFF:
-            # Exponential scaling for filter frequency
-            self.math_block = synthio.Math(
-                synthio.MathOperation.SCALE_OFFSET,
-                0.0,  # will be updated
-                self.amount,
-                1.0
-            )
-        elif self.target == ModTarget.FILTER_RESONANCE:
-            # Constrained linear scaling for resonance
-            self.math_block = synthio.Math(
-                synthio.MathOperation.CONSTRAINED_LERP,
-                0.0,  # will be updated
-                self.amount,
-                1.0
-            )
-        else:
-            self.math_block = synthio.Math(
-                synthio.MathOperation.PRODUCT,
-                0.0,  # will be updated
-                self.amount
-            )
-        
-        if Constants.DEBUG:
-            source_name = get_source_name(self.source)
-            target_name = get_target_name(self.target)
-            print("[MOD] Created Math Block: {} -> {}".format(source_name, target_name))
-    
-    def process(self, value, context="unknown"):
-        """Process value through route"""
-        if value != self.last_value:
-            self.needs_update = True
-            self.last_value = value
-            
-            if self.math_block:
-                self.math_block.a = value
-                processed_value = self.math_block.value
-            else:
-                processed_value = value * self.amount
-            
-            if Constants.DEBUG:
-                source_name = get_source_name(self.source)
-                target_name = get_target_name(self.target)
-                print("[MOD] Route Processing:")
-                print("[MOD]   {} -> {}".format(source_name, target_name))
-                print("[MOD]   Input Value: {}".format(value))
-                print("[MOD]   Processed Value: {}".format(processed_value))
-                print("[DEBUG] Applied by process method in ModulationRoute class, called from {}".format(context))
-            
-            return processed_value
-        
-        # If value hasn't changed, return last processed value
-        return self.last_value * self.amount if not self.math_block else self.math_block.value
+    return target_names.get(target, f"Unknown Target ({target})")
 
 class LFOManager:
-    def __init__(self, mod_matrix):
+    """Config-driven LFO management system"""
+    def __init__(self, mod_matrix, voice_manager, parameter_processor, synth):
         self.mod_matrix = mod_matrix
-        self.lfos = {}
-        self.global_lfos = []
+        self.voice_manager = voice_manager
+        self.parameter_processor = parameter_processor
+        self.synth = synth
+        self.active_lfos = {}  # name: LFOConfig
         
-    def create_lfo(self, name, rate=1.0, shape='triangle', min_value=0.0, max_value=1.0):
-        """Create new LFO with given parameters"""
-        if name in self.lfos:
-            return self.lfos[name]
+        if Constants.DEBUG:
+            print("[LFO] Manager initialized")
+    
+    def configure_from_instrument(self, config, synth):
+        """Set up LFOs based on instrument configuration"""
+        self.synth = synth
+        
+        if Constants.DEBUG:
+            print("\n[LFO] Configuring from instrument config")
+        
+        # Clear existing LFOs
+        for lfo in list(self.active_lfos.values()):
+            if lfo.lfo_block in synth.blocks:
+                synth.blocks.remove(lfo.lfo_block)
+        self.active_lfos.clear()
+        
+        # Create new LFOs from config
+        lfo_configs = config.get('lfo', {})
+        for name, lfo_config in lfo_configs.items():
+            if Constants.DEBUG:
+                print(f"[LFO] Creating LFO '{name}':")
+                print(f"      Rate: {lfo_config['rate']}Hz")
+                print(f"      Shape: {lfo_config['shape']}")
+                print(f"      Range: {lfo_config['min_value']} to {lfo_config['max_value']}")
             
-        lfo_config = LFOConfig(name, rate, shape, min_value, max_value)
-        self.lfos[name] = lfo_config
+            lfo = self.create_lfo(name, **lfo_config)
+            if lfo and lfo.lfo_block:
+                synth.blocks.append(lfo.lfo_block)
+    
+    def create_lfo(self, name, rate=1.0, shape='triangle', min_value=0.0, max_value=1.0, 
+                  sync_to_gate=False):
+        """Create new LFO with specified parameters"""
+        if name in self.active_lfos:
+            if Constants.DEBUG:
+                print(f"[LFO] Updating existing LFO '{name}'")
+            return self.active_lfos[name]
+            
+        if Constants.DEBUG:
+            print(f"[LFO] Creating new LFO '{name}'")
+            
+        lfo_config = LFOConfig(name, rate, shape, min_value, max_value, sync_to_gate)
+        self.active_lfos[name] = lfo_config
         return lfo_config
     
-    def create_global_lfo(self, **kwargs):
-        """Create LFO that will always run"""
-        lfo = self.create_lfo(**kwargs)
-        self.global_lfos.append(lfo)
-        return lfo
-    
     def get_lfo(self, name):
-        """Get existing LFO config"""
-        return self.lfos.get(name)
-        
-    def attach_to_synth(self, synth):
-        """Attach all global LFOs to synth"""
-        for lfo in self.global_lfos:
-            if lfo.lfo_block not in synth.blocks:
-                synth.blocks.append(lfo.lfo_block)
+        """Get existing LFO by name"""
+        return self.active_lfos.get(name)
+    
+    def handle_gate(self, gate_type, state):
+        """Handle gate events for synced LFOs"""
+        if Constants.DEBUG:
+            print(f"[LFO] Gate event: {gate_type} = {state}")
+            
+        for name, lfo in self.active_lfos.items():
+            if lfo.sync_to_gate and gate_type == 'note_on' and state:
+                if Constants.DEBUG:
+                    print(f"[LFO] Retriggering '{name}' on gate")
+                lfo.retrigger()
 
 class LFOConfig:
-    def __init__(self, name, rate, shape, min_value, max_value):
+    """LFO configuration with gate sync support"""
+    def __init__(self, name, rate, shape, min_value, max_value, sync_to_gate=False):
         self.name = name
         self.rate = rate
         self.shape = shape
         self.min_value = min_value
         self.max_value = max_value
+        self.sync_to_gate = sync_to_gate
         self.lfo_block = None
         self._create_lfo()
+        
+        if Constants.DEBUG:
+            print(f"[LFO] Configured '{name}':")
+            print(f"      Rate: {rate}Hz")
+            print(f"      Shape: {shape}")
+            print(f"      Range: {min_value} to {max_value}")
+            print(f"      Gate Sync: {sync_to_gate}")
     
     def _create_lfo(self):
         """Create synthio.LFO block with current config"""
         import array
         from math import sin, pi
         
+        if Constants.DEBUG:
+            print(f"[LFO] Creating waveform for '{self.name}'")
+        
         # Create waveform based on shape
         if self.shape == 'triangle':
-            # Use default synthio triangle
-            waveform = None
+            waveform = None  # Use synthio default
         elif self.shape == 'sine':
             # Create sine waveform
             samples = array.array('h', [0] * 256)
@@ -380,6 +148,9 @@ class LFOConfig:
             phase_offset=0,
             once=False
         )
+        
+        if Constants.DEBUG:
+            print(f"[LFO] Created LFO block for '{self.name}'")
     
     @property
     def value(self):
@@ -389,4 +160,246 @@ class LFOConfig:
     def retrigger(self):
         """Retrigger LFO from start"""
         if self.lfo_block:
+            if Constants.DEBUG:
+                print(f"[LFO] Retriggering '{self.name}'")
             self.lfo_block.retrigger()
+
+class ModulationMatrix:
+    """Modulation routing and processing system with gate support"""
+    def __init__(self, voice_manager, parameter_processor, lfo_manager, synth, audio_output):
+        self.voice_manager = voice_manager
+        self.parameter_processor = parameter_processor
+        self.lfo_manager = lfo_manager
+        self.synth = synth
+        self.audio_output = audio_output
+        self.routes = {}  # (source, target, channel): ModulationRoute
+        self.source_values = {}  # source: {channel: value}
+        self.blocks = []  # Active synthio blocks (LFOs etc)
+        self.gate_states = {}  # For tracking envelope gate states
+        
+        if Constants.DEBUG:
+            print("[MOD] Modulation matrix initialized")
+    
+    def configure_from_instrument(self, config):
+        """Configure all modulation based on instrument config"""
+        if Constants.DEBUG:
+            print("\n[MOD] Configuring modulation matrix from instrument config")
+            
+        # Clear existing routes
+        self.routes.clear()
+        self.blocks.clear()
+        
+        # Add routes from config
+        for route in config.get('modulation', []):
+            source = route['source']
+            target = route['target']
+            amount = route.get('amount', 1.0)
+            curve = route.get('curve', 'linear')
+            
+            if Constants.DEBUG:
+                print(f"[MOD] Adding route: {get_source_name(source)} -> {get_target_name(target)}")
+                print(f"      Amount: {amount:.3f}, Curve: {curve}")
+                
+            self.add_route(source, target, amount, curve=curve)
+        
+    def add_route(self, source, target, amount=1.0, channel=None, curve='linear'):
+        """Add a modulation route with optional per-channel routing"""
+        key = (source, target, channel)
+        if key not in self.routes:
+            route = ModulationRoute(source, target, amount, curve)
+            self.routes[key] = route
+            
+            if route.math_block:
+                self.blocks.append(route.math_block)
+                
+            if Constants.DEBUG:
+                print(f"[MOD] Route added:")
+                print(f"      Source: {get_source_name(source)}")
+                print(f"      Target: {get_target_name(target)}")
+                print(f"      Channel: {channel if channel is not None else 'all'}")
+                print(f"      Amount: {amount:.3f}")
+            
+    def remove_route(self, source, target, channel=None):
+        """Remove a modulation route"""
+        key = (source, target, channel)
+        if key in self.routes:
+            route = self.routes[key]
+            if route.math_block in self.blocks:
+                self.blocks.remove(route.math_block)
+            del self.routes[key]
+            
+            if Constants.DEBUG:
+                print(f"[MOD] Route removed: {get_source_name(source)} -> {get_target_name(target)}")
+    
+    def set_gate_state(self, channel, gate_type, state):
+        """Set envelope gate state"""
+        if Constants.DEBUG:
+            print(f"[MOD] Gate state change - Ch:{channel} {gate_type}={state}")
+            
+        if channel not in self.gate_states:
+            self.gate_states[channel] = {}
+        self.gate_states[channel][gate_type] = state
+        
+        # Update gate source value
+        self.set_source_value(ModSource.GATE, channel, 1.0 if state else 0.0)
+    
+    def set_source_value(self, source, channel, value):
+        """Set value for a modulation source"""
+        if source not in self.source_values:
+            self.source_values[source] = {}
+            
+        # Convert to fixed point
+        fixed_value = FixedPoint.from_float(value)
+        self.source_values[source][channel] = fixed_value
+        
+        if Constants.DEBUG:
+            last_value = getattr(self, '_last_logged_values', {}).get((source, channel))
+            current_value = FixedPoint.to_float(fixed_value)
+            if last_value is None or abs(current_value - last_value) > 0.01:
+                print(f"[MOD] Source value updated:")
+                print(f"      Source: {get_source_name(source)}")
+                print(f"      Channel: {channel}")
+                print(f"      Value: {current_value:.3f}")
+                if not hasattr(self, '_last_logged_values'):
+                    self._last_logged_values = {}
+                self._last_logged_values[(source, channel)] = current_value
+    
+    def get_target_value(self, target, channel):
+        """Get current value for a modulation target"""
+        if Constants.DEBUG:
+            print(f"[MOD] Getting target value:")
+            print(f"      Target: {get_target_name(target)}")
+            print(f"      Channel: {channel}")
+        
+        result = FixedPoint.ZERO
+        
+        for key, route in self.routes.items():
+            source, route_target, route_channel = key
+            
+            # Skip if not matching target or channel
+            if route_target != target:
+                continue
+            if route_channel is not None and route_channel != channel:
+                continue
+                
+            # Get source value
+            source_value = self.source_values.get(source, {}).get(channel, FixedPoint.ZERO)
+            if source_value == FixedPoint.ZERO:
+                continue
+                
+            # Process value through route
+            processed = route.process(FixedPoint.to_float(source_value))
+            
+            # Combine based on target type
+            if target == ModTarget.AMPLITUDE:
+                # Multiplicative combining for amplitude
+                if result == FixedPoint.ZERO:
+                    result = processed
+                else:
+                    result = FixedPoint.multiply(result, processed)
+            else:
+                # Additive combining for other targets
+                result += processed
+            
+            if Constants.DEBUG:
+                print(f"[MOD]       {get_source_name(source)}: {FixedPoint.to_float(processed):.3f}")
+        
+        if Constants.DEBUG:
+            print(f"[MOD]       Final: {FixedPoint.to_float(result):.3f}")
+        
+        return result
+
+class ModulationRoute:
+    """Single modulation routing with processing"""
+    def __init__(self, source, target, amount=1.0, curve='linear'):
+        self.source = source
+        self.target = target
+        self.amount = FixedPoint.from_float(amount)
+        self.curve = curve
+        self.math_block = None
+        self.last_value = None
+        self.needs_update = True
+        
+        if Constants.DEBUG:
+            print(f"[MOD] Creating route:")
+            print(f"      Source: {get_source_name(source)}")
+            print(f"      Target: {get_target_name(target)}")
+            print(f"      Amount: {amount:.3f}")
+            print(f"      Curve: {curve}")
+        
+        if self.needs_math_block():
+            self.create_math_block()
+            
+    def needs_math_block(self):
+        """Determine if this route needs a synthio.Math block"""
+        return self.target in (
+            ModTarget.FILTER_CUTOFF,
+            ModTarget.FILTER_RESONANCE,
+            ModTarget.RING_FREQUENCY,
+            ModTarget.ENVELOPE_LEVEL
+        )
+    
+    def create_math_block(self):
+        """Create appropriate synthio.Math block for this route"""
+        if Constants.DEBUG:
+            print(f"[MOD] Creating math block for {get_source_name(self.source)} -> {get_target_name(self.target)}")
+            
+        if self.target == ModTarget.FILTER_CUTOFF:
+            # Exponential scaling for filter frequency
+            self.math_block = synthio.Math(
+                synthio.MathOperation.SCALE_OFFSET,
+                0.0,  # will be updated
+                FixedPoint.to_float(self.amount),
+                1.0
+            )
+        elif self.target == ModTarget.ENVELOPE_LEVEL:
+            # Special handling for envelope levels
+            self.math_block = synthio.Math(
+                synthio.MathOperation.CONSTRAINED_LERP,
+                0.0,  # current level
+                1.0,  # target level
+                FixedPoint.to_float(self.amount)  # interpolation amount
+            )
+        else:
+            self.math_block = synthio.Math(
+                synthio.MathOperation.PRODUCT,
+                0.0,  # will be updated
+                FixedPoint.to_float(self.amount)
+            )
+    
+    def process(self, value):
+        """Process value through route with fixed-point math"""
+        if value != self.last_value:
+            self.needs_update = True
+            self.last_value = value
+            
+            # Convert to fixed point for processing
+            fixed_value = FixedPoint.from_float(value)
+            
+            if self.curve == 'exponential':
+                # Use fixed-point exp approximation
+                processed = self._exp_curve(fixed_value)
+            else:  # linear
+                processed = FixedPoint.multiply(fixed_value, self.amount)
+            
+            if self.math_block:
+                self.math_block.a = FixedPoint.to_float(processed)
+                result = FixedPoint.from_float(self.math_block.value)
+            else:
+                result = processed
+                
+            if Constants.DEBUG:
+                print(f"[MOD] Processing value:")
+                print(f"      Route: {get_source_name(self.source)} -> {get_target_name(self.target)}")
+                print(f"      Input: {value:.3f}")
+                print(f"      Output: {FixedPoint.to_float(result):.3f}")
+                
+            return result
+            
+        return self.last_value
+        
+    def _exp_curve(self, value):
+        """Approximate exponential curve with fixed-point math"""
+        # Basic exponential approximation using fixed point
+        scaled = FixedPoint.multiply(value, FixedPoint.from_float(4.0))
+        return FixedPoint.multiply(scaled, scaled)

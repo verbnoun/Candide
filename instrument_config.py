@@ -1,3 +1,36 @@
+"""
+Instrument Configuration System
+
+This module defines how MIDI/MPE signals flow through the synthesis engine.
+Each instrument configuration acts as a routing map that controls:
+
+Signal Flow:
+1. Note Events (note on/off, velocity)
+   → Triggers envelope gates
+   → Sets initial amplitude via velocity routing
+
+2. MPE Control Signals (pressure, timbre, pitch bend)
+   → Only processed if explicitly enabled in config
+   → Routed to specified parameters via modulation matrix
+
+3. Envelope System
+   → Gates triggered by note events
+   → Each stage can be controlled by MPE signals
+   → Controls amplitude over time
+
+4. LFO System
+   → Created and routed based on explicit config
+   → Can modulate any parameter
+   → Can be synced to note events
+
+5. Filter System
+   → Parameters controlled via modulation matrix
+   → Can respond to envelopes, LFOs, and MPE controls
+
+Every signal path must be explicitly defined in the instrument config.
+No routing occurs unless specified here.
+"""
+
 from synth_constants import ModSource, ModTarget
 
 class InstrumentConfig:
@@ -15,21 +48,56 @@ class InstrumentConfig:
                 'cutoff': 2000,
                 'resonance': 0.7
             },
+            'expression': {
+                'pressure': False,    # Must be explicitly enabled
+                'pitch_bend': False,  # Must be explicitly enabled
+                'timbre': False,      # Must be explicitly enabled
+                'velocity': True      # Always enabled for basic dynamics
+            },
             'envelope': {
-                'attack': 0.01,
-                'decay': 0.1,
-                'sustain': 0.8,
-                'release': 0.2
+                'attack': {
+                    'gate': 'note_on',       # Gate trigger source
+                    'time': 0.01,            # Stage duration
+                    'level': None,           # Uses velocity if None
+                    'curve': 'linear'        # Level curve type
+                },
+                'decay': {
+                    'gate': 'attack_end',    
+                    'time': 0.1,             
+                    'level_scale': 1.0,      # Relative to attack peak
+                    'curve': 'exponential'   
+                },
+                'sustain': {
+                    'gate': 'decay_end',     
+                    'control': None,         # Optional MPE control source
+                    'level': 0.8,            # Fixed level if no control
+                    'curve': 'linear'        
+                },
+                'release': {
+                    'gate': 'note_off',      
+                    'time': 0.2,             
+                    'level': 0.0,            
+                    'curve': 'exponential'   
+                }
             },
-            'modulation': [],  # List of modulation routings
-            'performance': {
-                'pressure_enabled': True,
-                'pressure_sensitivity': 1.0,
-                'pitch_bend_enabled': True,
-                'pitch_bend_range': 48,
-            },
-            'lfo': {},  # LFO configurations
-            'ring': None  # Ring modulation settings if needed
+            'lfo': {},              # LFO definitions
+            'modulation': [],       # Modulation route definitions
+            'scaling': {
+                'velocity': 1.0,    # 0-1 scaling of velocity response
+                'pressure': 1.0,    # 0-1 scaling of pressure response
+                'timbre': 1.0,      # 0-1 scaling of timbre response
+                'pitch_bend': 48,   # Semitones of pitch bend range
+            }
+        }
+
+    def add_lfo(self, name, rate, shape='triangle', min_value=0.0, max_value=1.0, sync_to_gate=False):
+        """Add LFO configuration"""
+        self.config['lfo'][name] = {
+            'rate': rate,
+            'shape': shape,
+            'min_value': min_value,
+            'max_value': max_value,
+            'sync_to_gate': sync_to_gate
         }
 
     def add_modulation_route(self, source, target, amount=1.0, curve='linear'):
@@ -41,29 +109,12 @@ class InstrumentConfig:
             'curve': curve
         })
 
-    def add_lfo(self, name, rate, shape='triangle', min_value=0.0, max_value=1.0):
-        """Add an LFO configuration"""
-        self.config['lfo'][name] = {
-            'rate': rate,
-            'shape': shape,
-            'min_value': min_value,
-            'max_value': max_value
-        }
-
-    def set_ring_modulation(self, frequency, waveform='sine', bend_range=0):
-        """Configure ring modulation"""
-        self.config['ring'] = {
-            'frequency': frequency,
-            'waveform': waveform,
-            'bend_range': bend_range
-        }
-
     def get_config(self):
         """Get complete configuration"""
         return self.config
 
 class Piano(InstrumentConfig):
-    """Traditional piano without MPE"""
+    """Traditional piano with gate-based envelope control and MPE expression"""
     def __init__(self):
         super().__init__("Piano")
         
@@ -71,220 +122,80 @@ class Piano(InstrumentConfig):
         self.config.update({
             'oscillator': {
                 'waveform': 'triangle',
-                'detune': 0.001  # Slight detuning for richness
+                'detune': 0.001
             },
             'filter': {
                 'type': 'low_pass',
                 'cutoff': 5000,
                 'resonance': 0.2
             },
-            'envelope': {
-                'attack': 0.001,
-                'decay': 0.8,
-                'sustain': 0.0,  # Piano-like decay
-                'release': 0.3
+            'expression': {
+                'pressure': True,     # Used for sustain control
+                'pitch_bend': False,
+                'timbre': False,
+                'velocity': True
             },
-            'performance': {
-                'pressure_enabled': False,
-                'pitch_bend_enabled': False,
-                'velocity_sensitivity': 1.0
+            'envelope': {
+                'attack': {
+                    'gate': 'note_on',
+                    'time': 0.001,
+                    'level': None,     # Use velocity
+                    'curve': 'linear'
+                },
+                'decay': {
+                    'gate': 'attack_end',
+                    'time': 0.8,
+                    'level_scale': 0.8,  # 80% of attack
+                    'curve': 'exponential'
+                },
+                'sustain': {
+                    'gate': 'decay_end',
+                    'control': {
+                        'source': ModSource.PRESSURE,
+                        'min_level': 0.0,
+                        'max_level': 0.8,  # 80% of decay level
+                        'curve': 'linear'
+                    },
+                    'level': 0.0,     # Initial level without pressure
+                    'curve': 'linear'
+                },
+                'release': {
+                    'gate': 'note_off',
+                    'time': 0.3,
+                    'level': 0.0,
+                    'curve': 'exponential'
+                }
+            },
+            'scaling': {
+                'velocity': 1.0,
+                'pressure': 1.0,
+                'timbre': 0.0,     # Not used
+                'pitch_bend': 0,    # Not used
             }
         })
         
-        # Simple velocity to amplitude mapping
+        # Optional soft pedal modulation
+        self.add_lfo(
+            name='tremolo',
+            rate=5.0,
+            min_value=0.7,
+            max_value=1.0,
+            sync_to_gate=True
+        )
+        
+        # Only add modulation for enabled expression
         self.add_modulation_route(
             ModSource.VELOCITY,
             ModTarget.AMPLITUDE,
-            amount=1.0
-        )
-
-class Organ(InstrumentConfig):
-    """Organ with pressure-controlled volume"""
-    def __init__(self):
-        super().__init__("Organ")
-        
-        self.config.update({
-            'oscillator': {
-                'waveform': 'sine',
-                'detune': 0.0
-            },
-            'filter': {
-                'type': 'low_pass',
-                'cutoff': 2000,
-                'resonance': 0.3
-            },
-            'envelope': {
-                'attack': 0.05,
-                'decay': 0.0,
-                'sustain': 1.0,
-                'release': 0.08
-            },
-            'performance': {
-                'pressure_enabled': True,
-                'pressure_sensitivity': 1.0,
-                'pitch_bend_enabled': False,
-                'velocity_sensitivity': 0.0  # Organ doesn't use velocity
-            }
-        })
-        
-        # Pressure controls amplitude
-        self.add_modulation_route(
-            ModSource.PRESSURE,
-            ModTarget.AMPLITUDE,
-            amount=0.8,
+            amount=1.0,
             curve='exponential'
-        )
-
-class Womp(InstrumentConfig):
-    """Full MPE expression instrument"""
-    def __init__(self):
-        super().__init__("Womp")
-        
-        self.config.update({
-            'oscillator': {
-                'waveform': 'saw',
-                'detune': 0.2
-            },
-            'filter': {
-                'type': 'low_pass',
-                'cutoff': 800,
-                'resonance': 1.8
-            },
-            'envelope': {
-                'attack': 0.005,
-                'decay': 0.1,
-                'sustain': 0.7,
-                'release': 0.2
-            },
-            'performance': {
-                'pressure_enabled': True,
-                'pressure_sensitivity': 1.0,
-                'pitch_bend_enabled': True,
-                'pitch_bend_range': 48
-            }
-        })
-        
-        # Add wobble LFO
-        self.add_lfo('wobble', rate=5.0, shape='triangle', min_value=0.3, max_value=1.0)
-        
-        # Add ring modulation
-        self.set_ring_modulation(
-            frequency=2.0,
-            waveform='triangle',
-            bend_range=12
-        )
-        
-        # Rich modulation routing
-        self.add_modulation_route(
-            ModSource.PRESSURE,
-            ModTarget.FILTER_CUTOFF,
-            amount=0.7,
-            curve='exponential'
-        )
-        
-        self.add_modulation_route(
-            ModSource.TIMBRE,
-            ModTarget.FILTER_RESONANCE,
-            amount=0.6
-        )
-        
-        self.add_modulation_route(
-            ModSource.PRESSURE,
-            ModTarget.RING_FREQUENCY,
-            amount=0.5
-        )
-        
-        self.add_modulation_route(
-            'wobble',  # LFO name
-            ModTarget.FILTER_CUTOFF,
-            amount=0.3
-        )
-
-class WindChime(InstrumentConfig):
-    """Ethereal wind chime with inter-note modulation"""
-    def __init__(self):
-        super().__init__("Wind Chime")
-        
-        self.config.update({
-            'oscillator': {
-                'waveform': 'sine',
-                'detune': 0.01
-            },
-            'filter': {
-                'type': 'band_pass',
-                'cutoff': 3000,
-                'resonance': 1.5
-            },
-            'envelope': {
-                'attack': 0.001,
-                'decay': 0.2,
-                'sustain': 0.1,
-                'release': 2.0
-            },
-            'performance': {
-                'pressure_enabled': True,
-                'pressure_sensitivity': 0.8,
-                'pitch_bend_enabled': True,
-                'pitch_bend_range': 4
-            }
-        })
-        
-        # Shimmer LFO
-        self.add_lfo('shimmer', 
-            rate=0.5,
-            shape='sine',
-            min_value=0.0,
-            max_value=1.0
-        )
-        
-        # Wind LFO
-        self.add_lfo('wind',
-            rate=0.2,
-            shape='triangle',
-            min_value=0.2,
-            max_value=0.8
-        )
-        
-        # Ring modulation for harmonics
-        self.set_ring_modulation(
-            frequency=1.5,
-            waveform='sine',
-            bend_range=2
-        )
-        
-        # Modulation routing
-        self.add_modulation_route(
-            ModSource.PRESSURE,
-            ModTarget.RING_FREQUENCY,
-            amount=0.3,
-            curve='exponential'
-        )
-        
-        self.add_modulation_route(
-            'shimmer',
-            ModTarget.FILTER_CUTOFF,
-            amount=0.2
-        )
-        
-        self.add_modulation_route(
-            'wind',
-            ModTarget.AMPLITUDE,
-            amount=0.3
-        )
-        
-        self.add_modulation_route(
-            ModSource.PRESSURE,
-            ModTarget.FILTER_RESONANCE,
-            amount=0.4
         )
 
 def create_instrument(name):
     """Factory function to create instrument configurations"""
     instruments = {
         'piano': Piano,
-        'organ': Organ,
-        'womp': Womp,
-        'wind_chime': WindChime
+        # Additional instruments would be registered here
     }
     
     if name.lower() in instruments:
@@ -293,4 +204,4 @@ def create_instrument(name):
 
 def list_instruments():
     """Get list of available instruments"""
-    return ['Piano', 'Organ', 'Womp', 'Wind Chime']
+    return ['Piano']  # Add others as implemented

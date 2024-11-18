@@ -40,6 +40,7 @@ class ModSource:
     LFO1 = 4
     VELOCITY = 5
     NOTE = 6
+    GATE = 7
 
 class ModTarget:
     NONE = 0
