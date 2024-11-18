@@ -227,10 +227,11 @@ class CandideConnectionManager:
             
             if (event['data']['value'] == Constants.HANDSHAKE_VALUE and 
                 self.state == self.DETECTED):
-                print("Handshake CC received - sending config")
+                print("Handshake CC received - sending placeholder config")
                 self.state = self.HANDSHAKING
                 self.handshake_start_time = time.monotonic()
-                self._send_config()
+                # Send minimal placeholder config that Bartleby expects
+                self.uart.write("cc:piano:1\n")  # PLACEHOLDER: Basic config to satisfy handshake
                 self.state = self.CONNECTED
                 print("Connection established")
                 
@@ -261,16 +262,6 @@ class CandideConnectionManager:
             self.last_heartbeat_time = time.monotonic()
         except Exception as e:
             print(f"Failed to send heartbeat: {str(e)}")
-            
-    def _send_config(self):
-        try:
-            config = self.synth_manager.get_current_config()
-            if config:
-                self.uart.write(f"{config}\n")
-                print("Config sent successfully")
-        except Exception as e:
-            print(f"Failed to send config: {str(e)}")
-            self.state = self.DETECTED
             
     def cleanup(self):
         if self.detect_pin:

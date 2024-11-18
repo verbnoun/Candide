@@ -354,6 +354,8 @@ class MPEMessageRouter:
     def set_instrument_config(self, config):
         """Set the current instrument configuration"""
         self.current_instrument_config = config
+        # Only configure modulation matrix when instrument changes
+        self.modulation_matrix.configure_from_instrument(config)
 
     def route_message(self, message):
         """Route incoming MPE message to appropriate handler"""
@@ -395,9 +397,9 @@ class MPEMessageRouter:
             return {'type': 'voice_released', 'voice': voice}
     
     def process_updates(self):
-        """Process any pending state updates"""
+        """Process any pending state updates - no longer reconfigures modulation"""
         if self.current_instrument_config:
-            self.modulation_matrix.configure_from_instrument(self.current_instrument_config)
-        self.voice_manager.update_voices()
+            # Only process voice updates, skip modulation reconfiguration
+            self.voice_manager.update_voices()
             
         

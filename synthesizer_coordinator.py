@@ -26,11 +26,23 @@ class MPESynthesizer:
         if Constants.DEBUG:
             print("[SYNTH] Base synthesizer initialized")
 
-        # Initialize synthesis components
-        self.mod_matrix = ModulationMatrix(self)
-        self.lfo_manager = LFOManager(self.mod_matrix, None, None, self.synth)
+        # Initialize synthesis components in dependency order
         self.voice_manager = MPEVoiceManager()
-        self.parameter_processor = MPEParameterProcessor(self.voice_manager, self.mod_matrix)
+        self.parameter_processor = MPEParameterProcessor(self.voice_manager, None)  # mod_matrix added later
+        self.lfo_manager = LFOManager(None, None, None, self.synth)  # mod_matrix added later
+        
+        self.mod_matrix = ModulationMatrix(
+            self.voice_manager,
+            self.parameter_processor, 
+            self.lfo_manager,
+            self.synth,
+            self.output_manager
+        )
+        
+        # Update components with mod_matrix reference 
+        self.parameter_processor.mod_matrix = self.mod_matrix
+        self.lfo_manager.mod_matrix = self.mod_matrix
+
         self.message_router = MPEMessageRouter(
             self.voice_manager,
             self.parameter_processor,
@@ -258,11 +270,14 @@ class MPESynthesizer:
         self.current_instrument = instrument_config
         self.engine.current_instrument = instrument_config
         
-        # Configure subsystems
+        # Configure subsystems in correct order - remove duplicate mod_matrix config
         self.voice_manager.set_instrument_config(instrument_config)
         self.parameter_processor.set_instrument_config(instrument_config)
+        
+        # Let message router handle all modulation configuration
         self.message_router.set_instrument_config(instrument_config)
-        self.mod_matrix.configure_from_instrument(instrument_config)
+        
+        # Configure LFOs after modulation matrix is set up
         self.lfo_manager.configure_from_instrument(instrument_config, self.synth)
             
         if Constants.DEBUG:
