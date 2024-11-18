@@ -177,19 +177,73 @@ class ModulationMatrix:
         self.source_values = {}  # source: {channel: value}
         self.blocks = []  # Active synthio blocks (LFOs etc)
         self.gate_states = {}  # For tracking envelope gate states
+        self.control_metadata = {}  # Store control object metadata
         
         if Constants.DEBUG:
             print("[MOD] Modulation matrix initialized")
     
+    def _find_control_objects(self, config, path=''):
+        """Recursively find all control objects in config"""
+        controls = []
+        
+        if isinstance(config, dict):
+            for key, value in config.items():
+                new_path = f"{path}.{key}" if path else key
+                
+                if key == 'control' and isinstance(value, dict):
+                    if all(k in value for k in ['cc', 'name', 'range']):
+                        value['path'] = path  # Store path to parent
+                        controls.append(value)
+                else:
+                    controls.extend(self._find_control_objects(value, new_path))
+                    
+        elif isinstance(config, list):
+            for i, item in enumerate(config):
+                new_path = f"{path}[{i}]"
+                controls.extend(self._find_control_objects(item, new_path))
+                
+        return controls
+
     def configure_from_instrument(self, config):
         """Configure all modulation based on instrument config"""
         if Constants.DEBUG:
             print("\n[MOD] Configuring modulation matrix from instrument config")
             
-        # Clear existing routes
+        # Clear existing routes and metadata
         self.routes.clear()
         self.cc_routes.clear()
         self.blocks.clear()
+        self.control_metadata.clear()
+        
+        # Find all control objects in config
+        controls = self._find_control_objects(config)
+        
+        # Set up CC routes for control objects
+        for control in controls:
+            cc = control['cc']
+            name = control['name']
+            value_range = control['range']
+            curve = control.get('curve', 'linear')
+            path = control['path']
+            
+            if Constants.DEBUG:
+                print(f"[MOD] Adding flexible CC route:")
+                print(f"      CC: {cc}")
+                print(f"      Name: {name}")
+                print(f"      Path: {path}")
+                print(f"      Range: {value_range['min']} to {value_range['max']}")
+                print(f"      Curve: {curve}")
+            
+            # Store metadata for value scaling
+            self.control_metadata[cc] = {
+                'name': name,
+                'path': path,
+                'range': value_range,
+                'curve': curve
+            }
+            
+            # Create route with appropriate curve
+            self.add_cc_route(cc, ModTarget.NONE, 1.0, curve)
         
         # Add standard modulation routes from config
         for route in config.get('modulation', []):
@@ -204,7 +258,7 @@ class ModulationMatrix:
                 
             self.add_route(source, target, amount, curve=curve)
             
-        # Add CC routes from config
+        # Add legacy CC routes from config
         for cc_number, route_config in config.get('cc_routing', {}).items():
             target = route_config['target']
             amount = route_config.get('amount', 1.0)
@@ -212,13 +266,32 @@ class ModulationMatrix:
             description = route_config.get('description', '')
             
             if Constants.DEBUG:
-                print(f"[MOD] Adding CC route: CC {cc_number} -> {get_target_name(target)}")
+                print(f"[MOD] Adding legacy CC route: CC {cc_number} -> {get_target_name(target)}")
                 print(f"      Amount: {amount:.3f}, Curve: {curve}")
                 if description:
                     print(f"      Description: {description}")
                 
             self.add_cc_route(int(cc_number), target, amount, curve)
+    
+    def scale_cc_value(self, value, control):
+        """Scale normalized CC value using control's range and curve"""
+        if not control or 'range' not in control:
+            return value
+            
+        value_range = control['range']
+        min_val = value_range['min']
+        max_val = value_range['max']
+        curve = control.get('curve', 'linear')
         
+        # Get route to use its curve processing
+        route = ModulationRoute(ModSource.NONE, ModTarget.NONE, max_val - min_val, curve)
+        
+        # Process through curve
+        scaled = route.process(value)
+        
+        # Scale to range
+        return min_val + (FixedPoint.to_float(scaled) * (max_val - min_val))
+    
     def add_route(self, source, target, amount=1.0, channel=None, curve='linear'):
         """Add a modulation route with optional per-channel routing"""
         key = (source, target, channel)
@@ -264,13 +337,28 @@ class ModulationMatrix:
         if Constants.DEBUG:
             print(f"[MOD] Processing CC {cc_number}:")
             print(f"      Value: {value}")
-            print(f"      Target: {get_target_name(route.target)}")
         
-        # Process through route and update target
-        processed = route.process(normalized_value)
-        self.set_target_value(route.target, channel, processed)
+        # Check if this CC has control metadata
+        if cc_number in self.control_metadata:
+            control = self.control_metadata[cc_number]
+            scaled_value = self.scale_cc_value(normalized_value, control)
+            
+            if Constants.DEBUG:
+                print(f"      Name: {control['name']}")
+                print(f"      Path: {control['path']}")
+                print(f"      Scaled: {scaled_value:.3f}")
+                
+            return scaled_value
         
-        return processed
+        # Legacy CC processing
+        if route.target != ModTarget.NONE:
+            if Constants.DEBUG:
+                print(f"      Target: {get_target_name(route.target)}")
+            
+            # Process through route and update target
+            processed = route.process(normalized_value)
+            self.set_target_value(route.target, channel, processed)
+            return processed
             
     def remove_route(self, source, target, channel=None):
         """Remove a modulation route"""
@@ -429,9 +517,13 @@ class ModulationRoute:
             # Convert to fixed point for processing
             fixed_value = FixedPoint.from_float(value)
             
+            # Apply curve
             if self.curve == 'exponential':
-                # Use fixed-point exp approximation
                 processed = self._exp_curve(fixed_value)
+            elif self.curve == 'logarithmic':
+                processed = self._log_curve(fixed_value)
+            elif self.curve == 's_curve':
+                processed = self._s_curve(fixed_value)
             else:  # linear
                 processed = FixedPoint.multiply(fixed_value, self.amount)
             
@@ -452,7 +544,25 @@ class ModulationRoute:
         return self.last_value
         
     def _exp_curve(self, value):
-        """Approximate exponential curve with fixed-point math"""
-        # Basic exponential approximation using fixed point
+        """Exponential curve with fixed-point math"""
+        # x^2 exponential approximation
         scaled = FixedPoint.multiply(value, FixedPoint.from_float(4.0))
         return FixedPoint.multiply(scaled, scaled)
+        
+    def _log_curve(self, value):
+        """Logarithmic curve with fixed-point math"""
+        # 1-(1-x)^2 logarithmic approximation
+        inv = FixedPoint.ONE - value
+        squared = FixedPoint.multiply(inv, inv)
+        return FixedPoint.multiply(FixedPoint.ONE - squared, self.amount)
+        
+    def _s_curve(self, value):
+        """S-curve (sigmoid) with fixed-point math"""
+        # Smooth step function: 3x^2 - 2x^3
+        squared = FixedPoint.multiply(value, value)
+        cubed = FixedPoint.multiply(squared, value)
+        
+        three_squared = FixedPoint.multiply(squared, FixedPoint.from_float(3.0))
+        two_cubed = FixedPoint.multiply(cubed, FixedPoint.from_float(2.0))
+        
+        return FixedPoint.multiply(three_squared - two_cubed, self.amount)
