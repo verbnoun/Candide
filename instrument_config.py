@@ -1,55 +1,28 @@
 """
 Instrument Configuration System
-This module provides a comprehensive and flexible configuration 
-system for defining synthesizer instrument parameters, routing, 
-and modulation capabilities.
 
-Key Responsibilities:
-- Define instrument-specific configuration structures
-- Manage signal flow and parameter routing
-- Support dynamic MIDI control change (CC) mapping
-- Enable complex modulation and parameter interactions
-- Provide instrument preset management
+Source of Routing and configuration structures for defining synthesizer instruments
+with robust parameter routing and modulation capabilities.
 
-Primary Classes:
-- InstrumentConfig: Base class for instrument configurations
-  * Handles configuration generation
-  * Manages CC routing and control discovery
-  * Provides configuration formatting methods
-
-- EvErYtHiNg: Comprehensive instrument configuration
-  * Demonstrates full configuration capabilities
-  * Includes detailed parameter, routing, and modulation settings
-
-- Piano: Minimal piano instrument configuration
-  * Provides a simplified instrument configuration
-  * Demonstrates basic parameter and routing setup
-
-Key Features:
-- Flexible configuration definition
-- Dynamic CC routing and control mapping
-- Support for complex modulation routing
-- Instrument preset management
-- Extensible configuration system
-
-Utility Functions:
-- create_instrument(): Factory function for instrument creation
-- list_instruments(): Returns available instrument configurations
+Key Configuration Areas:
+- Basic instrument definition
+- Sound generation (oscillator, envelope, filter)
+- Modulation routing
+- Control mapping
 """
-
 
 from synth_constants import ModSource, ModTarget
 
 class InstrumentConfig:
-    """Minimal base class for instrument configurations"""
+    """Base configuration for instruments"""
     def __init__(self, name):
         self.name = name
         self.config = {
             'name': name
         }
-        
+
     def _find_controls(self, config):
-        """Recursively find all control objects with CC numbers"""
+        """Extract all control objects with CC numbers"""
         controls = []
         
         def extract_controls(obj):
@@ -67,22 +40,19 @@ class InstrumentConfig:
         return controls
 
     def get_config(self):
-        """Return complete configuration with CC routing"""
+        """Generate complete configuration with CC routing"""
         # Find all controls with CC numbers
         controls = self._find_controls(self.config)
         
-        # Generate CC routing for MIDI controller
+        # Generate CC routing
         cc_routing = {}
         used_cc_numbers = set()
         
         for control in controls:
             cc_num = control['cc']
-            
-            # Skip if CC number already used or out of range
             if cc_num in used_cc_numbers or not (0 <= cc_num <= 127):
                 continue
-            
-            # Add to routing
+                
             cc_routing[cc_num] = {
                 'name': control['name'],
                 'target': control.get('target', ModTarget.NONE),
@@ -90,305 +60,55 @@ class InstrumentConfig:
             }
             used_cc_numbers.add(cc_num)
             
-            # Stop if we've reached 14 CC routes (controller limit)
             if len(cc_routing) >= 14:
                 break
-        
-        # Create complete config with CC routing
+                
         config = self.config.copy()
         config['cc_routing'] = cc_routing
-        
         return config
 
     def format_cc_config(self):
-        """Format CC config string for controller handshake"""
+        """Format CC config string"""
         cc_routing = self.get_config()['cc_routing']
         if not cc_routing:
-            return "cc:"  # Minimal valid config
+            return "cc:"
             
-        # Create assignments with names
         assignments = []
         pot_number = 0
         
         for cc_number, routing in cc_routing.items():
-            # Validate CC number
             cc_num = int(cc_number)
             if not (0 <= cc_num <= 127):
                 continue
                 
-            # Only use first 14 pots
             if pot_number > 13:
                 break
                 
-            # Get CC name
             cc_name = routing.get('name', f"CC{cc_num}")
             assignments.append(f"{pot_number}={cc_num}:{cc_name}")
             pot_number += 1
             
-        # Join with commas
         return "cc:" + ",".join(assignments)
 
-class EvErYtHiNg(InstrumentConfig):
-    """Comprehensive instrument configuration with all details"""
-    def __init__(self):
-        super().__init__("EvErYtHiNg")
-        
-        self.config = {
-            'name': "EvErYtHiNg",
-            
-            # Parameters section for synthesizer
-            'parameters': {
-                'frequency': {
-                    'synthio_param': 'frequency',
-                    'default': 440.0,
-                    'range': {'min': 20.0, 'max': 20000.0},
-                    'curve': 'linear'
-                },
-                'amplitude': {
-                    'synthio_param': 'amplitude',
-                    'default': 0.5,
-                    'range': {'min': 0.0, 'max': 1.0},
-                    'curve': 'linear'
-                },
-                'waveform': {
-                    'synthio_param': 'waveform',
-                    'default': 'triangle',
-                    'options': ['sine', 'triangle', 'sawtooth', 'square']
-                }
-            },
-            
-            # Message routing for MPE with more detailed configuration
-            'message_routes': {
-                'note_on': {
-                    'source_id': 'note',
-                    'value_func': lambda data: data.get('note', 0),
-                    'target': 'frequency',
-                    'description': 'Convert MIDI note number to frequency',
-                    'transform': {
-                        'type': 'midi_to_freq',
-                        'reference_pitch': 440.0,
-                        'reference_note': 69
-                    }
-                },
-                'note_off': {
-                    'source_id': 'gate',
-                    'value_func': lambda data: 0,
-                    'target': 'amplitude',
-                    'description': 'Set amplitude to zero on note off'
-                },
-                'pressure': {
-                    'source_id': 'pressure',
-                    'value_func': lambda data: data.get('value', 0),
-                    'target': 'amplitude',
-                    'description': 'Modulate amplitude with channel pressure',
-                    'transform': {
-                        'type': 'normalize',
-                        'input_range': {'min': 0, 'max': 127},
-                        'output_range': {'min': 0.0, 'max': 1.0}
-                    }
-                },
-                'pitch_bend': {
-                    'source_id': 'pitch_bend',
-                    'value_func': lambda data: data.get('value', 8192),
-                    'target': 'frequency',
-                    'description': 'Modulate frequency with pitch bend',
-                    'transform': {
-                        'type': 'pitch_bend',
-                        'center': 8192,
-                        'range': {'semitones': 48}
-                    }
-                }
-            },
-            
-            # Oscillator configuration
-            'oscillator': {
-                'waveform': {
-                    'type': 'sine',  # Default waveform
-                    'config': {
-                        'size': 512,
-                        'amplitude': 32767
-                    }
-                },
-                'tuning': {
-                    'transpose': 0,
-                    'fine': 0.0
-                }
-            },
-            
-            # Envelope section
-            'envelope': {
-                'stages': {
-                    'attack': {
-                        'time': {
-                            'value': 0.01,
-                            'control': {
-                                'cc': 72,
-                                'name': 'Attack Time',
-                                'range': {'min': 0.001, 'max': 2.0},
-                                'curve': 'exponential'
-                            }
-                        },
-                        'level': {
-                            'value': 1.0,
-                            'source': ModSource.VELOCITY,  # Velocity modulates attack level
-                            'control': {
-                                'cc': 73,
-                                'name': 'Attack Level',
-                                'range': {'min': 0.0, 'max': 1.0},
-                                'curve': 'linear'
-                            }
-                        }
-                    },
-                    'decay': {
-                        'time': {
-                            'value': 0.1,
-                            'control': {
-                                'cc': 74,
-                                'name': 'Decay Time',
-                                'range': {'min': 0.01, 'max': 3.0},
-                                'curve': 'exponential'
-                            }
-                        }
-                    },
-                    'sustain': {
-                        'level': {
-                            'value': 0.7,
-                            'control': {
-                                'cc': 75,
-                                'name': 'Sustain Level',
-                                'range': {'min': 0.0, 'max': 1.0},
-                                'curve': 'linear'
-                            }
-                        }
-                    },
-                    'release': {
-                        'time': {
-                            'value': 0.2,
-                            'control': {
-                                'cc': 76,
-                                'name': 'Release Time',
-                                'range': {'min': 0.01, 'max': 4.0},
-                                'curve': 'exponential'
-                            }
-                        }
-                    }
-                }
-            },
-            
-            # Filter section
-            'filter': {
-                'type': 'lowpass',
-                'frequency': {
-                    'value': 2000,
-                    'control': {
-                        'cc': 77,
-                        'name': 'Filter Cutoff',
-                        'range': {'min': 20, 'max': 20000},
-                        'curve': 'exponential'
-                    }
-                },
-                'resonance': {
-                    'value': 0.7,
-                    'control': {
-                        'cc': 71,
-                        'name': 'Filter Resonance',
-                        'range': {'min': 0.1, 'max': 1.9},
-                        'curve': 'exponential'
-                    }
-                }
-            },
-            
-            # LFO definitions
-            'lfos': {
-                'lfo1': {
-                    'type': 'lfo',
-                    'waveform': {
-                        'type': 'triangle',
-                        'size': 32
-                    },
-                    'rate': {
-                        'value': 1.0,
-                        'control': {
-                            'cc': 102,
-                            'name': 'LFO 1 Rate',
-                            'range': {'min': 0.1, 'max': 20.0},
-                            'curve': 'exponential'
-                        }
-                    },
-                    'amount': {
-                        'value': 0.5,
-                        'control': {
-                            'cc': 103,
-                            'name': 'LFO 1 Amount',
-                            'range': {'min': 0.0, 'max': 1.0},
-                            'curve': 'linear'
-                        }
-                    }
-                }
-            },
-            
-            # Signal flow and routing
-            'routes': [
-                # Envelope -> Amplitude
-                {
-                    'source': 'envelope',
-                    'target': ModTarget.AMPLITUDE,
-                    'amount': 1.0
-                },
-                
-                # LFO -> Filter cutoff 
-                {
-                    'source': 'lfo1',
-                    'target': ModTarget.FILTER_CUTOFF,
-                    'amount': 0.5,
-                    'bipolar': True
-                },
-                
-                # Velocity -> Initial envelope level
-                {
-                    'source': ModSource.VELOCITY,
-                    'target': 'envelope.attack.level',
-                    'amount': 1.0,
-                    'curve': 'exponential'
-                }
-            ],
-            
-            # MPE settings
-            'mpe': {
-                'enabled': True,
-                'pitch_bend_range': 48,
-                'pressure': {
-                    'enabled': True,
-                    'target': ModTarget.FILTER_CUTOFF,
-                    'amount': 0.3
-                },
-                'timbre': {
-                    'enabled': True,
-                    'cc': 74,
-                    'target': ModTarget.FILTER_RESONANCE,
-                    'amount': 0.5
-                }
-            }
-        }
-
 class Piano(InstrumentConfig):
-    """Minimal piano instrument with absolute minimum configuration"""
+    """Minimal piano instrument with basic sound generation"""
     def __init__(self):
         super().__init__("Piano")
         
         self.config = {
+            # Basic Definition
             'name': "Piano",
             
-            # Add waveforms section to fix "Waveform not found" error
+            # Sound Generation 
             'waveforms': {
                 'triangle': {
                     'type': 'triangle',
                     'size': 512,
-                    'amplitude': 32767
+                    'amplitude': 32767 #16bit max
                 }
             },
             
-            # Minimal parameters
+            # Required Parameters
             'parameters': {
                 'frequency': {
                     'synthio_param': 'frequency',
@@ -397,7 +117,7 @@ class Piano(InstrumentConfig):
                     'curve': 'linear'
                 },
                 'amplitude': {
-                    'synthio_param': 'amplitude',
+                    'synthio_param': 'amplitude', 
                     'default': 0.5,
                     'range': {'min': 0.0, 'max': 1.0},
                     'curve': 'linear'
@@ -405,35 +125,11 @@ class Piano(InstrumentConfig):
                 'waveform': {
                     'synthio_param': 'waveform',
                     'default': 'triangle',
-                    'options': ['sine', 'triangle', 'sawtooth', 'square']
-                },
-                'attack_time': {
-                    'synthio_param': 'attack_time',
-                    'default': 0.01,
-                    'range': {'min': 0.001, 'max': 2.0},
-                    'curve': 'exponential'
-                },
-                'decay_time': {
-                    'synthio_param': 'decay_time',
-                    'default': 0.1,
-                    'range': {'min': 0.01, 'max': 3.0},
-                    'curve': 'exponential'
-                },
-                'sustain_level': {
-                    'synthio_param': 'sustain_level',
-                    'default': 0.5,
-                    'range': {'min': 0.0, 'max': 1.0},
-                    'curve': 'linear'
-                },
-                'release_time': {
-                    'synthio_param': 'release_time',
-                    'default': 0.2,
-                    'range': {'min': 0.01, 'max': 4.0},
-                    'curve': 'exponential'
+                    'options': ['triangle']
                 }
             },
             
-            # Minimal envelope with CC controls
+            # Envelope Configuration
             'envelope': {
                 'stages': {
                     'attack': {
@@ -442,8 +138,7 @@ class Piano(InstrumentConfig):
                             'control': {
                                 'cc': 72,
                                 'name': 'Attack Time',
-                                'range': {'min': 0.001, 'max': 2.0},
-                                'target': 'attack_time'
+                                'range': {'min': 0.001, 'max': 2.0}
                             }
                         }
                     },
@@ -453,8 +148,7 @@ class Piano(InstrumentConfig):
                             'control': {
                                 'cc': 74,
                                 'name': 'Decay Time',
-                                'range': {'min': 0.01, 'max': 3.0},
-                                'target': 'decay_time'
+                                'range': {'min': 0.01, 'max': 3.0}
                             }
                         }
                     },
@@ -464,8 +158,7 @@ class Piano(InstrumentConfig):
                             'control': {
                                 'cc': 75,
                                 'name': 'Sustain Level',
-                                'range': {'min': 0.0, 'max': 1.0},
-                                'target': 'sustain_level'
+                                'range': {'min': 0.0, 'max': 1.0}
                             }
                         }
                     },
@@ -475,53 +168,14 @@ class Piano(InstrumentConfig):
                             'control': {
                                 'cc': 76,
                                 'name': 'Release Time',
-                                'range': {'min': 0.01, 'max': 4.0},
-                                'target': 'release_time'
+                                'range': {'min': 0.01, 'max': 4.0}
                             }
                         }
                     }
                 }
             },
             
-            # Minimal routing
-            'routes': [
-                {
-                    'source': 'velocity',
-                    'target': 'amplitude',
-                    'amount': 1.0
-                },
-                {
-                    'source': 'gate',
-                    'target': 'amplitude',
-                    'amount': 1.0
-                },
-                {
-                    'source': 'cc',
-                    'target': 'attack_time',
-                    'amount': 1.0,
-                    'curve': 'exponential'
-                },
-                {
-                    'source': 'cc',
-                    'target': 'decay_time',
-                    'amount': 1.0,
-                    'curve': 'exponential'
-                },
-                {
-                    'source': 'cc',
-                    'target': 'sustain_level',
-                    'amount': 1.0,
-                    'curve': 'linear'
-                },
-                {
-                    'source': 'cc',
-                    'target': 'release_time',
-                    'amount': 1.0,
-                    'curve': 'exponential'
-                }
-            ],
-            
-            # Minimal message routing
+            # Message Routing
             'message_routes': {
                 'note_on': {
                     'source_id': 'note',
@@ -548,14 +202,29 @@ class Piano(InstrumentConfig):
                         'output_range': {'min': 0.0, 'max': 1.0}
                     }
                 }
-            }
+            },
+
+            # Parameter Routing
+            'routes': [
+                {
+                    'source': 'velocity',
+                    'target': 'amplitude',
+                    'amount': 1.0,
+                    'curve': 'linear'
+                },
+                {
+                    'source': 'gate',
+                    'target': 'amplitude',
+                    'amount': 1.0,
+                    'curve': 'linear'
+                }
+            ]
         }
 
 def create_instrument(name):
-    """Factory function to create instrument configurations"""
+    """Factory function for instrument creation"""
     instruments = {
-        'piano': Piano,
-        'everything': EvErYtHiNg
+        'piano': Piano
     }
     
     if name.lower() in instruments:
@@ -563,5 +232,183 @@ def create_instrument(name):
     return None
 
 def list_instruments():
-    """Get list of available instruments"""
-    return ['Piano', 'Everything']
+    """List available instruments"""
+    return ['Piano']
+
+"""
+SYNTHESIZER CONFIGURATION TEMPLATE
+================================
+
+Complete template showing all possible configuration options.
+Copy relevant sections when creating new instruments.
+
+Required sections marked with [REQUIRED]
+
+Basic Instrument Definition [REQUIRED]
+------------------------------------
+{
+    'name': str,        # Instrument name
+    'version': str,     # Version for tracking
+    
+    # Sound Generation
+    # ---------------
+    
+    # [REQUIRED] Waveform Definition
+    'waveforms': {
+        'waveform_name': {
+            'type': str,     # sine|triangle|saw|square|custom
+            'size': int,     # Buffer size (typically 512)
+            'amplitude': int  # Max 32767
+        }
+    },
+    
+    # [REQUIRED] Core Parameters
+    'parameters': {
+        'frequency': {
+            'synthio_param': 'frequency',
+            'default': float,
+            'range': {'min': float, 'max': float},
+            'curve': str  # linear|exponential
+        },
+        'amplitude': {
+            'synthio_param': 'amplitude',
+            'default': float,
+            'range': {'min': float, 'max': float},
+            'curve': str
+        }
+    },
+    
+    # Envelope Configuration
+    'envelope': {
+        'stages': {
+            'attack': {
+                'time': {
+                    'value': float,
+                    'control': {
+                        'cc': int,
+                        'name': str,
+                        'range': {'min': float, 'max': float}
+                    }
+                },
+                'level': {  # Optional
+                    'value': float,
+                    'control': {
+                        'cc': int,
+                        'name': str,
+                        'range': {'min': float, 'max': float}
+                    }
+                }
+            },
+            'decay': {
+                'time': {
+                    # Same structure as attack
+                }
+            },
+            'sustain': {
+                'level': {
+                    # Level control only
+                }
+            },
+            'release': {
+                'time': {
+                    # Time control only
+                }
+            }
+        }
+    },
+    
+    # Filter Configuration
+    'filter': {
+        'type': str,    # lowpass|highpass|bandpass
+        'frequency': {
+            'value': float,
+            'control': {
+                'cc': int,
+                'name': str,
+                'range': {'min': float, 'max': float}
+            }
+        },
+        'resonance': {
+            # Same structure as frequency
+        }
+    },
+    
+    # Modulation Sources
+    'lfos': {
+        'lfo_name': {
+            'type': 'lfo',
+            'waveform': {
+                'type': str,
+                'size': int
+            },
+            'rate': {
+                'value': float,
+                'control': {
+                    'cc': int,
+                    'name': str,
+                    'range': {'min': float, 'max': float}
+                }
+            },
+            'amount': {
+                # Same structure as rate
+            }
+        }
+    },
+    
+    # [REQUIRED] Message Routing
+    'message_routes': {
+        'note_on': {
+            'source_id': str,
+            'value_func': callable,
+            'target': str,
+            'transform': {
+                'type': str,
+                'reference_pitch': float,
+                'reference_note': int
+            }
+        },
+        'note_off': {
+            'source_id': str,
+            'value_func': callable,
+            'target': str
+        },
+        'cc': {
+            'source_id': str,
+            'value_func': callable,
+            'target': str,
+            'transform': {
+                'type': str,
+                'input_range': dict,
+                'output_range': dict
+            }
+        }
+    },
+    
+    # [REQUIRED] Parameter Routing
+    'routes': [
+        {
+            'source': str,      # Source parameter
+            'target': str,      # Target parameter
+            'amount': float,    # Modulation amount
+            'curve': str        # Transform curve
+        }
+    ],
+    
+    # MPE Configuration
+    'mpe': {
+        'enabled': bool,
+        'pitch_bend_range': int,
+        'pressure': {
+            'enabled': bool,
+            'target': str,
+            'amount': float
+        },
+        'timbre': {
+            'enabled': bool,
+            'cc': int,
+            'target': str,
+            'amount': float
+        }
+    }
+}
+"""

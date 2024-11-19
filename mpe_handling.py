@@ -82,7 +82,18 @@ class Route:
             
         # Apply curve
         if self.curve == 'exponential':
-            processed = FixedPoint.multiply(value, value)
+            # Use a better exponential scaling that preserves small values
+            # Scale input from 0-1 to e^(x*5) / e^5 for a good curve shape
+            exp_scale = FixedPoint.from_float(5.0)  # Controls curve steepness
+            scaled = FixedPoint.multiply(value, exp_scale)
+            # Approximate e^x using: 1 + x + x^2/2 + x^3/6
+            x2 = FixedPoint.multiply(scaled, scaled)
+            x3 = FixedPoint.multiply(x2, scaled)
+            processed = FixedPoint.ONE + scaled + \
+                       FixedPoint.multiply(x2, FixedPoint.from_float(0.5)) + \
+                       FixedPoint.multiply(x3, FixedPoint.from_float(0.166))
+            # Normalize to 0-1 range
+            processed = FixedPoint.multiply(processed, FixedPoint.from_float(0.0084))  # 1/e^5
             if Constants.DEBUG:
                 print(f"      After exponential curve: {FixedPoint.to_float(processed):.3f}")
         elif self.curve == 'logarithmic':
@@ -106,10 +117,10 @@ class Route:
             
         # Scale to range
         range_size = self.max_value - self.min_value
-        self.current_value = self.min_value + FixedPoint.multiply(processed, range_size)
+        scaled_value = self.min_value + FixedPoint.multiply(processed, range_size)
         
         # Apply amount
-        self.current_value = FixedPoint.multiply(self.current_value, self.amount)
+        self.current_value = FixedPoint.multiply(scaled_value, self.amount)
         
         if Constants.DEBUG:
             if abs(FixedPoint.to_float(self.current_value - self.last_value)) > 0.01:
@@ -117,7 +128,7 @@ class Route:
                 print(f"      Source: {self.source_id}")
                 print(f"      Target: {self.target_id}")
                 print(f"      Input: {FixedPoint.to_float(value):.3f}")
-                print(f"      Output: {FixedPoint.to_float(self.current_value):.3f}")
+                print(f"      Scaled to range: {FixedPoint.to_float(scaled_value):.3f}")
                 print(f"      Final output: {FixedPoint.to_float(self.current_value):.3f}")
                 
         return self.current_value
@@ -191,6 +202,13 @@ class NoteState:
     def _create_routes(self, config):
         """Create all routes defined in config"""
         for route_config in config['routes']:
+            # Get parameter range from config if available
+            param_id = route_config.get('target')
+            if param_id and 'parameters' in config:
+                param_config = config['parameters'].get(param_id, {})
+                if 'range' in param_config:
+                    route_config['range'] = param_config['range']
+            
             route = Route(route_config)
             
             # Index by source
