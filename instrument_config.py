@@ -379,6 +379,15 @@ class Piano(InstrumentConfig):
         self.config = {
             'name': "Piano",
             
+            # Add waveforms section to fix "Waveform not found" error
+            'waveforms': {
+                'triangle': {
+                    'type': 'triangle',
+                    'size': 512,
+                    'amplitude': 32767
+                }
+            },
+            
             # Minimal parameters
             'parameters': {
                 'frequency': {

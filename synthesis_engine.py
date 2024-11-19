@@ -140,6 +140,7 @@ class FilterManager:
     """Creates filters according to config"""
     def __init__(self, synth):
         self.synth = synth
+        self.current_config = None
         
     def create_filter(self, config):
         """Create filter from config definition"""
@@ -147,10 +148,14 @@ class FilterManager:
             return None
             
         try:
+            self.current_config = config
             filter_type = config['type']
-            frequency = config.get('frequency', 1000)
-            resonance = config.get('resonance', 0.7)
             
+            # Get initial parameters through config routes
+            frequency = self._get_routed_value('frequency', config)
+            resonance = self._get_routed_value('resonance', config)
+            
+            # Create filter based on type
             if filter_type == 'lowpass':
                 return self.synth.low_pass_filter(frequency, resonance)
             elif filter_type == 'highpass':
@@ -162,6 +167,35 @@ class FilterManager:
             print(f"[ERROR] Failed to create filter: {str(e)}")
             
         return None
+        
+    def _get_routed_value(self, param_name, config):
+        """Get parameter value through config routing"""
+        if param_name not in config:
+            return self._get_default_value(param_name)
+            
+        param_config = config[param_name]
+        
+        # Get base value
+        value = param_config.get('value', self._get_default_value(param_name))
+        
+        # Apply any route transformations
+        if 'route' in param_config:
+            route = param_config['route']
+            # Apply route modifiers (scale, offset, etc)
+            if 'scale' in route:
+                value *= route['scale']
+            if 'offset' in route:
+                value += route['offset']
+                
+        return value
+        
+    def _get_default_value(self, param_name):
+        """Get default parameter value"""
+        if param_name == 'frequency':
+            return 1000  # Default cutoff
+        elif param_name == 'resonance':
+            return 0.7   # Default Q
+        return 0.0
 
 class SynthesisEngine:
     """Config-driven synthesis engine"""
@@ -186,7 +220,7 @@ class SynthesisEngine:
             config = config_override or self.current_config
             
             # Get waveform
-            waveform_name = config.get('waveform')
+            waveform_name = config.get('waveform', 'triangle')
             if not waveform_name:
                 if Constants.DEBUG:
                     print("[SYNTH] No waveform specified")
@@ -197,12 +231,26 @@ class SynthesisEngine:
                 if Constants.DEBUG:
                     print(f"[SYNTH] Waveform not found: {waveform_name}")
                 return None
-                
+            
+            # Get parameter configuration
+            param_config = config.get('parameters', {})
+            
+            # Create envelope
+            envelope_config = config.get('envelope', {}).get('stages', {})
+            envelope = synthio.Envelope(
+                attack_time=envelope_config.get('attack', {}).get('time', {}).get('value', 0.01),
+                decay_time=envelope_config.get('decay', {}).get('time', {}).get('value', 0.1),
+                release_time=envelope_config.get('release', {}).get('time', {}).get('value', 0.2),
+                attack_level=envelope_config.get('attack', {}).get('level', {}).get('value', 1.0),
+                sustain_level=envelope_config.get('sustain', {}).get('level', {}).get('value', 0.5)
+            )
+            
             # Create base note
             note = synthio.Note(
                 frequency=frequency,
                 waveform=waveform,
-                amplitude=amplitude
+                amplitude=amplitude,
+                envelope=envelope
             )
             
             # Apply filter if configured
@@ -215,6 +263,7 @@ class SynthesisEngine:
                 print(f"      Freq: {frequency:.2f}Hz")
                 print(f"      Amp: {amplitude:.3f}")
                 print(f"      Wave: {waveform_name}")
+                print(f"      Envelope: {envelope}")
                 print(f"      Filter: {True if note.filter else False}")
                 
             return note

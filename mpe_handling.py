@@ -40,6 +40,7 @@ Key Features:
 - Support for complex modulation techniques
 """
 
+
 import time
 from fixed_point_math import FixedPoint 
 from synth_constants import Constants
@@ -75,21 +76,33 @@ class Route:
         if not isinstance(value, int):
             value = FixedPoint.from_float(value)
             
+        if Constants.DEBUG:
+            print(f"[ROUTE] Processing value:")
+            print(f"      Input: {FixedPoint.to_float(value):.3f}")
+            
         # Apply curve
         if self.curve == 'exponential':
             processed = FixedPoint.multiply(value, value)
+            if Constants.DEBUG:
+                print(f"      After exponential curve: {FixedPoint.to_float(processed):.3f}")
         elif self.curve == 'logarithmic':
             processed = FixedPoint.ONE - FixedPoint.multiply(
                 FixedPoint.ONE - value,
                 FixedPoint.ONE - value
             )
+            if Constants.DEBUG:
+                print(f"      After logarithmic curve: {FixedPoint.to_float(processed):.3f}")
         elif self.curve == 's_curve':
             x2 = FixedPoint.multiply(value, value)
             x3 = FixedPoint.multiply(x2, value)
             processed = FixedPoint.multiply(x2, FixedPoint.from_float(3.0)) - \
                        FixedPoint.multiply(x3, FixedPoint.from_float(2.0))
+            if Constants.DEBUG:
+                print(f"      After s-curve: {FixedPoint.to_float(processed):.3f}")
         else:  # linear
             processed = value
+            if Constants.DEBUG:
+                print(f"      After linear curve: {FixedPoint.to_float(processed):.3f}")
             
         # Scale to range
         range_size = self.max_value - self.min_value
@@ -105,6 +118,7 @@ class Route:
                 print(f"      Target: {self.target_id}")
                 print(f"      Input: {FixedPoint.to_float(value):.3f}")
                 print(f"      Output: {FixedPoint.to_float(self.current_value):.3f}")
+                print(f"      Final output: {FixedPoint.to_float(self.current_value):.3f}")
                 
         return self.current_value
 
@@ -201,9 +215,16 @@ class NoteState:
         # Store raw value
         self.parameter_values[source_id] = value
         
+        if Constants.DEBUG:
+            print(f"[NOTE] Processing value change:")
+            print(f"      Source: {source_id}")
+            print(f"      Raw value: {FixedPoint.to_float(value):.3f}")
+        
         # Process through all routes from this source
+        affected_targets = []
         for route in self.routes_by_source[source_id]:
             processed = route.process_value(value)
+            affected_targets.append(route.target_id)
             
             # Store processed value
             target_id = route.target_id
@@ -227,7 +248,9 @@ class NoteState:
             print(f"[NOTE] Value change processed:")
             print(f"      Source: {source_id}")
             print(f"      Value: {FixedPoint.to_float(value):.3f}")
-            print(f"      Affected targets: {[r.target_id for r in self.routes_by_source[source_id]]}")
+            print(f"      Affected targets: {affected_targets}")
+            for target in affected_targets:
+                print(f"      {target}: {FixedPoint.to_float(self.parameter_values[target]):.3f}")
             
     def get_parameter_value(self, param_id):
         """Get current value for a parameter"""
@@ -266,7 +289,10 @@ class MPEVoiceManager:
             print(f"[VOICE] Stored pending value:")
             print(f"      Channel: {channel}")
             print(f"      Source: {source_id}")
-            print(f"      Value: {value}")
+            print(f"      Raw value: {value}")
+            if isinstance(value, int):
+                normalized = FixedPoint.normalize_midi_value(value)
+                print(f"      Normalized value: {FixedPoint.to_float(normalized):.3f}")
             if control_name:
                 print(f"      Control: {control_name}")
             
@@ -408,7 +434,8 @@ class MPEMessageRouter:
         message_routes = self.current_config.get('message_routes', {})
         if msg_type not in message_routes:
             if Constants.DEBUG:
-                print(f"[ROUTER] No route found for message type: {msg_type}")
+                instrument_name = self.current_config.get('name', 'Unknown')
+                print(f"[ROUTER] {instrument_name} does not route {msg_type} messages")
             return None
             
         route = message_routes[msg_type]
@@ -427,6 +454,8 @@ class MPEMessageRouter:
                 print(f"[ROUTER] Allocating voice:")
                 print(f"      Note: {note}")
                 print(f"      Velocity: {velocity}")
+                normalized = FixedPoint.normalize_midi_value(velocity)
+                print(f"      Normalized velocity: {FixedPoint.to_float(normalized):.3f}")
             
             voice = self.voice_manager.allocate_voice(channel, note, velocity)
             return {'type': 'voice_allocated', 'voice': voice}
@@ -455,7 +484,10 @@ class MPEMessageRouter:
             if Constants.DEBUG:
                 print(f"[ROUTER] Processing controller message:")
                 print(f"      Source ID: {source_id}")
-                print(f"      Value: {value}")
+                print(f"      Raw value: {value}")
+                if isinstance(value, int):
+                    normalized = FixedPoint.normalize_midi_value(value)
+                    print(f"      Normalized value: {FixedPoint.to_float(normalized):.3f}")
                 print(f"      Target: {target}")
                 if control_name:
                     print(f"      Control: {control_name}")
