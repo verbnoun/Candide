@@ -39,35 +39,41 @@ class WaveformManager:
         
     def _process_config(self, config):
         """Create waveforms defined in config"""
-        if not config or 'waveforms' not in config:
+        if not config or 'parameters' not in config or 'waveform' not in config['parameters']:
             return
             
-        for name, waveform_def in config['waveforms'].items():
-            if 'type' not in waveform_def:
-                continue
-                
-            if Constants.DEBUG:
-                print(f"[WAVE] Creating waveform: {name}")
-                print(f"      Type: {waveform_def['type']}")
-                
-            try:
-                if waveform_def['type'] == 'sine':
-                    self._create_sine(name, waveform_def)
-                elif waveform_def['type'] == 'saw':
-                    self._create_saw(name, waveform_def)
-                elif waveform_def['type'] == 'square':
-                    self._create_square(name, waveform_def)
-                elif waveform_def['type'] == 'triangle':
-                    self._create_triangle(name, waveform_def)
-                elif waveform_def['type'] == 'custom':
-                    self._create_custom(name, waveform_def)
-            except Exception as e:
-                print(f"[ERROR] Failed to create waveform {name}: {str(e)}")
+        waveform_def = config['parameters']['waveform']
+        
+        # Extract wave details directly from config
+        wave_type = waveform_def.get('type')
+        wave_name = waveform_def.get('default')
+        
+        if Constants.DEBUG:
+            print(f"[WAVE] Creating waveform: {wave_name}")
+            print(f"      Type: {wave_type}")
+        
+        try:
+            # Dynamically create wave based on type
+            if wave_type == 'sine':
+                self._create_sine(wave_name, waveform_def)
+            elif wave_type == 'saw':
+                self._create_saw(wave_name, waveform_def)
+            elif wave_type == 'square':
+                self._create_square(wave_name, waveform_def)
+            elif wave_type == 'triangle':
+                self._create_triangle(wave_name, waveform_def)
+            elif wave_type == 'custom':
+                self._create_custom(wave_name, waveform_def)
+            else:
+                if Constants.DEBUG:
+                    print(f"[WAVE] Unsupported wave type: {wave_type}")
+        except Exception as e:
+            print(f"[ERROR] Failed to create waveform {wave_name}: {str(e)}")
                 
     def _create_sine(self, name, config):
         """Create sine waveform"""
-        size = config.get('size', Constants.WAVE_TABLE_SIZE)
-        amp = config.get('amplitude', 32767)
+        size = config['size']
+        amp = config['amplitude']
         phase = config.get('phase', 0.0)
         
         samples = array.array('h', [0] * size)
@@ -79,8 +85,8 @@ class WaveformManager:
         
     def _create_saw(self, name, config):
         """Create sawtooth waveform"""
-        size = config.get('size', Constants.WAVE_TABLE_SIZE)
-        amp = config.get('amplitude', 32767)
+        size = config['size']
+        amp = config['amplitude']
         
         samples = array.array('h', [0] * size)
         for i in range(size):
@@ -91,8 +97,8 @@ class WaveformManager:
         
     def _create_square(self, name, config):
         """Create square waveform"""
-        size = config.get('size', Constants.WAVE_TABLE_SIZE)
-        amp = config.get('amplitude', 32767)
+        size = config['size']
+        amp = config['amplitude']
         duty = config.get('duty_cycle', 0.5)
         
         samples = array.array('h', [0] * size)
@@ -105,8 +111,8 @@ class WaveformManager:
         
     def _create_triangle(self, name, config):
         """Create triangle waveform"""
-        size = config.get('size', Constants.WAVE_TABLE_SIZE)
-        amp = config.get('amplitude', 32767)
+        size = config['size']
+        amp = config['amplitude']
         
         samples = array.array('h', [0] * size)
         half_size = size // 2
@@ -123,6 +129,8 @@ class WaveformManager:
     def _create_custom(self, name, config):
         """Create custom waveform from provided samples"""
         if 'samples' not in config:
+            if Constants.DEBUG:
+                print(f"[WAVE] No samples provided for custom wave: {name}")
             return
             
         # Convert to appropriate format
@@ -131,6 +139,9 @@ class WaveformManager:
         # Validate and store
         if len(samples) > 0:
             self.waveforms[name] = samples
+        else:
+            if Constants.DEBUG:
+                print(f"[WAVE] Empty samples for custom wave: {name}")
             
     def get_waveform(self, name):
         """Get waveform by name"""

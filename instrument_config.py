@@ -99,15 +99,6 @@ class Piano(InstrumentConfig):
             # Basic Definition
             'name': "Piano",
             
-            # Sound Generation 
-            'waveforms': {
-                'triangle': {
-                    'type': 'triangle',
-                    'size': 512,
-                    'amplitude': 32767 #16bit max
-                }
-            },
-            
             # Required Parameters
             'parameters': {
                 'frequency': {
@@ -125,7 +116,10 @@ class Piano(InstrumentConfig):
                 'waveform': {
                     'synthio_param': 'waveform',
                     'default': 'triangle',
-                    'options': ['triangle']
+                    'options': ['triangle'],
+                    'type': 'triangle',
+                    'size': 512,
+                    'amplitude': 32767 #16bit max
                 }
             },
             
@@ -250,18 +244,6 @@ Basic Instrument Definition [REQUIRED]
     'name': str,        # Instrument name
     'version': str,     # Version for tracking
     
-    # Sound Generation
-    # ---------------
-    
-    # [REQUIRED] Waveform Definition
-    'waveforms': {
-        'waveform_name': {
-            'type': str,     # sine|triangle|saw|square|custom
-            'size': int,     # Buffer size (typically 512)
-            'amplitude': int  # Max 32767
-        }
-    },
-    
     # [REQUIRED] Core Parameters
     'parameters': {
         'frequency': {
@@ -275,6 +257,14 @@ Basic Instrument Definition [REQUIRED]
             'default': float,
             'range': {'min': float, 'max': float},
             'curve': str
+        },
+        'waveform': {
+            'synthio_param': 'waveform',
+            'default': str,
+            'options': [str],  # Possible waveform types
+            'type': str,       # Specific waveform type
+            'size': int,       # Buffer size (typically 512)
+            'amplitude': int   # Max amplitude (e.g., 32767 for 16-bit)
         }
     },
     

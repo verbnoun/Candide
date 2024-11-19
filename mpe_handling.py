@@ -17,7 +17,7 @@ Primary Classes:
   * Supports different curve types (linear, exponential, logarithmic)
   * Handles value scaling and transformation
 
-- NoteState: Represents complete state of a musical note
+- NoteState: Represents complete note state
   * Tracks all note parameters
   * Manages parameter routing and transformation
   * Handles note lifecycle
@@ -201,6 +201,9 @@ class NoteState:
         
     def _create_routes(self, config):
         """Create all routes defined in config"""
+        if Constants.DEBUG:
+            print("\n[ROUTE] Detailed Route Configuration:")
+        
         for route_config in config['routes']:
             # Get parameter range from config if available
             param_id = route_config.get('target')
@@ -221,6 +224,15 @@ class NoteState:
                 self.routes_by_target[route.target_id] = []
             self.routes_by_target[route.target_id].append(route)
             
+            # Enhanced logging of each route
+            if Constants.DEBUG:
+                print(f"      Route:")
+                print(f"        Source: {route.source_id}")
+                print(f"        Target: {route.target_id}")
+                print(f"        Amount: {FixedPoint.to_float(route.amount):.3f}")
+                print(f"        Curve: {route.curve}")
+                print(f"        Range: {FixedPoint.to_float(route.min_value):.3f} to {FixedPoint.to_float(route.max_value):.3f}")
+        
         if Constants.DEBUG:
             print(f"[NOTE] Created {len(self.routes_by_source)} route sources")
             print(f"      {len(self.routes_by_target)} route targets")

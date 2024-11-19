@@ -164,7 +164,6 @@ class MPESynthesizer:
         except Exception as e:
             print(f"[ERROR] Config update failed: {str(e)}")
 
-    # Rest of the class remains unchanged from the original file
     def _update_synthio_note(self, note_state):
         """Update synthio note parameters from note state"""
         if not note_state or not note_state.synth_note:
@@ -183,18 +182,34 @@ class MPESynthesizer:
                 new_value = FixedPoint.to_float(note_state.get_parameter_value(param_id))
                 current_value = getattr(note, param_def['synthio_param'])
                 
-                # Only update if changed significantly
-                if abs(new_value - current_value) > param_def.get('threshold', 0.001):
-                    setattr(note, param_def['synthio_param'], new_value)
-                    updated = True
-                    
-                    if Constants.DEBUG:
-                        print(f"[SYNTH] Updated {param_id}: {new_value:.3f}")
+                # Robust parameter update handling
+                if isinstance(current_value, (int, float)):
+                    # For numeric parameters, check for significant change
+                    if abs(new_value - current_value) > param_def.get('threshold', 0.001):
+                        setattr(note, param_def['synthio_param'], new_value)
+                        updated = True
                         
+                        if Constants.DEBUG:
+                            print(f"[SYNTH] Updated {param_id}: {new_value:.3f}")
+                
+                # For non-numeric parameters (like waveforms), skip comparison
+                elif param_id == 'waveform':
+                    # Only update if waveform type changes
+                    if new_value != current_value:
+                        waveform_array = self.waveform_manager.get_waveform(new_value)
+                        if waveform_array is not None:
+                            setattr(note, param_def['synthio_param'], waveform_array)
+                            updated = True
+                            
+                            if Constants.DEBUG:
+                                print(f"[SYNTH] Updated waveform: {new_value}")
+                
             return updated
             
         except Exception as e:
             print(f"[ERROR] Note update failed: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return False
             
     def _handle_voice_allocation(self, voice):
