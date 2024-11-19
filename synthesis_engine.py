@@ -27,6 +27,7 @@ Primary Classes:
 """
 import array
 import math
+import time
 import synthio
 from fixed_point_math import FixedPoint
 from synth_constants import Constants
@@ -223,7 +224,19 @@ class SynthesisEngine:
         
     def create_note(self, frequency, amplitude=0.0, config_override=None):
         """Create note from configuration and parameters"""
+        start_time = time.monotonic()
+        
+        if Constants.DEBUG:
+            print(f"\n[SYNTH] Entering create_note():")
+            print(f"      Frequency: {frequency:.2f} Hz")
+            print(f"      Amplitude: {amplitude:.3f}")
+            print(f"      Config Override: {bool(config_override)}")
+            print(f"[SYNTHIO] Creating note:")
+            print(f"      Frequency: {frequency}Hz")
+            print(f"      Amplitude: {amplitude}")
         if not self.current_config:
+            if Constants.DEBUG:
+                print("[SYNTH] No configuration available")
             return None
             
         try:
@@ -256,6 +269,15 @@ class SynthesisEngine:
                 sustain_level=envelope_config.get('sustain', {}).get('level', {}).get('value', 0.5)
             )
             
+            # Detailed envelope logging
+            if Constants.DEBUG:
+                print(f"[SYNTH] Envelope Configuration:")
+                print(f"      Attack Time: {envelope.attack_time:.3f}")
+                print(f"      Decay Time: {envelope.decay_time:.3f}")
+                print(f"      Release Time: {envelope.release_time:.3f}")
+                print(f"      Attack Level: {envelope.attack_level:.3f}")
+                print(f"      Sustain Level: {envelope.sustain_level:.3f}")
+            
             # Create base note
             note = synthio.Note(
                 frequency=frequency,
@@ -268,19 +290,34 @@ class SynthesisEngine:
             filter_config = config.get('filter')
             if filter_config:
                 note.filter = self.filter_manager.create_filter(filter_config)
-                
+            
             if Constants.DEBUG:
-                print(f"[SYNTH] Created note:")
+                print(f"[SYNTH] Note Creation Details:")
                 print(f"      Freq: {frequency:.2f}Hz")
                 print(f"      Amp: {amplitude:.3f}")
                 print(f"      Wave: {waveform_name}")
                 print(f"      Envelope: {envelope}")
                 print(f"      Filter: {True if note.filter else False}")
+                # Detailed envelope logging
+                print(f"      Envelope: attack={envelope.attack_time}s decay={envelope.decay_time}s sustain={envelope.sustain_level} release={envelope.release_time}s")
+                print(f"[SYNTHIO] Note created:")
+                print(f"      Note ID: {id(note)}")
+                print(f"      Waveform Length: {len(note.waveform)}")
+                print(f"      Has Envelope: {note.envelope is not None}")
+                # Log creation time
+                creation_time = time.monotonic() - start_time
+                print(f"      Creation Time: {creation_time * 1000:.2f} ms")
                 
             return note
             
         except Exception as e:
-            print(f"[ERROR] Note creation failed: {str(e)}")
+            if Constants.DEBUG:
+                print(f"[SYNTHIO] Error creating note:")
+                print(f"      Error: {str(e)}")
+                print(f"      Parameters: freq={frequency} amp={amplitude}")
+                print(f"      Has Waveform: {waveform is not None}")
+                import traceback
+                traceback.print_exc()
             return None
             
     def update_note_parameters(self, note, params):
@@ -306,6 +343,10 @@ class SynthesisEngine:
                         print(f"[SYNTH] Updated parameter:")
                         print(f"      Name: {param_name}")
                         print(f"      Value: {param_value:.3f}")
-                        
+                        print(f"[SYNTHIO] Note state:")
+                        print(f"      Frequency: {note.frequency}")
+                        print(f"      Amplitude: {note.amplitude}")
+                        print(f"      Waveform Present: {hasattr(note, 'waveform')}")
+                        print(f"      Envelope Present: {hasattr(note, 'envelope')}")
         except Exception as e:
             print(f"[ERROR] Parameter update failed: {str(e)}")

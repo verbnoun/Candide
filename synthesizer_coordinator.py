@@ -128,12 +128,13 @@ class MPESynthesizer:
                                FixedPoint.to_float(value))
             
             if Constants.DEBUG:
-                print(f"[SYNTH] Created synthio note:")
+                print(f"[SYNTHIO] Note Object Details:")
                 print(f"      Channel: {note_state.channel}")
                 print(f"      Note: {note_state.note}")
                 print(f"      Freq: {frequency:.2f}Hz")
                 print(f"      Amp: {amplitude:.3f}")
                 print(f"      Waveform: {waveform_type}")
+                print(f"      Note Object ID: {id(synth_note)}")
 
             return synth_note
 
@@ -190,7 +191,11 @@ class MPESynthesizer:
                         updated = True
                         
                         if Constants.DEBUG:
-                            print(f"[SYNTH] Updated {param_id}: {new_value:.3f}")
+                            print(f"[SYNTHIO] Updated Note Parameter:")
+                            print(f"      Parameter: {param_id}")
+                            print(f"      Old Value: {current_value:.3f}")
+                            print(f"      New Value: {new_value:.3f}")
+                            print(f"      Note Object ID: {id(note)}")
                 
                 # For non-numeric parameters (like waveforms), skip comparison
                 elif param_id == 'waveform':
@@ -202,7 +207,10 @@ class MPESynthesizer:
                             updated = True
                             
                             if Constants.DEBUG:
-                                print(f"[SYNTH] Updated waveform: {new_value}")
+                                print(f"[SYNTHIO] Waveform Updated:")
+                                print(f"      Old Waveform: {current_value}")
+                                print(f"      New Waveform: {new_value}")
+                                print(f"      Note Object ID: {id(note)}")
                 
             return updated
             
@@ -223,6 +231,12 @@ class MPESynthesizer:
             if not synth_note:
                 return
                 
+            if Constants.DEBUG:
+                print(f"[SYNTHIO] Pre-press state:")
+                print(f"      Active Notes: {len(self.synth.pressed)}")
+                print(f"      Block Count: {len(self.synth.blocks)}")
+                print(f"      Note ID: {id(synth_note)}")
+            
             # Store references
             voice.synth_note = synth_note
             self.active_notes[(voice.channel, voice.note)] = synth_note
@@ -231,6 +245,12 @@ class MPESynthesizer:
             self.synth.press(synth_note)
             self.output_manager.performance.active_voices += 1
             
+            if Constants.DEBUG:
+                print(f"[SYNTHIO] Post-press state:")
+                print(f"      Note Active: {synth_note in self.synth.pressed}")  
+                print(f"      Block Count: {len(self.synth.blocks)}")
+                print(f"      Active Notes: {len(self.synth.pressed)}")
+
             if Constants.DEBUG:
                 print(f"[SYNTH] Voice allocated ch:{voice.channel} note:{voice.note}")
                 
@@ -245,6 +265,10 @@ class MPESynthesizer:
         try:
             if Constants.DEBUG:
                 print(f"[SYNTH] Releasing voice ch:{voice.channel} note:{voice.note}")
+                print(f"[SYNTHIO] Release Details:")
+                print(f"      Note Object ID: {id(voice.synth_note)}")
+                print(f"      Frequency: {voice.synth_note.frequency:.2f}Hz")
+                print(f"      Amplitude: {voice.synth_note.amplitude:.3f}")
                 
             # Release synthio note
             self.synth.release(voice.synth_note)
@@ -256,6 +280,11 @@ class MPESynthesizer:
                 
             if self.output_manager.performance.active_voices > 0:
                 self.output_manager.performance.active_voices -= 1
+                
+            if Constants.DEBUG:
+                print(f"[SYNTHIO] Post-release state:")
+                print(f"      Active Notes: {len(self.synth.pressed)}")
+                print(f"      Block Count: {len(self.synth.blocks)}")
                 
         except Exception as e:
             print(f"[ERROR] Voice release failed: {str(e)}")
