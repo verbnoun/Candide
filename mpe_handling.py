@@ -58,13 +58,7 @@ class Route:
         self.current_value = FixedPoint.ZERO
         self.last_value = FixedPoint.ZERO
         
-        if MPE_ROUTE_DEBUG:
-            print(f"[ROUTE] Created route:")
-            print(f"      Source: {self.source_id}")
-            print(f"      Target: {self.target_id}")
-            print(f"      Amount: {FixedPoint.to_float(self.amount):.3f}")
-            print(f"      Curve: {self.curve}")
-            print(f"      Range: {FixedPoint.to_float(self.min_value):.3f} to {FixedPoint.to_float(self.max_value):.3f}")
+        # Removed debug logging from here
             
     def process_value(self, value):
         """Process value through route's curve and scaling"""
@@ -200,8 +194,7 @@ class NoteState:
         
     def _create_routes(self, config):
         """Create all routes defined in config"""
-        if MPE_ROUTE_DEBUG:
-            print("\n[ROUTE] Detailed Route Configuration:")
+        # Removed the initial debug print
         
         for route_config in config['routes']:
             # Get parameter range from config if available
@@ -225,12 +218,12 @@ class NoteState:
             
             # Enhanced logging of each route
             if MPE_ROUTE_DEBUG:
-                print(f"      Route:")
-                print(f"        Source: {route.source_id}")
-                print(f"        Target: {route.target_id}")
-                print(f"        Amount: {FixedPoint.to_float(route.amount):.3f}")
-                print(f"        Curve: {route.curve}")
-                print(f"        Range: {FixedPoint.to_float(route.min_value):.3f} to {FixedPoint.to_float(route.max_value):.3f}")
+                print(f"[ROUTE] Created Parameter Route:")
+                print(f"      Source: {route.source_id}")
+                print(f"      Target: {route.target_id}")
+                print(f"      Amount: {FixedPoint.to_float(route.amount):.3f}")
+                print(f"      Curve: {route.curve}")
+                print(f"      Range: {FixedPoint.to_float(route.min_value):.3f} to {FixedPoint.to_float(route.max_value):.3f}")
         
         if MPE_NOTE_DEBUG:
             print(f"[NOTE] Created {len(self.routes_by_source)} route sources")
@@ -411,11 +404,90 @@ class MPEMessageRouter:
                 print(f"        {msg_type}:")
                 for key, value in route.items():
                     print(f"          {key}: {value}")
+    
+    def _is_message_allowed(self, message):
+        """
+        Strictly check if a message is allowed by the configuration.
         
-    def _find_control_name(self, cc_number):
-        """Find control name for a given CC number"""
+        Filtering rules:
+        - Must have a matching message type in message_routes
+        - For CC messages, must have a matching CC number or source_id
+        - For note messages, must have a defined route
+        """
+        if not self.current_config or not message:
+            return False
+        
+        msg_type = message['type']
+        message_routes = self.current_config.get('message_routes', {})
+        
+        # Check if message type is defined in routes
+        if msg_type not in message_routes:
+            if MPE_MESSAGE_FILTER_DEBUG and MPE_FILTER_REJECT_LOG:
+                print(f"[MESSAGE FILTER] REJECT: Undefined message type '{msg_type}'")
+            return False
+        
+        route = message_routes[msg_type]
+        data = message.get('data', {})
+        
+        # Special handling for different message types
+        if msg_type == 'note_on':
+            # Notes must have a defined route
+            if not route:
+                if MPE_MESSAGE_FILTER_DEBUG and MPE_FILTER_REJECT_LOG:
+                    print("[MESSAGE FILTER] REJECT: No route defined for note_on")
+                return False
+            
+            if MPE_MESSAGE_FILTER_DEBUG and MPE_FILTER_ACCEPT_LOG:
+                print(f"[MESSAGE FILTER] ACCEPT: Note {data.get('note', 'Unknown')}")
+            return True
+        
+        elif msg_type == 'note_off':
+            # Notes must have a defined route
+            if not route:
+                if MPE_MESSAGE_FILTER_DEBUG and MPE_FILTER_REJECT_LOG:
+                    print("[MESSAGE FILTER] REJECT: No route defined for note_off")
+                return False
+            
+            if MPE_MESSAGE_FILTER_DEBUG and MPE_FILTER_ACCEPT_LOG:
+                print(f"[MESSAGE FILTER] ACCEPT: Note Off {data.get('note', 'Unknown')}")
+            return True
+        
+        elif msg_type == 'cc':
+            cc_number = data.get('number')
+            source_id = route.get('source_id')
+            
+            # Check if CC is explicitly routed
+            if cc_number is not None:
+                # Find if this CC is used in any parameter control
+                cc_used = self._is_cc_used_in_config(cc_number)
+                
+                if cc_used:
+                    if MPE_MESSAGE_FILTER_DEBUG and MPE_FILTER_ACCEPT_LOG:
+                        print(f"[MESSAGE FILTER] ACCEPT: CC {cc_number}")
+                    return True
+                else:
+                    if MPE_MESSAGE_FILTER_DEBUG and MPE_FILTER_REJECT_LOG:
+                        print(f"[MESSAGE FILTER] REJECT: Unused CC {cc_number}")
+                    return False
+            
+            # Fallback to source_id check
+            if source_id:
+                if MPE_MESSAGE_FILTER_DEBUG and MPE_FILTER_ACCEPT_LOG:
+                    print(f"[MESSAGE FILTER] ACCEPT: CC with source_id {source_id}")
+                return True
+        
+        # Default to rejection for undefined cases
+        if MPE_MESSAGE_FILTER_DEBUG and MPE_FILTER_REJECT_LOG:
+            print(f"[MESSAGE FILTER] REJECT: Undefined routing for {msg_type}")
+        return False
+    
+    def _is_cc_used_in_config(self, cc_number):
+        """
+        Check if a CC number is used in any parameter control in the configuration.
+        Checks envelope stages, filter controls, and LFO controls.
+        """
         if not self.current_config:
-            return None
+            return False
         
         # Check envelope stages
         envelope = self.current_config.get('envelope', {}).get('stages', {})
@@ -423,14 +495,14 @@ class MPEMessageRouter:
             for param_type, param_data in stage_data.items():
                 control = param_data.get('control', {})
                 if control.get('cc') == cc_number:
-                    return control.get('name', f'CC{cc_number}')
+                    return True
         
         # Check filter controls
         filter_config = self.current_config.get('filter', {})
         for param_name, param_data in filter_config.items():
             control = param_data.get('control', {})
             if control.get('cc') == cc_number:
-                return control.get('name', f'CC{cc_number}')
+                return True
         
         # Check LFO controls
         lfos = self.current_config.get('lfos', {})
@@ -438,17 +510,21 @@ class MPEMessageRouter:
             for param_name, param_data in lfo_data.items():
                 control = param_data.get('control', {})
                 if control.get('cc') == cc_number:
-                    return control.get('name', f'CC{cc_number}')
+                    return True
         
-        return f'CC{cc_number}'
-        
+        return False
+    
     def route_message(self, message):
         """Route message according to config"""
         if not message or not self.current_config:
             if MPE_ROUTER_DEBUG:
                 print("[ROUTER] No message or config")
             return None
-            
+        
+        # Strict filtering: only allow messages defined in routes
+        if not self._is_message_allowed(message):
+            return None
+        
         msg_type = message['type']
         channel = message['channel']
         data = message.get('data', {})
