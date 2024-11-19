@@ -37,22 +37,23 @@ Conversion Methods:
 """
 
 import math
+from constants import *
 
 class FixedPoint:
     """Fixed-point math utilities for audio calculations"""
-    SCALE = 1 << 16
-    MAX_VALUE = (1 << 31) - 1
-    MIN_VALUE = -(1 << 31)
+    SCALE = FIXED_POINT_SCALE
+    MAX_VALUE = FIXED_POINT_MAX_VALUE
+    MIN_VALUE = FIXED_POINT_MIN_VALUE
     
     # Pre-calculated common values
-    ONE = 1 << 16
-    HALF = 1 << 15
-    ZERO = 0
+    ONE = FIXED_POINT_ONE
+    HALF = FIXED_POINT_HALF
+    ZERO = FIXED_POINT_ZERO
     
     # Scaling factors
-    MIDI_SCALE = 1.0 / 127  # Corrected MIDI scaling to 0-1 range
-    PITCH_BEND_SCALE = 8  # 1/8192 in fixed point
-    PITCH_BEND_CENTER = 8192 << 16
+    MIDI_SCALE = MIDI_SCALE
+    PITCH_BEND_SCALE = PITCH_BEND_SCALE
+    PITCH_BEND_CENTER = PITCH_BEND_CENTER
     
     @staticmethod
     def from_float(value):

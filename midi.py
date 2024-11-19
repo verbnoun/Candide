@@ -5,7 +5,6 @@ Handles MIDI communication, message parsing, and voice state management
 for synthesizer input processing.
 
 Classes:
-- Constants: MIDI configuration and message type definitions
 - MPEVoiceState: Tracks individual MIDI voice states
 - VoiceManager: Manages active MIDI voices
 - ControllerManager: Handles MIDI controller state updates
@@ -27,47 +26,7 @@ from adafruit_midi.note_off import NoteOff
 from adafruit_midi.control_change import ControlChange
 from adafruit_midi.pitch_bend import PitchBend
 from adafruit_midi.channel_pressure import ChannelPressure
-
-class Constants:
-    DEBUG = False
-    
-    # UART/MIDI Settings
-    MIDI_BAUDRATE = 31250  # Aligned with Bartleby
-    UART_TIMEOUT = 0.001
-    RUNNING_STATUS_TIMEOUT = 0.2
-    MESSAGE_TIMEOUT = 0.05
-    BUFFER_SIZE = 4096
-    
-    # MPE Configuration
-    ZONE_MANAGER = 0       # MIDI channel 1 (zero-based) - aligned with Bartleby
-    ZONE_START = 1        # First member channel
-    ZONE_END = 15        # Last member channel
-    DEFAULT_ZONE_MEMBER_COUNT = 15
-    
-    # Default MPE Pitch Bend Ranges - aligned with Bartleby
-    MPE_MASTER_PITCH_BEND_RANGE = 2    # ±2 semitones default for Manager Channel
-    MPE_MEMBER_PITCH_BEND_RANGE = 48   # ±48 semitones default for Member Channels
-    
-    # MIDI Message Types
-    NOTE_OFF = 0x80
-    NOTE_ON = 0x90
-    POLY_PRESSURE = 0xA0
-    CONTROL_CHANGE = 0xB0
-    PROGRAM_CHANGE = 0xC0
-    CHANNEL_PRESSURE = 0xD0
-    PITCH_BEND = 0xE0
-    SYSTEM_MESSAGE = 0xF0
-    
-    # MPE Control Change Numbers - aligned with Bartleby
-    CC_TIMBRE = 74
-    
-    # RPN Messages - aligned with Bartleby
-    RPN_MSB = 0
-    RPN_LSB_MPE = 6
-    RPN_LSB_PITCH = 0
-    
-    # Expression Message Timing
-    CC_RELEASE_WINDOW = 0.05  # 50ms window for CC messages after note-off
+from constants import *
 
 class MPEVoiceState:
     """Tracks the state of an active MPE voice with all its control values"""
@@ -90,7 +49,7 @@ class MPEVoiceState:
         """Mark voice as released and record timing"""
         self.active = False
         self.release_time = time.monotonic()
-        if Constants.DEBUG:
+        if DEBUG:
             print(f"Voice released: Channel {self.channel}, Note {self.note}")
     
     def can_process_cc(self):
@@ -100,7 +59,7 @@ class MPEVoiceState:
         if self.release_time is None:
             return False
         # Allow CC processing within release window
-        return (time.monotonic() - self.release_time) <= Constants.CC_RELEASE_WINDOW
+        return (time.monotonic() - self.release_time) <= 0.05  # CC_RELEASE_WINDOW from constants
 
 class VoiceManager:
     """Manages MPE voice tracking"""
@@ -117,7 +76,7 @@ class VoiceManager:
             self.channel_notes[channel] = set()
         self.channel_notes[channel].add(note)
         
-        if Constants.DEBUG:
+        if DEBUG:
             print(f"Added voice: Channel {channel}, Note {note}")
         
         return voice
@@ -131,12 +90,12 @@ class VoiceManager:
             if channel in self.channel_notes:
                 self.channel_notes[channel].discard(note)
             
-            if Constants.DEBUG:
+            if DEBUG:
                 print(f"Released voice: Channel {channel}, Note {note}")
             
             return True
         
-        if Constants.DEBUG:
+        if DEBUG:
             print(f"Failed to release voice: Channel {channel}, Note {note} not found")
         
         return False
@@ -151,9 +110,9 @@ class VoiceManager:
         for voice_key in list(self.active_voices.keys()):
             voice = self.active_voices[voice_key]
             if (not voice.active and voice.release_time is not None and 
-                (current_time - voice.release_time) > Constants.CC_RELEASE_WINDOW):
+                (current_time - voice.release_time) > 0.05):  # CC_RELEASE_WINDOW
                 del self.active_voices[voice_key]
-                if Constants.DEBUG:
+                if DEBUG:
                     print(f"Cleaned up released voice: Channel {voice.channel}, Note {voice.note}")
 
 class ControllerManager:
@@ -193,12 +152,12 @@ class MidiUart:
         self.uart = busio.UART(
             tx=midi_tx,
             rx=midi_rx,
-            baudrate=Constants.MIDI_BAUDRATE,
-            timeout=Constants.UART_TIMEOUT
+            baudrate=MIDI_BAUDRATE,
+            timeout=UART_TIMEOUT
         )
         self.midi = MIDI(
             midi_in=self.uart,
-            in_channel=tuple(range(Constants.ZONE_MANAGER, Constants.ZONE_END + 1))
+            in_channel=tuple(range(MPEConfig.ZONE_MANAGER, MPEConfig.ZONE_END + 1))
         )
         print("UART initialized")
 
@@ -252,14 +211,14 @@ class MidiLogic:
                     event = None
 
                     # Handle different message types based on MIDI spec
-                    if msg_type == Constants.NOTE_ON:
+                    if msg_type == MidiMessageType.NOTE_ON:
                         note_byte = self.uart.read(1)
                         velocity_byte = self.uart.read(1)
                         if note_byte is None or velocity_byte is None:
                             break
                         note = note_byte[0]
                         velocity = velocity_byte[0]
-                        if Constants.DEBUG:
+                        if DEBUG:
                             print(f"Raw MIDI Message: NoteOn - Channel {channel}, Note {note}, Velocity {velocity}")
                         event = {
                             'type': 'note_on',
@@ -267,14 +226,14 @@ class MidiLogic:
                             'data': {'note': note, 'velocity': velocity}
                         }
 
-                    elif msg_type == Constants.NOTE_OFF:
+                    elif msg_type == MidiMessageType.NOTE_OFF:
                         note_byte = self.uart.read(1)
                         velocity_byte = self.uart.read(1)
                         if note_byte is None or velocity_byte is None:
                             break
                         note = note_byte[0]
                         velocity = velocity_byte[0]
-                        if Constants.DEBUG:
+                        if DEBUG:
                             print(f"Raw MIDI Message: NoteOff - Channel {channel}, Note {note}, Velocity {velocity}")
                         event = {
                             'type': 'note_off',
@@ -282,14 +241,14 @@ class MidiLogic:
                             'data': {'note': note, 'velocity': velocity}
                         }
 
-                    elif msg_type == Constants.CONTROL_CHANGE:
+                    elif msg_type == MidiMessageType.CONTROL_CHANGE:
                         control_byte = self.uart.read(1)
                         value_byte = self.uart.read(1)
                         if control_byte is None or value_byte is None:
                             break
                         control = control_byte[0]
                         value = value_byte[0]
-                        if Constants.DEBUG:
+                        if DEBUG:
                             print(f"Raw MIDI Message: ControlChange - Channel {channel}, Control {control}, Value {value}")
                         event = {
                             'type': 'cc',
@@ -297,12 +256,12 @@ class MidiLogic:
                             'data': {'number': control, 'value': value}
                         }
 
-                    elif msg_type == Constants.CHANNEL_PRESSURE:
+                    elif msg_type == MidiMessageType.CHANNEL_PRESSURE:
                         pressure_byte = self.uart.read(1)
                         if pressure_byte is None:
                             break
                         pressure = pressure_byte[0]
-                        if Constants.DEBUG:
+                        if DEBUG:
                             print(f"Raw MIDI Message: ChannelPressure - Channel {channel}, Pressure {pressure}")
                         event = {
                             'type': 'pressure',
@@ -310,7 +269,7 @@ class MidiLogic:
                             'data': {'value': pressure}
                         }
 
-                    elif msg_type == Constants.PITCH_BEND:
+                    elif msg_type == MidiMessageType.PITCH_BEND:
                         lsb_byte = self.uart.read(1)
                         msb_byte = self.uart.read(1)
                         if lsb_byte is None or msb_byte is None:
@@ -318,7 +277,7 @@ class MidiLogic:
                         lsb = lsb_byte[0]
                         msb = msb_byte[0]
                         bend_value = (msb << 7) | lsb
-                        if Constants.DEBUG:
+                        if DEBUG:
                             print(f"Raw MIDI Message: PitchBend - Channel {channel}, Value {bend_value}")
                         event = {
                             'type': 'pitch_bend',
@@ -341,7 +300,7 @@ class MidiLogic:
                         elif event['type'] == 'note_off':
                             self.voice_manager.release_voice(event['channel'], event['data']['note'])
                         elif event['type'] in ('pressure', 'pitch_bend', 'cc'):
-                            if event['type'] == 'cc' and event['data']['number'] == Constants.CC_TIMBRE:
+                            if event['type'] == 'cc' and event['data']['number'] == MidiCC.CC_TIMBRE:
                                 self.controller_manager.handle_controller_update(
                                     event['channel'],
                                     'timbre',
@@ -393,7 +352,7 @@ class MidiLogic:
                 'note': msg.note,
                 'velocity': msg.velocity
             }
-            if Constants.DEBUG:
+            if DEBUG:
                 print(f"Note On: Channel {msg.channel}, Note {msg.note}, Velocity {msg.velocity}")
         elif isinstance(msg, NoteOff):
             event['type'] = 'note_off'
@@ -401,19 +360,19 @@ class MidiLogic:
                 'note': msg.note,
                 'velocity': msg.velocity
             }
-            if Constants.DEBUG:
+            if DEBUG:
                 print(f"Note Off: Channel {msg.channel}, Note {msg.note}, Velocity {msg.velocity}")
         elif isinstance(msg, ChannelPressure):
             event['type'] = 'pressure'
             event['data'] = {'value': msg.pressure}
-            if Constants.DEBUG:
+            if DEBUG:
                 print(f"Channel Pressure: Channel {msg.channel}, Pressure {msg.pressure}")
         elif isinstance(msg, PitchBend):
             event['type'] = 'pitch_bend'
             event['data'] = {
                 'value': msg.pitch_bend
             }
-            if Constants.DEBUG:
+            if DEBUG:
                 print(f"Pitch Bend: Channel {msg.channel}, Value {msg.pitch_bend}")
         elif isinstance(msg, ControlChange):
             event['type'] = 'cc'
@@ -421,12 +380,12 @@ class MidiLogic:
                 'number': msg.control,
                 'value': msg.value
             }
-            if Constants.DEBUG:
+            if DEBUG:
                 print(f"Control Change: Channel {msg.channel}, Control {msg.control}, Value {msg.value}")
 
         return event
 
     def cleanup(self):
         """Clean shutdown - no need to cleanup UART as it's shared"""
-        if Constants.DEBUG:
+        if DEBUG:
             print("\nCleaning up MIDI system...")

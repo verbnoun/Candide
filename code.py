@@ -13,11 +13,6 @@ Key Responsibilities:
 - Provide robust error handling and recovery mechanisms
 
 Primary Classes:
-- Constants:
-  * Global configuration parameters
-  * Hardware and communication settings
-  * Debug and timing configurations
-
 - TransportManager:
   * Manages UART communication infrastructure
   * Handles low-level transport layer operations
@@ -57,48 +52,14 @@ import busio
 import digitalio
 import time
 from synthesizer_coordinator import MPESynthesizer
-from hardware import RotaryEncoderHandler, VolumePotHandler, Constants as HWConstants
+from hardware import RotaryEncoderHandler, VolumePotHandler
 from instrument_config import create_instrument, list_instruments
 from midi import MidiLogic
 from output_system import AudioOutputManager
-
-class Constants:
-    DEBUG = True
-    
-    # Hardware Setup
-    SETUP_DELAY = 0.1  # in seconds
-    
-    # UART/MIDI Pins
-    UART_TX = board.GP16
-    UART_RX = board.GP17
-    
-    # Connection
-    DETECT_PIN = board.GP22
-    MESSAGE_TIMEOUT = 0.05  # in seconds
-    HELLO_INTERVAL = 0.5  # in seconds
-    HEARTBEAT_INTERVAL = 1.0  # in seconds
-    HANDSHAKE_TIMEOUT = 5.0  # in seconds
-    HANDSHAKE_MAX_RETRIES = 10
-    
-    # Connection Constants
-    STARTUP_DELAY = 1.0  # in seconds
-    RETRY_DELAY = 5.0  # in seconds
-    RETRY_INTERVAL = 0.25  # in seconds
-    ERROR_RECOVERY_DELAY = 0.5  # in seconds
-    BUFFER_CLEAR_TIMEOUT = 0.1  # in seconds
-    MAX_RETRIES = 3
-    
-    # UART Settings
-    UART_BAUDRATE = 31250
-    UART_TIMEOUT = 0.001  # in seconds
-    
-    # MIDI CC for Handshake
-    HANDSHAKE_CC = 119
-    HANDSHAKE_VALUE = 42
-    WELCOME_VALUE = 43
+from constants import *
 
 class TransportManager:
-    def __init__(self, tx_pin, rx_pin, baudrate=31250, timeout=0.001):
+    def __init__(self, tx_pin, rx_pin, baudrate=MIDI_BAUDRATE, timeout=UART_TIMEOUT):
         print("Initializing shared transport...")
         self.uart = busio.UART(
             tx=tx_pin,
@@ -116,7 +77,7 @@ class TransportManager:
         
     def flush_buffers(self):
         start_time = time.monotonic()
-        while time.monotonic() - start_time < Constants.BUFFER_CLEAR_TIMEOUT:
+        while time.monotonic() - start_time < BUFFER_CLEAR_TIMEOUT:
             if self.uart.in_waiting:
                 self.uart.read()
             else:
@@ -135,7 +96,7 @@ class TextUart:
 
     def write(self, message):
         current_time = time.monotonic()
-        delay_needed = Constants.MESSAGE_TIMEOUT - (current_time - self.last_write)
+        delay_needed = MESSAGE_TIMEOUT - (current_time - self.last_write)
         if delay_needed > 0:
             time.sleep(delay_needed)
             
@@ -154,10 +115,10 @@ class HardwareManager:
 
     def _setup_hardware(self):
         self.encoder = RotaryEncoderHandler(
-            HWConstants.INSTRUMENT_ENC_CLK,
-            HWConstants.INSTRUMENT_ENC_DT
+            INSTRUMENT_ENC_CLK,
+            INSTRUMENT_ENC_DT
         )
-        self.volume_pot = VolumePotHandler(HWConstants.VOLUME_POT)
+        self.volume_pot = VolumePotHandler(VOLUME_POT)
 
     def get_initial_volume(self):
         return self.volume_pot.normalize_value(self.volume_pot.pot.value)
@@ -239,28 +200,22 @@ class SynthManager:
         # Join assignments with commas
         config_str = "cc:" + ",".join(assignments)
         
-        if Constants.DEBUG:
+        if DEBUG:
             print(f"Sending CC config: {config_str}")
             
         return config_str
 
 class CandideConnectionManager:
-    STANDALONE = 0
-    DETECTED = 1
-    HANDSHAKING = 2
-    CONNECTED = 3
-    RETRY_DELAY = 4
-    
     def __init__(self, text_uart, synth_manager, transport_manager):
         self.uart = text_uart
         self.synth_manager = synth_manager
         self.transport = transport_manager
         
-        self.detect_pin = digitalio.DigitalInOut(Constants.DETECT_PIN)
+        self.detect_pin = digitalio.DigitalInOut(DETECT_PIN)
         self.detect_pin.direction = digitalio.Direction.INPUT
         self.detect_pin.pull = digitalio.Pull.DOWN
         
-        self.state = self.STANDALONE
+        self.state = ConnectionState.STANDALONE
         self.last_hello_time = 0
         self.last_heartbeat_time = 0
         self.handshake_start_time = 0
@@ -273,37 +228,37 @@ class CandideConnectionManager:
         current_time = time.monotonic()
         
         if not self.detect_pin.value:
-            if self.state != self.STANDALONE:
+            if self.state != ConnectionState.STANDALONE:
                 self._handle_disconnection()
             return
             
-        if self.state == self.STANDALONE and self.detect_pin.value:
+        if self.state == ConnectionState.STANDALONE and self.detect_pin.value:
             self._handle_initial_detection()
             
-        elif self.state == self.DETECTED:
-            if current_time - self.last_hello_time >= Constants.HELLO_INTERVAL:
-                if self.hello_count < Constants.HANDSHAKE_MAX_RETRIES:
+        elif self.state == ConnectionState.DETECTED:
+            if current_time - self.last_hello_time >= HELLO_INTERVAL:
+                if self.hello_count < HANDSHAKE_MAX_RETRIES:
                     self._send_hello()
                     self.hello_count += 1
                 else:
                     print("Max hello retries reached - entering retry delay")
-                    self.state = self.RETRY_DELAY
+                    self.state = ConnectionState.RETRY_DELAY
                     self.retry_start_time = current_time
                     self.hello_count = 0
                     
-        elif self.state == self.RETRY_DELAY:
-            if current_time - self.retry_start_time >= Constants.RETRY_DELAY:
+        elif self.state == ConnectionState.RETRY_DELAY:
+            if current_time - self.retry_start_time >= RETRY_DELAY:
                 print("Retry delay complete - returning to DETECTED state")
-                self.state = self.DETECTED
+                self.state = ConnectionState.DETECTED
                 
-        elif self.state == self.HANDSHAKING:
-            if current_time - self.handshake_start_time >= Constants.HANDSHAKE_TIMEOUT:
+        elif self.state == ConnectionState.HANDSHAKING:
+            if current_time - self.handshake_start_time >= HANDSHAKE_TIMEOUT:
                 print("Handshake timeout - returning to DETECTED state")
-                self.state = self.DETECTED
+                self.state = ConnectionState.DETECTED
                 self.hello_count = 0
                 
-        elif self.state == self.CONNECTED:
-            if current_time - self.last_heartbeat_time >= Constants.HEARTBEAT_INTERVAL:
+        elif self.state == ConnectionState.CONNECTED:
+            if current_time - self.last_heartbeat_time >= HEARTBEAT_INTERVAL:
                 self._send_heartbeat()
                 
     def handle_midi_message(self, event):
@@ -311,31 +266,31 @@ class CandideConnectionManager:
             return
             
         if (event['channel'] == 0 and 
-            event['data']['number'] == Constants.HANDSHAKE_CC):
+            event['data']['number'] == HANDSHAKE_CC):
             
-            if (event['data']['value'] == Constants.HANDSHAKE_VALUE and 
-                self.state == self.DETECTED):
+            if (event['data']['value'] == HANDSHAKE_VALUE and 
+                self.state == ConnectionState.DETECTED):
                 print("Handshake CC received - sending config")
-                self.state = self.HANDSHAKING
+                self.state = ConnectionState.HANDSHAKING
                 self.handshake_start_time = time.monotonic()
                 # Send properly formatted CC config
                 config_str = self.synth_manager.format_cc_config()
                 self.uart.write(f"{config_str}\n")
-                self.state = self.CONNECTED
+                self.state = ConnectionState.CONNECTED
                 print("Connection established")
                 
     def _handle_initial_detection(self):
         print("Base station detected - initializing connection")
         self.transport.flush_buffers()
-        time.sleep(Constants.SETUP_DELAY)
-        self.state = self.DETECTED
+        time.sleep(SETUP_DELAY)
+        self.state = ConnectionState.DETECTED
         self.hello_count = 0
         self._send_hello()
         
     def _handle_disconnection(self):
         print("Base station disconnected")
         self.transport.flush_buffers()
-        self.state = self.STANDALONE
+        self.state = ConnectionState.STANDALONE
         self.hello_count = 0
         
     def _send_hello(self):
@@ -357,7 +312,7 @@ class CandideConnectionManager:
             self.detect_pin.deinit()
 
     def is_connected(self):
-        return self.state == self.CONNECTED
+        return self.state == ConnectionState.CONNECTED
 
 class Candide:
     def __init__(self):
@@ -370,10 +325,10 @@ class Candide:
         self.synth_manager = SynthManager(self.output_manager)
         
         self.transport = TransportManager(
-            tx_pin=Constants.UART_TX,
-            rx_pin=Constants.UART_RX,
-            baudrate=Constants.UART_BAUDRATE,
-            timeout=Constants.UART_TIMEOUT
+            tx_pin=UART_TX,
+            rx_pin=UART_RX,
+            baudrate=UART_BAUDRATE,
+            timeout=UART_TIMEOUT
         )
         
         shared_uart = self.transport.get_uart()
@@ -394,7 +349,7 @@ class Candide:
 
         try:
             initial_volume = self.hardware_manager.get_initial_volume()
-            if Constants.DEBUG:
+            if DEBUG:
                 print(f"Initial volume: {initial_volume:.3f}")
             self.output_manager.set_volume(initial_volume)
             print("\nCandide (v1.0) is awake!... ( ◔◡◔)♬")
@@ -408,13 +363,13 @@ class Candide:
             
         self.connection_manager.handle_midi_message(event)
             
-        if self.connection_manager.state in [CandideConnectionManager.HANDSHAKING, CandideConnectionManager.CONNECTED]:
+        if self.connection_manager.state in [ConnectionState.HANDSHAKING, ConnectionState.CONNECTED]:
             if event['type'] != 'note':
                 self.synth_manager.process_midi_events([event])
 
     def _check_volume(self):
         current_time = time.monotonic()
-        if current_time - self.last_volume_scan >= HWConstants.UPDATE_INTERVAL:
+        if current_time - self.last_volume_scan >= UPDATE_INTERVAL:
             new_volume = self.hardware_manager.read_pot()
             if new_volume is not None:
                 self.output_manager.set_volume(new_volume)
@@ -422,13 +377,13 @@ class Candide:
 
     def _check_encoder(self):
         current_time = time.monotonic()
-        if current_time - self.last_encoder_scan >= HWConstants.ENCODER_SCAN_INTERVAL:
+        if current_time - self.last_encoder_scan >= ENCODER_SCAN_INTERVAL:
             events = self.hardware_manager.read_encoder()
             
-            if Constants.DEBUG and events:
+            if DEBUG and events:
                 print(f"Encoder events: {events}")
             
-            if self.connection_manager.state in [CandideConnectionManager.STANDALONE, CandideConnectionManager.CONNECTED]:
+            if self.connection_manager.state in [ConnectionState.STANDALONE, ConnectionState.CONNECTED]:
                 for event_type, direction in events:
                     if event_type == 'instrument_change':
                         instruments = list_instruments()
@@ -437,7 +392,7 @@ class Candide:
                         new_instrument = instruments[new_idx].lower().replace(' ', '_')
                         print(f"Switching to instrument: {new_instrument}")
                         self.synth_manager.set_instrument(new_instrument)
-                        if self.connection_manager.state == CandideConnectionManager.CONNECTED:
+                        if self.connection_manager.state == ConnectionState.CONNECTED:
                             config_str = self.synth_manager.format_cc_config()
                             self.text_uart.write(f"{config_str}\n")
             

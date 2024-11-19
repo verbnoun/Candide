@@ -13,11 +13,6 @@ Key Responsibilities:
 - Enable precise input reading and filtering
 
 Primary Classes:
-- Constants:
-  * Centralized hardware configuration parameters
-  * Defines pin assignments, timing intervals
-  * Provides debug and calibration settings
-
 - VolumePotHandler:
   * Reads and normalizes volume potentiometer input
   * Applies input filtering and thresholding
@@ -39,29 +34,7 @@ Key Features:
 import board
 import analogio
 import rotaryio
-
-class Constants:
-    """Hardware configuration constants for the synthesizer"""
-    # Debug Settings
-    DEBUG = False
-    
-    # ADC Constants
-    ADC_MAX = 65535
-    ADC_MIN = 1
-    
-    # Pin Definitions
-    INSTRUMENT_ENC_CLK = board.GP20
-    INSTRUMENT_ENC_DT = board.GP21
-    VOLUME_POT = board.GP26
-    
-    # Timing Intervals
-    UPDATE_INTERVAL = 0.01
-    ENCODER_SCAN_INTERVAL = 0.001
-    
-    # Potentiometer Constants
-    POT_THRESHOLD = 800
-    POT_LOWER_TRIM = 0.05
-    POT_UPPER_TRIM = 0.0
+from constants import *
 
 class VolumePotHandler:
     """Handles volume potentiometer input processing"""
@@ -72,15 +45,15 @@ class VolumePotHandler:
     
     def normalize_value(self, value):
         """Convert ADC value to normalized range (0.0-1.0)"""
-        clamped_value = max(min(value, Constants.ADC_MAX), Constants.ADC_MIN)
-        normalized = (clamped_value - Constants.ADC_MIN) / (Constants.ADC_MAX - Constants.ADC_MIN)
+        clamped_value = max(min(value, ADC_MAX), ADC_MIN)
+        normalized = (clamped_value - ADC_MIN) / (ADC_MAX - ADC_MIN)
         
-        if normalized < Constants.POT_LOWER_TRIM:
+        if normalized < POT_LOWER_TRIM:
             normalized = 0
-        elif normalized > (1 - Constants.POT_UPPER_TRIM):
+        elif normalized > (1 - POT_UPPER_TRIM):
             normalized = 1
         else:
-            normalized = (normalized - Constants.POT_LOWER_TRIM) / (1 - Constants.POT_LOWER_TRIM - Constants.POT_UPPER_TRIM)
+            normalized = (normalized - POT_LOWER_TRIM) / (1 - POT_LOWER_TRIM - POT_UPPER_TRIM)
         
         return round(normalized, 5)
 
@@ -94,9 +67,9 @@ class VolumePotHandler:
                 normalized_new = self.normalize_value(raw_value)
                 self.last_value = raw_value
                 return normalized_new
-            elif change < Constants.POT_THRESHOLD:
+            elif change < POT_THRESHOLD:
                 self.is_active = False
-        elif change > Constants.POT_THRESHOLD:
+        elif change > POT_THRESHOLD:
             self.is_active = True
             normalized_new = self.normalize_value(raw_value)
             self.last_value = raw_value
@@ -135,7 +108,7 @@ class RotaryEncoderHandler:
             # Calculate direction (-1 for left, +1 for right)
             direction = 1 if current_raw_position > self.last_position else -1
 
-            if Constants.DEBUG:
+            if DEBUG:
                 print(f"Encoder movement: pos={current_raw_position}, last={self.last_position}, dir={direction}")
             
             # Add event with direction

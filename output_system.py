@@ -19,7 +19,7 @@ Primary Classes:
 import audiobusio
 import audiomixer
 import time
-from constants import Constants
+from constants import *
 from fixed_point_math import FixedPoint
 
 class AudioOutputManager:
@@ -36,24 +36,24 @@ class AudioOutputManager:
         try:
             # Set up I2S output
             self.audio = audiobusio.I2SOut(
-                bit_clock=Constants.I2S_BIT_CLOCK,
-                word_select=Constants.I2S_WORD_SELECT,
-                data=Constants.I2S_DATA
+                bit_clock=I2S_BIT_CLOCK,
+                word_select=I2S_WORD_SELECT,
+                data=I2S_DATA
             )
 
             # Initialize mixer with stereo output
             self.mixer = audiomixer.Mixer(
-                sample_rate=Constants.SAMPLE_RATE,
-                buffer_size=Constants.AUDIO_BUFFER_SIZE,
+                sample_rate=SAMPLE_RATE,
+                buffer_size=AUDIO_BUFFER_SIZE,
                 channel_count=2  # Stereo output
             )
 
             # Start audio
             self.audio.play(self.mixer)
 
-            if Constants.OUTPUT_AUDIO_DEBUG:
+            if OUTPUT_AUDIO_DEBUG:
                 print("[AUDIO] Initialized: rate={0}Hz, buffer={1}".format(
-                    Constants.SAMPLE_RATE, Constants.AUDIO_BUFFER_SIZE))
+                    SAMPLE_RATE, AUDIO_BUFFER_SIZE))
 
         except Exception as e:
             print("[ERROR] Audio setup failed: {0}".format(str(e)))
@@ -72,7 +72,7 @@ class AudioOutputManager:
                 # Apply current volume
                 self.set_volume(FixedPoint.to_float(self.volume))
 
-                if Constants.OUTPUT_AUDIO_DEBUG:
+                if OUTPUT_AUDIO_DEBUG:
                     print("[AUDIO] Synthesizer attached to mixer")
 
         except Exception as e:
@@ -89,7 +89,7 @@ class AudioOutputManager:
                 self.mixer.voice[0].level = FixedPoint.to_float(new_volume)
 
                 # Log significant changes
-                if Constants.OUTPUT_AUDIO_DEBUG:
+                if OUTPUT_AUDIO_DEBUG:
                     current_vol = FixedPoint.to_float(new_volume)
                     print("[AUDIO] Volume set to {0:.2f}".format(current_vol))
 
@@ -115,12 +115,12 @@ class AudioOutputManager:
 
     def cleanup(self):
         """Clean shutdown of audio system"""
-        if Constants.OUTPUT_AUDIO_DEBUG:
+        if OUTPUT_AUDIO_DEBUG:
             print("[AUDIO] Starting cleanup...")
 
         if self.mixer:
             try:
-                if Constants.OUTPUT_AUDIO_DEBUG:
+                if OUTPUT_AUDIO_DEBUG:
                     print("[AUDIO] Shutting down mixer...")
                 self.mixer.voice[0].level = 0
                 time.sleep(0.01)  # Allow final samples
@@ -129,12 +129,12 @@ class AudioOutputManager:
 
         if self.audio:
             try:
-                if Constants.OUTPUT_AUDIO_DEBUG:
+                if OUTPUT_AUDIO_DEBUG:
                     print("[AUDIO] Shutting down I2S...")
                 self.audio.stop()
                 self.audio.deinit()
             except Exception as e:
                 print("[ERROR] I2S cleanup failed: {0}".format(str(e)))
 
-        if Constants.OUTPUT_AUDIO_DEBUG:
+        if OUTPUT_AUDIO_DEBUG:
             print("[AUDIO] Cleanup complete")

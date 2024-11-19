@@ -40,9 +40,10 @@ Key Features:
 """
 import array
 import math
+import time
 import synthio
 from fixed_point_math import FixedPoint
-from constants import Constants
+from constants import *
 
 class ModulationSource:
     """Base class for any config-defined modulation source"""
@@ -87,7 +88,7 @@ class LFO(ModulationSource):
         # Add to synth blocks
         synth.blocks.append(self.lfo)
         
-        if Constants.MOD_LFO_DEBUG:
+        if MOD_LFO_DEBUG:
             print(f"[LFO] Created: {self.source_id}")
             print(f"      Rate: {config.get('rate', 1.0)}Hz")
             print(f"      Scale: {config.get('scale', 1.0)}")
@@ -149,7 +150,7 @@ class Envelope(ModulationSource):
         self.stage_target_level = FixedPoint.ZERO
         self.gate_active = False
         
-        if Constants.MOD_ENV_DEBUG:
+        if MOD_ENV_DEBUG:
             print(f"[ENV] Created: {self.source_id}")
             print(f"      Stages: {list(self.stages.keys())}")
             
@@ -175,7 +176,7 @@ class Envelope(ModulationSource):
         self.stage_start_level = FixedPoint.ZERO
         self.stage_target_level = self._get_stage_level('attack')
         
-        if Constants.MOD_ENV_DEBUG:
+        if MOD_ENV_DEBUG:
             print(f"[ENV] Gate on: {self.source_id}")
         
     def gate_off(self):
@@ -187,7 +188,7 @@ class Envelope(ModulationSource):
             self.stage_start_level = self.current_value
             self.stage_target_level = FixedPoint.ZERO
             
-            if Constants.MOD_ENV_DEBUG:
+            if MOD_ENV_DEBUG:
                 print(f"[ENV] Gate off: {self.source_id}")
         
     def update(self):
@@ -242,7 +243,7 @@ class Envelope(ModulationSource):
         self.stage_start_level = self.current_value
         self.stage_target_level = self._get_stage_level(stage)
         
-        if Constants.MOD_ENV_DEBUG:
+        if MOD_ENV_DEBUG:
             print(f"[ENV] Stage change: {self.source_id}")
             print(f"      Stage: {stage}")
             print(f"      Target: {FixedPoint.to_float(self.stage_target_level):.3f}")
@@ -276,7 +277,7 @@ class ModulationManager:
                     
                 self.sources[source.source_id] = source
                 
-                if Constants.MOD_DEBUG:
+                if MOD_DEBUG:
                     print(f"[MOD] Created source: {source.source_id}")
                     print(f"      Type: {source_config['type']}")
                     
