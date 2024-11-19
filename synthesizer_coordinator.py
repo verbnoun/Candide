@@ -243,7 +243,6 @@ class MPESynthesizer:
             
             # Start note
             self.synth.press(synth_note)
-            self.output_manager.performance.active_voices += 1
             
             if SYNTH_IO_DEBUG:
                 print(f"[SYNTHIO] Post-press state:")
@@ -278,9 +277,6 @@ class MPESynthesizer:
             key = (voice.channel, voice.note)
             if key in self.active_notes:
                 del self.active_notes[key]
-                
-            if self.output_manager.performance.active_voices > 0:
-                self.output_manager.performance.active_voices -= 1
                 
             if SYNTH_IO_DEBUG:
                 print(f"[SYNTH IO] Post-release state:")

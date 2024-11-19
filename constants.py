@@ -9,6 +9,8 @@ import board
 
 # Debug Flags
 DEBUG = True
+HARDWARE_DEBUG = False
+MIDI_DEBUG = True
 MOD_DEBUG = False
 MOD_LFO_DEBUG = False
 MOD_ENV_DEBUG = False

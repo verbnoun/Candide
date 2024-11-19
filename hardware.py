@@ -108,7 +108,7 @@ class RotaryEncoderHandler:
             # Calculate direction (-1 for left, +1 for right)
             direction = 1 if current_raw_position > self.last_position else -1
 
-            if DEBUG:
+            if HARDWARE_DEBUG:
                 print(f"Encoder movement: pos={current_raw_position}, last={self.last_position}, dir={direction}")
             
             # Add event with direction
