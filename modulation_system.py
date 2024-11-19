@@ -1,4 +1,43 @@
-"""Config-driven modulation system"""
+"""
+Modulation System Management Module
+
+This module provides advanced modulation capabilities for 
+synthesizer parameters, enabling complex sound shaping and 
+dynamic parameter manipulation.
+
+Key Responsibilities:
+- Implement sophisticated modulation algorithms
+- Manage diverse modulation sources and destinations
+- Apply time-varying transformations to synthesizer parameters
+- Support multiple modulation types (LFO, envelope, etc.)
+- Enable runtime configuration of modulation behavior
+
+Primary Classes:
+- ModulationSource: Base class for modulation sources
+  * Defines common modulation source behavior
+  * Supports configurable output ranges
+
+- LFO (Low-Frequency Oscillator): 
+  * Generates periodic waveform-based modulation
+  * Supports multiple waveform shapes
+  * Configurable rate, scale, and offset
+
+- Envelope: 
+  * Generates multi-stage dynamic parameter changes
+  * Supports attack, decay, sustain, release stages
+  * Handles gate-based triggering
+
+- ModulationManager:
+  * Creates and manages multiple modulation sources
+  * Provides centralized configuration and update mechanism
+
+Key Features:
+- Dynamic waveform generation
+- Flexible modulation routing
+- Precise fixed-point value handling
+- Configurable modulation sources
+- Support for complex sound design techniques
+"""
 import array
 import math
 import synthio

@@ -1,12 +1,42 @@
 """
 Instrument Configuration System
+This module provides a comprehensive and flexible configuration 
+system for defining synthesizer instrument parameters, routing, 
+and modulation capabilities.
 
-This module defines complete synthesis configuration including:
-- Signal flow and routing
-- Parameter and CC mappings grouped by feature
-- Modulation sources and targets
-- Default values
+Key Responsibilities:
+- Define instrument-specific configuration structures
+- Manage signal flow and parameter routing
+- Support dynamic MIDI control change (CC) mapping
+- Enable complex modulation and parameter interactions
+- Provide instrument preset management
+
+Primary Classes:
+- InstrumentConfig: Base class for instrument configurations
+  * Handles configuration generation
+  * Manages CC routing and control discovery
+  * Provides configuration formatting methods
+
+- EvErYtHiNg: Comprehensive instrument configuration
+  * Demonstrates full configuration capabilities
+  * Includes detailed parameter, routing, and modulation settings
+
+- Piano: Minimal piano instrument configuration
+  * Provides a simplified instrument configuration
+  * Demonstrates basic parameter and routing setup
+
+Key Features:
+- Flexible configuration definition
+- Dynamic CC routing and control mapping
+- Support for complex modulation routing
+- Instrument preset management
+- Extensible configuration system
+
+Utility Functions:
+- create_instrument(): Factory function for instrument creation
+- list_instruments(): Returns available instrument configurations
 """
+
 
 from synth_constants import ModSource, ModTarget
 

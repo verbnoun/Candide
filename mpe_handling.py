@@ -1,3 +1,45 @@
+"""
+MPE (Multidimensional Polyphonic Expression) Handling Module
+
+This module provides a sophisticated system for managing 
+complex MIDI message routing, voice state tracking, and 
+parameter modulation for expressive musical control.
+
+Key Responsibilities:
+- Manage intricate MIDI message routing
+- Track detailed note and voice states
+- Handle parameter modulation and routing
+- Support complex configuration-driven parameter transformations
+- Enable per-note expressivity
+
+Primary Classes:
+- Route: Manages single value routing with configurable behavior
+  * Supports different curve types (linear, exponential, logarithmic)
+  * Handles value scaling and transformation
+
+- NoteState: Represents complete state of a musical note
+  * Tracks all note parameters
+  * Manages parameter routing and transformation
+  * Handles note lifecycle
+
+- MPEVoiceManager: Coordinates voice allocation and management
+  * Creates and tracks active voices
+  * Manages pending parameter values
+  * Handles voice lifecycle
+
+- MPEMessageRouter: Interprets and routes MIDI messages
+  * Translates MIDI events into synthesizer actions
+  * Supports complex, configuration-driven routing
+  * Manages message processing and voice interactions
+
+Key Features:
+- Flexible, config-driven parameter routing
+- Advanced value transformation
+- Precise fixed-point mathematics
+- Comprehensive MIDI message handling
+- Support for complex modulation techniques
+"""
+
 import time
 from fixed_point_math import FixedPoint 
 from synth_constants import Constants

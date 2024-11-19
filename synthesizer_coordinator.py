@@ -1,4 +1,24 @@
-"""Synthesizer coordinator that interfaces note state with synthio"""
+"""
+Synthesizer Coordinator Module
+
+This module manages the synthesis of musical notes using MPE (Multidimensional Polyphonic Expression) 
+and interfaces between note state management and the synthio sound generation library.
+
+Key Responsibilities:
+- Coordinate MPE voice management
+- Create and manage synthio notes
+- Handle instrument configuration
+- Process MIDI events
+- Manage voice allocation and release
+
+Primary Class:
+- MPESynthesizer: Manages the entire synthesis process, including:
+  * Initializing synthio synthesizer
+  * Managing voice allocation
+  * Routing MPE messages
+  * Creating and updating synthio notes based on instrument configuration
+  * Handling note lifecycle (creation, update, release)
+"""
 import time
 import synthio
 from synth_constants import Constants

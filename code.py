@@ -1,3 +1,57 @@
+"""
+Main Execution Module for Candide Synthesizer
+
+This module serves as the comprehensive orchestration center 
+for the Candide Synthesizer, managing complex interactions 
+between hardware, MIDI, audio, and system components.
+
+Key Responsibilities:
+- Coordinate hardware input processing
+- Manage MIDI communication and event handling
+- Control synthesizer state and instrument selection
+- Handle system connection and communication protocols
+- Provide robust error handling and recovery mechanisms
+
+Primary Classes:
+- Constants:
+  * Global configuration parameters
+  * Hardware and communication settings
+  * Debug and timing configurations
+
+- TransportManager:
+  * Manages UART communication infrastructure
+  * Handles low-level transport layer operations
+  * Provides buffer management and cleanup
+
+- HardwareManager:
+  * Initializes and manages hardware interfaces
+  * Handles rotary encoder and volume potentiometer
+  * Provides hardware input reading capabilities
+
+- SynthManager:
+  * Coordinates synthesizer instrument configuration
+  * Manages instrument selection and MIDI event processing
+  * Interfaces with audio output system
+
+- CandideConnectionManager:
+  * Manages connection state with base station
+  * Handles handshake and communication protocols
+  * Provides connection status tracking
+
+- Candide:
+  * Primary system coordinator
+  * Integrates all system components
+  * Manages main execution loop and system lifecycle
+
+Key Features:
+- Flexible hardware input processing
+- Advanced MIDI event handling
+- Dynamic instrument selection
+- Robust communication protocols
+- Comprehensive error management
+- Configurable debug capabilities
+"""
+
 import board
 import busio
 import digitalio

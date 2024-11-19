@@ -1,3 +1,41 @@
+"""
+Fixed-Point Mathematics Module
+
+This module provides robust fixed-point arithmetic 
+capabilities for high-performance, low-overhead numerical 
+computations in the Candide Synthesizer.
+
+Key Responsibilities:
+- Implement efficient fixed-point mathematical operations
+- Provide precise numerical computations with controlled precision
+- Support complex mathematical transformations
+- Enable consistent numerical representation across system
+- Handle MIDI and audio-specific numerical conversions
+
+Primary Class:
+- FixedPoint:
+  * Represents fixed-point numerical values
+  * Supports arithmetic operations with controlled precision
+  * Enables efficient mathematical computations
+  * Minimizes floating-point overhead
+  * Provides specialized audio and MIDI conversion methods
+
+Key Features:
+- Precise numerical representation
+- Efficient mathematical operations
+- Low computational overhead
+- Consistent numerical behavior
+- Specialized MIDI and audio conversions
+- Robust error handling and bounds checking
+
+Conversion Methods:
+- from_float: Convert floating-point to fixed-point
+- to_float: Convert fixed-point to floating-point
+- normalize_midi_value: Convert MIDI values to normalized range
+- normalize_pitch_bend: Convert pitch bend values
+- midi_note_to_frequency: Convert MIDI notes to frequencies
+"""
+
 import math
 
 class FixedPoint:

@@ -1,3 +1,40 @@
+"""
+Synthesizer Constants and Configuration Module
+
+This module defines comprehensive constants and enumerations 
+for the synthesizer system, providing centralized configuration 
+and standardized definitions for various system components.
+
+Key Responsibilities:
+- Define audio hardware configuration
+- Specify system performance parameters
+- Provide modulation source and target mappings
+- Define MIDI control change (CC) mappings
+- Enable system-wide configuration management
+
+Primary Constant Categories:
+- Audio Hardware Configuration
+- Performance Monitoring Parameters
+- Voice Management Settings
+- Modulation Source and Target Definitions
+- Filter Type Enumerations
+- MIDI Control Change Mappings
+
+Constant Classes:
+- Constants: Core system configuration parameters
+- ModSource: Modulation source enumeration
+- ModTarget: Modulation target enumeration
+- FilterType: Audio filter type definitions
+- CCMapping: MIDI Control Change number definitions
+
+Key Features:
+- Centralized configuration management
+- Standardized system-wide constants
+- Flexible and extensible design
+- Debug and performance tuning options
+- Comprehensive MIDI control mappings
+"""
+
 import board
 
 class Constants:

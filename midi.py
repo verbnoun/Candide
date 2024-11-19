@@ -1,3 +1,24 @@
+"""
+MIDI Message Processing Module
+
+Handles MIDI communication, message parsing, and voice state management 
+for synthesizer input processing.
+
+Classes:
+- Constants: MIDI configuration and message type definitions
+- MPEVoiceState: Tracks individual MIDI voice states
+- VoiceManager: Manages active MIDI voices
+- ControllerManager: Handles MIDI controller state updates
+- MidiUart: Manages UART communication for MIDI input
+- MidiLogic: Coordinates MIDI message processing
+
+Key Functions:
+- Parse raw MIDI messages
+- Track voice and controller states
+- Route MIDI events
+- Support MPE (Multidimensional Polyphonic Expression)
+"""
+
 import busio
 import time
 from adafruit_midi import MIDI

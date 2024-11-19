@@ -1,8 +1,47 @@
+"""
+Hardware Interface Management Module
+
+This module provides essential hardware interaction capabilities 
+for the Candide Synthesizer, enabling direct interface with 
+physical input components.
+
+Key Responsibilities:
+- Manage analog input from potentiometers
+- Handle rotary encoder interactions
+- Provide normalized hardware input processing
+- Support hardware-level configuration and constants
+- Enable precise input reading and filtering
+
+Primary Classes:
+- Constants:
+  * Centralized hardware configuration parameters
+  * Defines pin assignments, timing intervals
+  * Provides debug and calibration settings
+
+- VolumePotHandler:
+  * Reads and normalizes volume potentiometer input
+  * Applies input filtering and thresholding
+  * Converts raw analog values to usable range
+
+- RotaryEncoderHandler:
+  * Manages rotary encoder for instrument selection
+  * Detects rotation direction and magnitude
+  * Generates hardware interaction events
+
+Key Features:
+- Precise analog-to-digital conversion
+- Configurable input sensitivity
+- Low-overhead hardware interaction
+- Support for debug and calibration modes
+- Flexible hardware configuration
+"""
+
 import board
 import analogio
 import rotaryio
 
 class Constants:
+    """Hardware configuration constants for the synthesizer"""
     # Debug Settings
     DEBUG = False
     
@@ -25,6 +64,7 @@ class Constants:
     POT_UPPER_TRIM = 0.0
 
 class VolumePotHandler:
+    """Handles volume potentiometer input processing"""
     def __init__(self, pin):
         self.pot = analogio.AnalogIn(pin)
         self.last_value = 0
@@ -65,6 +105,7 @@ class VolumePotHandler:
         return None
 
 class RotaryEncoderHandler:
+    """Manages rotary encoder input for instrument selection"""
     def __init__(self, clk_pin, dt_pin):
         # Initialize encoder using rotaryio
         self.encoder = rotaryio.IncrementalEncoder(clk_pin, dt_pin, divisor=2)

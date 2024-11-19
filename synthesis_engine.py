@@ -1,4 +1,30 @@
-"""Config-driven synthesis engine"""
+"""
+Synthesis Engine Module
+
+This module provides advanced waveform generation, filtering, and 
+synthesis capabilities for creating complex audio signals.
+
+Key Responsibilities:
+- Generate various waveform types (sine, saw, square, triangle, custom)
+- Manage waveform creation and storage
+- Create and configure audio filters
+- Dynamically generate and modify synthesizer notes
+
+Primary Classes:
+- WaveformManager: Creates and stores different types of waveforms
+  * Supports sine, saw, square, triangle, and custom waveforms
+  * Configurable through instrument configuration
+  * Generates wavetables for synthesis
+
+- FilterManager: Creates audio filters based on configuration
+  * Supports lowpass, highpass, and bandpass filters
+  * Configurable filter frequency and resonance
+
+- SynthesisEngine: Central engine for note creation and parameter manipulation
+  * Generates notes using configured waveforms
+  * Applies filters to notes
+  * Dynamically updates note parameters
+"""
 import array
 import math
 import synthio
