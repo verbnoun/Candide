@@ -201,8 +201,6 @@ class SynthManager:
 
     def process_midi_events(self, events):
         if events:
-            if Constants.DEBUG:
-                print("MIDI messages received")
             self.synth.process_mpe_events(events)
             
     def get_current_config(self):

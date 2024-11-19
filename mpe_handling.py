@@ -43,7 +43,7 @@ Key Features:
 
 import time
 from fixed_point_math import FixedPoint 
-from synth_constants import Constants
+from constants import Constants
 
 class Route:
     """Single value route with config-defined behavior"""
@@ -59,7 +59,7 @@ class Route:
         self.current_value = FixedPoint.ZERO
         self.last_value = FixedPoint.ZERO
         
-        if Constants.DEBUG:
+        if Constants.MPE_ROUTE_DEBUG:
             print(f"[ROUTE] Created route:")
             print(f"      Source: {self.source_id}")
             print(f"      Target: {self.target_id}")
@@ -76,7 +76,7 @@ class Route:
         if not isinstance(value, int):
             value = FixedPoint.from_float(value)
             
-        if Constants.DEBUG:
+        if Constants.MPE_ROUTE_DEBUG:
             print(f"[ROUTE] Processing value:")
             print(f"      Input: {FixedPoint.to_float(value):.3f}")
             
@@ -94,25 +94,25 @@ class Route:
                        FixedPoint.multiply(x3, FixedPoint.from_float(0.166))
             # Normalize to 0-1 range
             processed = FixedPoint.multiply(processed, FixedPoint.from_float(0.0084))  # 1/e^5
-            if Constants.DEBUG:
+            if Constants.MPE_ROUTE_DEBUG:
                 print(f"      After exponential curve: {FixedPoint.to_float(processed):.3f}")
         elif self.curve == 'logarithmic':
             processed = FixedPoint.ONE - FixedPoint.multiply(
                 FixedPoint.ONE - value,
                 FixedPoint.ONE - value
             )
-            if Constants.DEBUG:
+            if Constants.MPE_ROUTE_DEBUG:
                 print(f"      After logarithmic curve: {FixedPoint.to_float(processed):.3f}")
         elif self.curve == 's_curve':
             x2 = FixedPoint.multiply(value, value)
             x3 = FixedPoint.multiply(x2, value)
             processed = FixedPoint.multiply(x2, FixedPoint.from_float(3.0)) - \
                        FixedPoint.multiply(x3, FixedPoint.from_float(2.0))
-            if Constants.DEBUG:
+            if Constants.MPE_ROUTE_DEBUG:
                 print(f"      After s-curve: {FixedPoint.to_float(processed):.3f}")
         else:  # linear
             processed = value
-            if Constants.DEBUG:
+            if Constants.MPE_ROUTE_DEBUG:
                 print(f"      After linear curve: {FixedPoint.to_float(processed):.3f}")
             
         # Scale to range
@@ -122,7 +122,7 @@ class Route:
         # Apply amount
         self.current_value = FixedPoint.multiply(scaled_value, self.amount)
         
-        if Constants.DEBUG:
+        if Constants.MPE_ROUTE_DEBUG:
             if abs(FixedPoint.to_float(self.current_value - self.last_value)) > 0.01:
                 print(f"[ROUTE] Value update:")
                 print(f"      Source: {self.source_id}")
@@ -172,7 +172,7 @@ class NoteState:
         # Reference to underlying synthio note (created later)
         self.synth_note = None
         
-        if Constants.DEBUG:
+        if Constants.MPE_NOTE_DEBUG:
             print(f"\n[NOTE] Created note state:")
             print(f"      Channel: {channel}")
             print(f"      Note: {note}")
@@ -187,13 +187,13 @@ class NoteState:
             
         # Must have routes defined
         if 'routes' not in config:
-            if Constants.DEBUG:
+            if Constants.MPE_NOTE_DEBUG:
                 print("[NOTE] No routes defined in config")
             return False
             
         # Must have parameter definitions
         if 'parameters' not in config:
-            if Constants.DEBUG:
+            if Constants.MPE_NOTE_DEBUG:
                 print("[NOTE] No parameters defined in config")
             return False
             
@@ -201,7 +201,7 @@ class NoteState:
         
     def _create_routes(self, config):
         """Create all routes defined in config"""
-        if Constants.DEBUG:
+        if Constants.MPE_ROUTE_DEBUG:
             print("\n[ROUTE] Detailed Route Configuration:")
         
         for route_config in config['routes']:
@@ -225,7 +225,7 @@ class NoteState:
             self.routes_by_target[route.target_id].append(route)
             
             # Enhanced logging of each route
-            if Constants.DEBUG:
+            if Constants.MPE_ROUTE_DEBUG:
                 print(f"      Route:")
                 print(f"        Source: {route.source_id}")
                 print(f"        Target: {route.target_id}")
@@ -233,7 +233,7 @@ class NoteState:
                 print(f"        Curve: {route.curve}")
                 print(f"        Range: {FixedPoint.to_float(route.min_value):.3f} to {FixedPoint.to_float(route.max_value):.3f}")
         
-        if Constants.DEBUG:
+        if Constants.MPE_NOTE_DEBUG:
             print(f"[NOTE] Created {len(self.routes_by_source)} route sources")
             print(f"      {len(self.routes_by_target)} route targets")
             
@@ -245,7 +245,7 @@ class NoteState:
         # Store raw value
         self.parameter_values[source_id] = value
         
-        if Constants.DEBUG:
+        if Constants.MPE_NOTE_DEBUG:
             print(f"[NOTE] Processing value change:")
             print(f"      Source: {source_id}")
             print(f"      Raw value: {FixedPoint.to_float(value):.3f}")
@@ -274,7 +274,7 @@ class NoteState:
                 else:  # add
                     self.parameter_values[target_id] += processed
             
-        if Constants.DEBUG:
+        if Constants.MPE_NOTE_DEBUG:
             print(f"[NOTE] Value change processed:")
             print(f"      Source: {source_id}")
             print(f"      Value: {FixedPoint.to_float(value):.3f}")
@@ -295,7 +295,7 @@ class NoteState:
             # Signal release through routes
             self.handle_value_change('gate', FixedPoint.ZERO)
             
-            if Constants.DEBUG:
+            if Constants.MPE_NOTE_DEBUG:
                 print(f"[NOTE] Released ch:{self.channel} note:{self.note}")
                 print(f"      Active time: {self.release_time - self.creation_time:.3f}s")
 
@@ -315,7 +315,7 @@ class MPEVoiceManager:
         key = (channel, source_id)
         self.pending_values[key] = (value, control_name)
         
-        if Constants.DEBUG:
+        if Constants.MPE_VOICE_DEBUG:
             print(f"[VOICE] Stored pending value:")
             print(f"      Channel: {channel}")
             print(f"      Source: {source_id}")
@@ -355,7 +355,7 @@ class MPEVoiceManager:
             # Store note
             self.active_notes[(channel, note)] = note_state
             
-            if Constants.DEBUG:
+            if Constants.MPE_VOICE_DEBUG:
                 print(f"[VOICE] Allocated voice:")
                 print(f"      Channel: {channel}")
                 print(f"      Note: {note}")
@@ -387,7 +387,7 @@ class MPEVoiceManager:
         for key in list(self.active_notes.keys()):
             note = self.active_notes[key]
             if not note.active and (current_time - note.release_time) > 0.5:  # Config should define this
-                if Constants.DEBUG:
+                if Constants.MPE_VOICE_DEBUG:
                     print(f"[VOICE] Cleaning up voice:")
                     print(f"      Channel: {note.channel}")
                     print(f"      Note: {note.note}")
@@ -404,7 +404,7 @@ class MPEMessageRouter:
         self.current_config = config
         self.voice_manager.set_config(config)
         
-        if Constants.DEBUG:
+        if Constants.MPE_ROUTER_DEBUG:
             print("[ROUTER] Configuration set:")
             print(f"      Instrument: {config.get('name', 'Unknown')}")
             print("      Message Routes:")
@@ -446,7 +446,7 @@ class MPEMessageRouter:
     def route_message(self, message):
         """Route message according to config"""
         if not message or not self.current_config:
-            if Constants.DEBUG:
+            if Constants.MPE_ROUTER_DEBUG:
                 print("[ROUTER] No message or config")
             return None
             
@@ -454,7 +454,7 @@ class MPEMessageRouter:
         channel = message['channel']
         data = message.get('data', {})
         
-        if Constants.DEBUG:
+        if Constants.MPE_ROUTER_DEBUG:
             print(f"[ROUTER] Routing message:")
             print(f"      Type: {msg_type}")
             print(f"      Channel: {channel}")
@@ -463,7 +463,7 @@ class MPEMessageRouter:
         # Look up message routing in config
         message_routes = self.current_config.get('message_routes', {})
         if msg_type not in message_routes:
-            if Constants.DEBUG:
+            if Constants.MPE_ROUTER_DEBUG:
                 instrument_name = self.current_config.get('name', 'Unknown')
                 print(f"[ROUTER] {instrument_name} does not route {msg_type} messages")
             return None
@@ -472,7 +472,7 @@ class MPEMessageRouter:
         source_id = route.get('source_id')
         
         if not source_id:
-            if Constants.DEBUG:
+            if Constants.MPE_ROUTER_DEBUG:
                 print("[ROUTER] No source_id in route")
             return None
             
@@ -480,7 +480,7 @@ class MPEMessageRouter:
             note = data.get('note')
             velocity = data.get('velocity', 127)
             
-            if Constants.DEBUG:
+            if Constants.MPE_ROUTER_DEBUG:
                 print(f"[ROUTER] Allocating voice:")
                 print(f"      Note: {note}")
                 print(f"      Velocity: {velocity}")
@@ -493,7 +493,7 @@ class MPEMessageRouter:
         elif msg_type == 'note_off':
             note = data.get('note')
             
-            if Constants.DEBUG:
+            if Constants.MPE_ROUTER_DEBUG:
                 print(f"[ROUTER] Releasing voice:")
                 print(f"      Note: {note}")
             
@@ -511,7 +511,7 @@ class MPEMessageRouter:
                 cc_number = data.get('number')
                 control_name = self._find_control_name(cc_number)
             
-            if Constants.DEBUG:
+            if Constants.MPE_ROUTER_DEBUG:
                 print(f"[ROUTER] Processing controller message:")
                 print(f"      Source ID: {source_id}")
                 print(f"      Raw value: {value}")
@@ -525,12 +525,12 @@ class MPEMessageRouter:
             # Store for any matching voices
             voice = self.voice_manager.get_voice(channel, data.get('note'))
             if voice:
-                if Constants.DEBUG:
+                if Constants.MPE_ROUTER_DEBUG:
                     print("[ROUTER] Applying value to existing voice")
                 voice.handle_value_change(source_id, value)
             else:
                 # Store as pending
-                if Constants.DEBUG:
+                if Constants.MPE_ROUTER_DEBUG:
                     print("[ROUTER] Storing value as pending")
                 self.voice_manager.store_pending_value(channel, source_id, value, control_name)
                 

@@ -10,8 +10,9 @@ Key Configuration Areas:
 - Modulation routing
 - Control mapping
 """
+from constants import ModSource, ModTarget
+from fixed_point_math import FixedPoint
 
-from synth_constants import ModSource, ModTarget
 
 class InstrumentConfig:
     """Base configuration for instruments"""

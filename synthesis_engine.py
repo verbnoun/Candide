@@ -30,7 +30,7 @@ import math
 import time
 import synthio
 from fixed_point_math import FixedPoint
-from synth_constants import Constants
+from constants import Constants
 
 class WaveformManager:
     """Creates and stores waveforms defined in config"""
@@ -49,7 +49,7 @@ class WaveformManager:
         wave_type = waveform_def.get('type')
         wave_name = waveform_def.get('default')
         
-        if Constants.DEBUG:
+        if Constants.SYNTH_WAVE_DEBUG:
             print(f"[WAVE] Creating waveform: {wave_name}")
             print(f"      Type: {wave_type}")
         
@@ -66,7 +66,7 @@ class WaveformManager:
             elif wave_type == 'custom':
                 self._create_custom(wave_name, waveform_def)
             else:
-                if Constants.DEBUG:
+                if Constants.SYNTH_WAVE_DEBUG:
                     print(f"[WAVE] Unsupported wave type: {wave_type}")
         except Exception as e:
             print(f"[ERROR] Failed to create waveform {wave_name}: {str(e)}")
@@ -130,7 +130,7 @@ class WaveformManager:
     def _create_custom(self, name, config):
         """Create custom waveform from provided samples"""
         if 'samples' not in config:
-            if Constants.DEBUG:
+            if Constants.SYNTH_WAVE_DEBUG:
                 print(f"[WAVE] No samples provided for custom wave: {name}")
             return
             
@@ -141,7 +141,7 @@ class WaveformManager:
         if len(samples) > 0:
             self.waveforms[name] = samples
         else:
-            if Constants.DEBUG:
+            if Constants.SYNTH_WAVE_DEBUG:
                 print(f"[WAVE] Empty samples for custom wave: {name}")
             
     def get_waveform(self, name):
@@ -226,16 +226,17 @@ class SynthesisEngine:
         """Create note from configuration and parameters"""
         start_time = time.monotonic()
         
-        if Constants.DEBUG:
+        if Constants.SYNTH_DEBUG:
             print(f"\n[SYNTH] Entering create_note():")
             print(f"      Frequency: {frequency:.2f} Hz")
             print(f"      Amplitude: {amplitude:.3f}")
             print(f"      Config Override: {bool(config_override)}")
+        if Constants.SYNTH_IO_DEBUG:
             print(f"[SYNTHIO] Creating note:")
             print(f"      Frequency: {frequency}Hz")
             print(f"      Amplitude: {amplitude}")
         if not self.current_config:
-            if Constants.DEBUG:
+            if Constants.SYNTH_DEBUG:
                 print("[SYNTH] No configuration available")
             return None
             
@@ -246,13 +247,13 @@ class SynthesisEngine:
             # Get waveform
             waveform_name = config.get('waveform', 'triangle')
             if not waveform_name:
-                if Constants.DEBUG:
+                if Constants.SYNTH_DEBUG:
                     print("[SYNTH] No waveform specified")
                 return None
                 
             waveform = self.waveform_manager.get_waveform(waveform_name)
             if not waveform:
-                if Constants.DEBUG:
+                if Constants.SYNTH_DEBUG:
                     print(f"[SYNTH] Waveform not found: {waveform_name}")
                 return None
             
@@ -270,7 +271,7 @@ class SynthesisEngine:
             )
             
             # Detailed envelope logging
-            if Constants.DEBUG:
+            if Constants.SYNTH_DEBUG:
                 print(f"[SYNTH] Envelope Configuration:")
                 print(f"      Attack Time: {envelope.attack_time:.3f}")
                 print(f"      Decay Time: {envelope.decay_time:.3f}")
@@ -291,27 +292,26 @@ class SynthesisEngine:
             if filter_config:
                 note.filter = self.filter_manager.create_filter(filter_config)
             
-            if Constants.DEBUG:
+            if Constants.SYNTH_DEBUG:
                 print(f"[SYNTH] Note Creation Details:")
                 print(f"      Freq: {frequency:.2f}Hz")
                 print(f"      Amp: {amplitude:.3f}")
                 print(f"      Wave: {waveform_name}")
                 print(f"      Envelope: {envelope}")
                 print(f"      Filter: {True if note.filter else False}")
-                # Detailed envelope logging
                 print(f"      Envelope: attack={envelope.attack_time}s decay={envelope.decay_time}s sustain={envelope.sustain_level} release={envelope.release_time}s")
+            if Constants.SYNTH_IO_DEBUG:
                 print(f"[SYNTHIO] Note created:")
                 print(f"      Note ID: {id(note)}")
                 print(f"      Waveform Length: {len(note.waveform)}")
                 print(f"      Has Envelope: {note.envelope is not None}")
-                # Log creation time
                 creation_time = time.monotonic() - start_time
                 print(f"      Creation Time: {creation_time * 1000:.2f} ms")
                 
             return note
             
         except Exception as e:
-            if Constants.DEBUG:
+            if Constants.SYNTH_IO_DEBUG:
                 print(f"[SYNTHIO] Error creating note:")
                 print(f"      Error: {str(e)}")
                 print(f"      Parameters: freq={frequency} amp={amplitude}")
@@ -339,10 +339,11 @@ class SynthesisEngine:
                 if hasattr(note, synthio_param):
                     setattr(note, synthio_param, param_value)
                     
-                    if Constants.DEBUG:
+                    if Constants.SYNTH_DEBUG:
                         print(f"[SYNTH] Updated parameter:")
                         print(f"      Name: {param_name}")
                         print(f"      Value: {param_value:.3f}")
+                    if Constants.SYNTH_IO_DEBUG:
                         print(f"[SYNTHIO] Note state:")
                         print(f"      Frequency: {note.frequency}")
                         print(f"      Amplitude: {note.amplitude}")

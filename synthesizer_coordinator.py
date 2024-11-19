@@ -21,7 +21,7 @@ Primary Class:
 """
 import time
 import synthio
-from synth_constants import Constants
+from constants import Constants
 from mpe_handling import MPEVoiceManager, MPEMessageRouter
 from fixed_point_math import FixedPoint
 from synthesis_engine import WaveformManager
@@ -29,8 +29,8 @@ from synthesis_engine import WaveformManager
 class MPESynthesizer:
     """Manages synthesis based purely on config and note state"""
     def __init__(self, output_manager):
-        if Constants.DEBUG:
-            print("\n[SYNTH] Initializing MPE Synthesizer")
+        if Constants.SYNTH_CO_DEBUG:
+            print("\n[SYNTH CO] Initializing MPE Synthesizer")
             
         if not output_manager:
             raise ValueError("AudioOutputManager required")
@@ -57,14 +57,14 @@ class MPESynthesizer:
         self.active_notes = {}  # (channel, note): synthio.Note
         self._last_update = time.monotonic()
 
-        if Constants.DEBUG:
-            print("[SYNTH] Initialization complete")
+        if Constants.SYNTH_CO_DEBUG:
+            print("[SYNTH CO] Initialization complete")
             
     def _create_synthio_note(self, note_state):
         """Create synthio note from current note state"""
         if not note_state or not self.current_config or not self.waveform_manager:
-            if Constants.DEBUG:
-                print("[SYNTH] No note state, config, or waveform manager")
+            if Constants.SYNTH_CO_DEBUG:
+                print("[SYNTH CO] No note state, config, or waveform manager")
             return None
             
         try:
@@ -72,19 +72,19 @@ class MPESynthesizer:
             param_config = self.current_config.get('parameters', {})
             
             if not param_config:
-                if Constants.DEBUG:
-                    print("[SYNTH] No parameters in config")
+                if Constants.SYNTH_CO_DEBUG:
+                    print("[SYNTH CO] No parameters in config")
                 return None
             
             # Detailed debug logging of all parameter values
-            if Constants.DEBUG:
-                print("[SYNTH] Parameter Configuration:")
+            if Constants.SYNTH_CO_DEBUG:
+                print("[SYNTH CO] Parameter Configuration:")
                 for param_id, param_def in param_config.items():
                     print(f"      {param_id}:")
                     for key, value in param_def.items():
                         print(f"        {key}: {value}")
                 
-                print("\n[SYNTH] Parameter Values:")
+                print("\n[SYNTH CO] Parameter Values:")
                 for param_id, value in note_state.parameter_values.items():
                     print(f"      {param_id}: {FixedPoint.to_float(value):.4f}")
             
@@ -92,8 +92,8 @@ class MPESynthesizer:
             required = ['frequency', 'waveform']
             for param in required:
                 if param not in param_config:
-                    if Constants.DEBUG:
-                        print(f"[SYNTH] Missing required parameter in config: {param}")
+                    if Constants.SYNTH_CO_DEBUG:
+                        print(f"[SYNTH CO] Missing required parameter in config: {param}")
                     return None
                     
             # Get final parameter values
@@ -105,8 +105,8 @@ class MPESynthesizer:
             waveform_array = self.waveform_manager.get_waveform(waveform_type)
             
             if waveform_array is None:
-                if Constants.DEBUG:
-                    print(f"[SYNTH] Waveform not found: {waveform_type}")
+                if Constants.SYNTH_CO_DEBUG:
+                    print(f"[SYNTH CO] Waveform not found: {waveform_type}")
                 return None
                 
             # Create synthio note with required params
@@ -127,7 +127,7 @@ class MPESynthesizer:
                         setattr(synth_note, param_def['synthio_param'], 
                                FixedPoint.to_float(value))
             
-            if Constants.DEBUG:
+            if Constants.SYNTH_IO_DEBUG:
                 print(f"[SYNTHIO] Note Object Details:")
                 print(f"      Channel: {note_state.channel}")
                 print(f"      Note: {note_state.note}")
@@ -150,8 +150,8 @@ class MPESynthesizer:
             return
             
         try:
-            if Constants.DEBUG:
-                print(f"\n[SYNTH] Setting instrument: {config['name']}")
+            if Constants.SYNTH_CO_DEBUG:
+                print(f"\n[SYNTH CO] Setting instrument: {config['name']}")
                 
             self.current_config = config
             self.message_router.set_config(config)
@@ -159,8 +159,8 @@ class MPESynthesizer:
             # Initialize WaveformManager with current config
             self.waveform_manager = WaveformManager(config)
             
-            if Constants.DEBUG:
-                print("[SYNTH] Configuration complete")
+            if Constants.SYNTH_CO_DEBUG:
+                print("[SYNTH CO] Configuration complete")
                 
         except Exception as e:
             print(f"[ERROR] Config update failed: {str(e)}")
@@ -190,7 +190,7 @@ class MPESynthesizer:
                         setattr(note, param_def['synthio_param'], new_value)
                         updated = True
                         
-                        if Constants.DEBUG:
+                        if Constants.SYNTH_IO_DEBUG:
                             print(f"[SYNTHIO] Updated Note Parameter:")
                             print(f"      Parameter: {param_id}")
                             print(f"      Old Value: {current_value:.3f}")
@@ -206,7 +206,7 @@ class MPESynthesizer:
                             setattr(note, param_def['synthio_param'], waveform_array)
                             updated = True
                             
-                            if Constants.DEBUG:
+                            if Constants.SYNTH_IO_DEBUG:
                                 print(f"[SYNTHIO] Waveform Updated:")
                                 print(f"      Old Waveform: {current_value}")
                                 print(f"      New Waveform: {new_value}")
@@ -231,7 +231,7 @@ class MPESynthesizer:
             if not synth_note:
                 return
                 
-            if Constants.DEBUG:
+            if Constants.SYNTH_IO_DEBUG:
                 print(f"[SYNTHIO] Pre-press state:")
                 print(f"      Active Notes: {len(self.synth.pressed)}")
                 print(f"      Block Count: {len(self.synth.blocks)}")
@@ -245,14 +245,14 @@ class MPESynthesizer:
             self.synth.press(synth_note)
             self.output_manager.performance.active_voices += 1
             
-            if Constants.DEBUG:
+            if Constants.SYNTH_IO_DEBUG:
                 print(f"[SYNTHIO] Post-press state:")
                 print(f"      Note Active: {synth_note in self.synth.pressed}")  
                 print(f"      Block Count: {len(self.synth.blocks)}")
                 print(f"      Active Notes: {len(self.synth.pressed)}")
 
-            if Constants.DEBUG:
-                print(f"[SYNTH] Voice allocated ch:{voice.channel} note:{voice.note}")
+            if Constants.SYNTH_CO_DEBUG:
+                print(f"[SYNTH CO] Voice allocated ch:{voice.channel} note:{voice.note}")
                 
         except Exception as e:
             print(f"[ERROR] Voice allocation failed: {str(e)}")
@@ -263,8 +263,9 @@ class MPESynthesizer:
             return
             
         try:
-            if Constants.DEBUG:
-                print(f"[SYNTH] Releasing voice ch:{voice.channel} note:{voice.note}")
+            if Constants.SYNTH_CO_DEBUG:
+                print(f"[SYNTHCO] Releasing voice ch:{voice.channel} note:{voice.note}")
+            if Constants.SYNTH_IO_DEBUG:
                 print(f"[SYNTHIO] Release Details:")
                 print(f"      Note Object ID: {id(voice.synth_note)}")
                 print(f"      Frequency: {voice.synth_note.frequency:.2f}Hz")
@@ -281,8 +282,8 @@ class MPESynthesizer:
             if self.output_manager.performance.active_voices > 0:
                 self.output_manager.performance.active_voices -= 1
                 
-            if Constants.DEBUG:
-                print(f"[SYNTHIO] Post-release state:")
+            if Constants.SYNTH_IO_DEBUG:
+                print(f"[SYNTH IO] Post-release state:")
                 print(f"      Active Notes: {len(self.synth.pressed)}")
                 print(f"      Block Count: {len(self.synth.blocks)}")
                 
@@ -316,30 +317,13 @@ class MPESynthesizer:
             return
             
         try:
-            if (Constants.DISABLE_THROTTLING or 
-                not self.output_manager.performance.should_throttle()):
-                
-                for event in events:
-                    result = self.message_router.route_message(event)
-                    if result:
-                        if result['type'] == 'voice_allocated':
-                            self._handle_voice_allocation(result['voice'])
-                        elif result['type'] == 'voice_released':
-                            self._handle_voice_release(result['voice'])
-                            
-            else:
-                # When throttling, only handle note events
-                events = [e for e in events if e.get('type') in ('note_on', 'note_off')]
-                if Constants.DEBUG:
-                    print("[SYNTH] System loaded - throttling to note events only")
-                    
-                for event in events:
-                    result = self.message_router.route_message(event)
-                    if result:
-                        if result['type'] == 'voice_allocated':
-                            self._handle_voice_allocation(result['voice'])
-                        elif result['type'] == 'voice_released':
-                            self._handle_voice_release(result['voice'])
+            for event in events:
+                result = self.message_router.route_message(event)
+                if result:
+                    if result['type'] == 'voice_allocated':
+                        self._handle_voice_allocation(result['voice'])
+                    elif result['type'] == 'voice_released':
+                        self._handle_voice_release(result['voice'])
                             
         except Exception as e:
             print(f"[ERROR] Event processing failed: {str(e)}")
@@ -347,8 +331,8 @@ class MPESynthesizer:
     def cleanup(self):
         """Clean shutdown"""
         try:
-            if Constants.DEBUG:
-                print("\n[SYNTH] Starting cleanup...")
+            if Constants.SYNTH_CO_DEBUG:
+                print("\n[SYNTH CO] Starting cleanup...")
                 
             # Release all notes
             for voice in self.voice_manager.active_notes.values():
@@ -357,8 +341,8 @@ class MPESynthesizer:
                     
             self.active_notes.clear()
             
-            if Constants.DEBUG:
-                print("[SYNTH] Cleanup complete")
+            if Constants.SYNTH_CO_DEBUG:
+                print("[SYNTH CO] Cleanup complete")
                 
         except Exception as e:
-            print(f"[ERROR] Cleanup failed: {str(e)}")
+            print(f"[ERROR SYNTH CO] Cleanup failed: {str(e)}")
