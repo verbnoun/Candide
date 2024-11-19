@@ -1,5 +1,6 @@
 import time
 from fixed_point_math import FixedPoint 
+from synth_constants import Constants
 
 class Route:
     """Single value route with config-defined behavior"""
@@ -74,12 +75,23 @@ class NoteState:
         self.creation_time = time.monotonic()
         self.last_update = self.creation_time
         
+        # Store full config
+        self.config = config
+        
         # Parameter storage - all in fixed point
         self.parameter_values = {}
         
         # Store initial values
         self.parameter_values['note'] = FixedPoint.midi_note_to_fixed(note)
         self.parameter_values['velocity'] = FixedPoint.normalize_midi_value(velocity)
+        
+        # Compute initial frequency
+        self.parameter_values['frequency'] = FixedPoint.from_float(
+            440.0 * (2 ** ((note - 69) / 12.0))
+        )
+        
+        # Compute initial amplitude from velocity
+        self.parameter_values['amplitude'] = FixedPoint.normalize_midi_value(velocity)
         
         # Config validation
         if not self._validate_config(config):
@@ -98,6 +110,8 @@ class NoteState:
             print(f"      Channel: {channel}")
             print(f"      Note: {note}")
             print(f"      Velocity: {FixedPoint.to_float(self.parameter_values['velocity']):.3f}")
+            print(f"      Frequency: {FixedPoint.to_float(self.parameter_values['frequency']):.2f}")
+            print(f"      Amplitude: {FixedPoint.to_float(self.parameter_values['amplitude']):.3f}")
             
     def _validate_config(self, config):
         """Ensure config has required elements"""
@@ -156,8 +170,9 @@ class NoteState:
                 
             # Combine values based on target's combining rule
             current = self.parameter_values[target_id]
-            if target_id in self.config['parameters']:
-                combine_rule = self.config['parameters'][target_id].get('combine', 'add')
+            parameters = self.config.get('parameters', {})
+            if target_id in parameters:
+                combine_rule = parameters[target_id].get('combine', 'add')
                 if combine_rule == 'multiply':
                     if current == FixedPoint.ZERO:
                         self.parameter_values[target_id] = processed
@@ -193,32 +208,34 @@ class MPEVoiceManager:
     """Manages note lifecycle and routing"""
     def __init__(self):
         self.active_notes = {}  # (channel, note): NoteState
-        self.pending_values = {}  # (channel, source_id): value
+        self.pending_values = {}  # (channel, source_id): (value, control_name)
         self.current_config = None
         
     def set_config(self, config):
         """Update current configuration"""
         self.current_config = config
         
-    def store_pending_value(self, channel, source_id, value):
+    def store_pending_value(self, channel, source_id, value, control_name=None):
         """Store value that arrives before note-on"""
         key = (channel, source_id)
-        self.pending_values[key] = value
+        self.pending_values[key] = (value, control_name)
         
         if Constants.DEBUG:
             print(f"[VOICE] Stored pending value:")
             print(f"      Channel: {channel}")
             print(f"      Source: {source_id}")
             print(f"      Value: {value}")
+            if control_name:
+                print(f"      Control: {control_name}")
             
     def get_pending_values(self, channel):
         """Get and clear pending values for a channel"""
         values = {}
         
         # Get all values for this channel
-        for (c, source_id), value in list(self.pending_values.items()):
+        for (c, source_id), (value, control_name) in list(self.pending_values.items()):
             if c == channel:
-                values[source_id] = value
+                values[source_id] = (value, control_name)
                 del self.pending_values[(c, source_id)]
                 
         return values
@@ -234,7 +251,7 @@ class MPEVoiceManager:
             
             # Apply any pending values
             pending = self.get_pending_values(channel)
-            for source_id, value in pending.items():
+            for source_id, (value, control_name) in pending.items():
                 note_state.handle_value_change(source_id, value)
             
             # Store note
@@ -289,47 +306,129 @@ class MPEMessageRouter:
         self.current_config = config
         self.voice_manager.set_config(config)
         
+        if Constants.DEBUG:
+            print("[ROUTER] Configuration set:")
+            print(f"      Instrument: {config.get('name', 'Unknown')}")
+            print("      Message Routes:")
+            for msg_type, route in config.get('message_routes', {}).items():
+                print(f"        {msg_type}:")
+                for key, value in route.items():
+                    print(f"          {key}: {value}")
+        
+    def _find_control_name(self, cc_number):
+        """Find control name for a given CC number"""
+        if not self.current_config:
+            return None
+        
+        # Check envelope stages
+        envelope = self.current_config.get('envelope', {}).get('stages', {})
+        for stage_name, stage_data in envelope.items():
+            for param_type, param_data in stage_data.items():
+                control = param_data.get('control', {})
+                if control.get('cc') == cc_number:
+                    return control.get('name', f'CC{cc_number}')
+        
+        # Check filter controls
+        filter_config = self.current_config.get('filter', {})
+        for param_name, param_data in filter_config.items():
+            control = param_data.get('control', {})
+            if control.get('cc') == cc_number:
+                return control.get('name', f'CC{cc_number}')
+        
+        # Check LFO controls
+        lfos = self.current_config.get('lfos', {})
+        for lfo_name, lfo_data in lfos.items():
+            for param_name, param_data in lfo_data.items():
+                control = param_data.get('control', {})
+                if control.get('cc') == cc_number:
+                    return control.get('name', f'CC{cc_number}')
+        
+        return f'CC{cc_number}'
+        
     def route_message(self, message):
         """Route message according to config"""
         if not message or not self.current_config:
+            if Constants.DEBUG:
+                print("[ROUTER] No message or config")
             return None
             
         msg_type = message['type']
         channel = message['channel']
         data = message.get('data', {})
         
+        if Constants.DEBUG:
+            print(f"[ROUTER] Routing message:")
+            print(f"      Type: {msg_type}")
+            print(f"      Channel: {channel}")
+            print(f"      Data: {data}")
+        
         # Look up message routing in config
-        if msg_type not in self.current_config.get('message_routes', {}):
+        message_routes = self.current_config.get('message_routes', {})
+        if msg_type not in message_routes:
+            if Constants.DEBUG:
+                print(f"[ROUTER] No route found for message type: {msg_type}")
             return None
             
-        route = self.current_config['message_routes'][msg_type]
+        route = message_routes[msg_type]
         source_id = route.get('source_id')
         
         if not source_id:
+            if Constants.DEBUG:
+                print("[ROUTER] No source_id in route")
             return None
             
         if msg_type == 'note_on':
             note = data.get('note')
             velocity = data.get('velocity', 127)
+            
+            if Constants.DEBUG:
+                print(f"[ROUTER] Allocating voice:")
+                print(f"      Note: {note}")
+                print(f"      Velocity: {velocity}")
+            
             voice = self.voice_manager.allocate_voice(channel, note, velocity)
             return {'type': 'voice_allocated', 'voice': voice}
             
         elif msg_type == 'note_off':
             note = data.get('note')
+            
+            if Constants.DEBUG:
+                print(f"[ROUTER] Releasing voice:")
+                print(f"      Note: {note}")
+            
             voice = self.voice_manager.release_voice(channel, note)
             return {'type': 'voice_released', 'voice': voice}
             
         else:
             # Get value according to route
             value = route['value_func'](data) if 'value_func' in route else data.get('value')
+            target = route.get('target')
+            
+            # For CC messages, find the control name
+            control_name = None
+            if msg_type == 'cc':
+                cc_number = data.get('number')
+                control_name = self._find_control_name(cc_number)
+            
+            if Constants.DEBUG:
+                print(f"[ROUTER] Processing controller message:")
+                print(f"      Source ID: {source_id}")
+                print(f"      Value: {value}")
+                print(f"      Target: {target}")
+                if control_name:
+                    print(f"      Control: {control_name}")
             
             # Store for any matching voices
             voice = self.voice_manager.get_voice(channel, data.get('note'))
             if voice:
+                if Constants.DEBUG:
+                    print("[ROUTER] Applying value to existing voice")
                 voice.handle_value_change(source_id, value)
             else:
                 # Store as pending
-                self.voice_manager.store_pending_value(channel, source_id, value)
+                if Constants.DEBUG:
+                    print("[ROUTER] Storing value as pending")
+                self.voice_manager.store_pending_value(channel, source_id, value, control_name)
                 
         return None
         

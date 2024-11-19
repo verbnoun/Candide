@@ -4,6 +4,7 @@ import synthio
 from synth_constants import Constants
 from mpe_handling import MPEVoiceManager, MPEMessageRouter
 from fixed_point_math import FixedPoint
+from synthesis_engine import WaveformManager
 
 class MPESynthesizer:
     """Manages synthesis based purely on config and note state"""
@@ -26,6 +27,9 @@ class MPESynthesizer:
         self.voice_manager = MPEVoiceManager()
         self.message_router = MPEMessageRouter(self.voice_manager)
         
+        # Initialize WaveformManager
+        self.waveform_manager = None
+        
         # Connect to audio output
         self.output_manager.attach_synthesizer(self.synth)
 
@@ -38,12 +42,31 @@ class MPESynthesizer:
             
     def _create_synthio_note(self, note_state):
         """Create synthio note from current note state"""
-        if not note_state or not self.current_config:
+        if not note_state or not self.current_config or not self.waveform_manager:
+            if Constants.DEBUG:
+                print("[SYNTH] No note state, config, or waveform manager")
             return None
             
         try:
             # Get params according to config
             param_config = self.current_config.get('parameters', {})
+            
+            if not param_config:
+                if Constants.DEBUG:
+                    print("[SYNTH] No parameters in config")
+                return None
+            
+            # Detailed debug logging of all parameter values
+            if Constants.DEBUG:
+                print("[SYNTH] Parameter Configuration:")
+                for param_id, param_def in param_config.items():
+                    print(f"      {param_id}:")
+                    for key, value in param_def.items():
+                        print(f"        {key}: {value}")
+                
+                print("\n[SYNTH] Parameter Values:")
+                for param_id, value in note_state.parameter_values.items():
+                    print(f"      {param_id}: {FixedPoint.to_float(value):.4f}")
             
             # Required parameters must exist in config and note state
             required = ['frequency', 'waveform']
@@ -58,17 +81,19 @@ class MPESynthesizer:
             amplitude = FixedPoint.to_float(note_state.get_parameter_value('amplitude'))
             
             # Get waveform
-            waveform = param_config['waveform'].get('default')
-            if not waveform:
+            waveform_type = param_config['waveform'].get('default', 'triangle')
+            waveform_array = self.waveform_manager.get_waveform(waveform_type)
+            
+            if waveform_array is None:
                 if Constants.DEBUG:
-                    print("[SYNTH] No waveform specified")
+                    print(f"[SYNTH] Waveform not found: {waveform_type}")
                 return None
                 
             # Create synthio note with required params
             synth_note = synthio.Note(
                 frequency=frequency,
                 amplitude=amplitude,
-                waveform=waveform
+                waveform=waveform_array
             )
             
             # Apply optional parameters according to config
@@ -88,13 +113,38 @@ class MPESynthesizer:
                 print(f"      Note: {note_state.note}")
                 print(f"      Freq: {frequency:.2f}Hz")
                 print(f"      Amp: {amplitude:.3f}")
+                print(f"      Waveform: {waveform_type}")
 
             return synth_note
 
         except Exception as e:
             print(f"[ERROR] Failed to create synthio note: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return None
             
+    def set_instrument(self, config):
+        """Set instrument configuration"""
+        if not config:
+            return
+            
+        try:
+            if Constants.DEBUG:
+                print(f"\n[SYNTH] Setting instrument: {config['name']}")
+                
+            self.current_config = config
+            self.message_router.set_config(config)
+            
+            # Initialize WaveformManager with current config
+            self.waveform_manager = WaveformManager(config)
+            
+            if Constants.DEBUG:
+                print("[SYNTH] Configuration complete")
+                
+        except Exception as e:
+            print(f"[ERROR] Config update failed: {str(e)}")
+
+    # Rest of the class remains unchanged from the original file
     def _update_synthio_note(self, note_state):
         """Update synthio note parameters from note state"""
         if not note_state or not note_state.synth_note:
@@ -229,24 +279,6 @@ class MPESynthesizer:
                             
         except Exception as e:
             print(f"[ERROR] Event processing failed: {str(e)}")
-            
-    def set_instrument(self, config):
-        """Set instrument configuration"""
-        if not config:
-            return
-            
-        try:
-            if Constants.DEBUG:
-                print(f"\n[SYNTH] Setting instrument: {config['name']}")
-                
-            self.current_config = config
-            self.message_router.set_config(config)
-            
-            if Constants.DEBUG:
-                print("[SYNTH] Configuration complete")
-                
-        except Exception as e:
-            print(f"[ERROR] Config update failed: {str(e)}")
 
     def cleanup(self):
         """Clean shutdown"""
@@ -266,4 +298,3 @@ class MPESynthesizer:
                 
         except Exception as e:
             print(f"[ERROR] Cleanup failed: {str(e)}")
-
