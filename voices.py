@@ -8,7 +8,51 @@ import time
 import sys
 import synthio
 from fixed_point_math import FixedPoint
-from constants import ModSource, ModTarget, VOICES_DEBUG
+from constants import VOICES_DEBUG
+
+def _format_log_message(message):
+    """
+    Format a dictionary message for console logging with specific indentation rules.
+    Handles dictionaries, lists, and primitive values.
+    
+    Args:
+        message (dict): Message to format
+        
+    Returns:
+        str: Formatted message string
+    """
+    def format_value(value, indent_level=0):
+        """Recursively format values with proper indentation."""
+        base_indent = ' ' * 0
+        extra_indent = ' ' * 2
+        indent = base_indent + ' ' * (4 * indent_level)
+        
+        if isinstance(value, dict):
+            if not value:  # Handle empty dict
+                return '{}'
+            lines = ['{']
+            for k, v in value.items():
+                formatted_v = format_value(v, indent_level + 1)
+                lines.append(f"{indent + extra_indent}'{k}': {formatted_v},")
+            lines.append(f"{indent}}}")
+            return '\n'.join(lines)
+        
+        elif isinstance(value, list):
+            if not value:  # Handle empty list
+                return '[]'
+            lines = ['[']
+            for item in value:
+                formatted_item = format_value(item, indent_level + 1)
+                lines.append(f"{indent + extra_indent}{formatted_item},")
+            lines.append(f"{indent}]")
+            return '\n'.join(lines)
+        
+        elif isinstance(value, str):
+            return f"'{value}'"
+        else:
+            return str(value)
+            
+    return format_value(message)
 
 def _log(message):
     """
@@ -36,7 +80,13 @@ def _log(message):
             color = GREEN
         else:
             color = CYAN
-        print(f"{color}[VOICES] {message}{RESET}", file=sys.stderr)
+
+        # If message is a dictionary, format with custom indentation
+        if isinstance(message, dict):
+            formatted_message = _format_log_message(message)
+            print(f"{color}{formatted_message}{RESET}", file=sys.stderr)
+        else:
+            print(f"{color}[VOICES] {message}{RESET}", file=sys.stderr)
 
 class Route:
     """
@@ -484,7 +534,8 @@ class MPEVoiceManager:
     
     def set_config(self, config):
         """Update current instrument configuration"""
-        _log(f"Setting instrument configuration: {config}")
+        _log(f"Setting instrument configuration:")
+        _log(config)
         
         if not config:
             _log("[ERROR] No configuration provided for voice manager")

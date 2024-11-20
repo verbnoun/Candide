@@ -12,31 +12,35 @@ import sys
 from adafruit_midi import MIDI
 from constants import *
 
-def _format_dict(d, indent=0):
+def _format_log_message(message):
     """
-    Manually format a dictionary with indentation for Circuit Python
+    Format a dictionary message for console logging with specific indentation rules.
     
     Args:
-        d (dict): Dictionary to format
-        indent (int): Current indentation level
+        message (dict): Message to format
     
     Returns:
-        str: Formatted dictionary string
+        str: Formatted message string
     """
-    if not isinstance(d, dict):
-        return str(d)
-    
-    lines = ["{"]
-    for key, value in d.items():
+    def _format_value(value, indent_level=0):
+        """Recursively format values with proper indentation."""
+        base_indent = ' ' * 0
+        extra_indent = ' ' * 2
+        indent = base_indent + ' ' * (4 * indent_level)
+        
         if isinstance(value, dict):
-            # Nested dictionary
-            sub_lines = _format_dict(value, indent + 2).split('\n')
-            lines.append(" " * (indent + 2) + f"{key}: " + sub_lines[0])
-            lines.extend(" " * (indent + 2) + line for line in sub_lines[1:])
+            lines = ['{']
+            for k, v in value.items():
+                formatted_v = _format_value(v, indent_level + 1)
+                lines.append(f"{indent + extra_indent}'{k}': {formatted_v},")
+            lines.append(f"{indent}}}")
+            return '\n'.join(lines)
+        elif isinstance(value, str):
+            return f"'{value}'"
         else:
-            lines.append(" " * (indent + 2) + f"{key}: {value}")
-    lines.append(" " * indent + "}")
-    return "\n".join(lines)
+            return str(value)
+    
+    return _format_value(message)
 
 def _log(message):
     """
@@ -56,8 +60,8 @@ def _log(message):
         
         # If message is a dictionary, format with custom indentation
         if isinstance(message, dict):
-            formatted_message = _format_dict(message)
-            print(f"{color}[MIDI  ] {formatted_message}{RESET}", file=sys.stderr)
+            formatted_message = _format_log_message(message)
+            print(f"{color}{formatted_message}{RESET}", file=sys.stderr)
         else:
             print(f"{color}[MIDI  ] {message}{RESET}", file=sys.stderr)
 
@@ -172,7 +176,7 @@ class MidiLogic:
                                 'value': value_byte[0]
                             }
                         }
-                        _log(f"Received CC: Channel {channel}, Control {control_byte[0]}, Value {value_byte[0]}")
+                        _log(f"Received CC:")
                         _log(event)
 
                     elif msg_type == MidiMessageType.CHANNEL_PRESSURE:

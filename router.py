@@ -3,60 +3,53 @@ Advanced MPE Message Router for New Instrument Configuration System
 
 Handles complex routing based on the new instrument configuration paradigm.
 """
-
-import time
 import sys
 from fixed_point_math import FixedPoint
-from constants import ModSource, ModTarget, ROUTER_DEBUG
+from constants import ROUTER_DEBUG
 
-def _format_dict(d, indent=0):
+def _format_log_message(message):
     """
-    Manually format a dictionary with precise indentation for Circuit Python
+    Format a dictionary message for console logging with specific indentation rules.
+    Handles dictionaries, lists, and primitive values.
     
     Args:
-        d (dict): Dictionary to format
-        indent (int): Current indentation level
-    
-    Returns:
-        str: Formatted dictionary string
-    """
-    if not isinstance(d, dict):
-        return str(d)
-    
-    def _format_value(value, current_indent):
-        if isinstance(value, dict):
-            # Recursively format nested dictionaries
-            nested_lines = []
-            nested_lines.append("{ ")
-            for k, v in value.items():
-                if isinstance(v, dict):
-                    nested_sub_lines = _format_dict(v, current_indent + 2).split('\n')
-                    nested_lines.append(f"{k}: {nested_sub_lines[0]}")
-                    nested_lines.extend(nested_sub_lines[1:-1])
-                    nested_lines.append(nested_sub_lines[-1])
-                else:
-                    nested_lines.append(f"{k}: {v}")
-            nested_lines.append("}")
-            return "\n".join(nested_lines)
-        return str(value)
-    
-    lines = ["{ "]
-    for key, value in d.items():
-        value_str = _format_value(value, indent + 2)
+        message (dict): Message to format
         
-        # If value is a multi-line dictionary, handle it specially
-        if "\n" in value_str:
-            lines.append(f"{key}: {value_str.split('\n')[0]}")
-            lines.extend(value_str.split('\n')[1:])
+    Returns:
+        str: Formatted message string
+    """
+    def format_value(value, indent_level=0):
+        """Recursively format values with proper indentation."""
+        base_indent = ' ' * 0
+        extra_indent = ' ' * 2
+        indent = base_indent + ' ' * (4 * indent_level)
+        
+        if isinstance(value, dict):
+            if not value:  # Handle empty dict
+                return '{}'
+            lines = ['{']
+            for k, v in value.items():
+                formatted_v = format_value(v, indent_level + 1)
+                lines.append(f"{indent + extra_indent}'{k}': {formatted_v},")
+            lines.append(f"{indent}}}")
+            return '\n'.join(lines)
+        
+        elif isinstance(value, list):
+            if not value:  # Handle empty list
+                return '[]'
+            lines = ['[']
+            for item in value:
+                formatted_item = format_value(item, indent_level + 1)
+                lines.append(f"{indent + extra_indent}{formatted_item},")
+            lines.append(f"{indent}]")
+            return '\n'.join(lines)
+        
+        elif isinstance(value, str):
+            return f"'{value}'"
         else:
-            lines.append(f"{key}: {value_str}")
-    
-    lines.append("}")
-    
-    # Add indentation to all lines except the first, which gets 9 spaces
-    indented_lines = [lines[0]] + [" " * (9 + 2 * (indent // 2)) + line for line in lines[1:]]
-    
-    return "\n".join(indented_lines)
+            return str(value)
+            
+    return format_value(message)
 
 def _log(message):
     """
@@ -86,8 +79,8 @@ def _log(message):
         
         # If message is a dictionary, format with custom indentation
         if isinstance(message, dict):
-            formatted_message = _format_dict(message)
-            print(f"{color}[ROUTER] {formatted_message}{RESET}", file=sys.stderr)
+            formatted_message = _format_log_message(message)
+            print(f"{color}{formatted_message}{RESET}", file=sys.stderr)
         else:
             print(f"{color}[ROUTER] {message}{RESET}", file=sys.stderr)
 
@@ -126,10 +119,7 @@ class MPEMessageRouter:
         self.voice_manager.set_config(config)
         
         _log(f"Configuration set for instrument: {config.get('name', 'Unknown')}")
-        _log("Configuration details:")
-        for key, value in config.items():
-            if key != 'patches':  # Skip patches array for brevity
-                _log(f"  {key}: {value}")
+        _log(config)
     
     def _is_message_allowed(self, message):
         """
@@ -291,7 +281,7 @@ class MPEMessageRouter:
             dict: Routing result or None
         """
         _log("Routing message:")
-        _log(message)  # Removed json.dumps with indent
+        _log(message)
         
         # First check: Is message allowed
         if not self._is_message_allowed(message):
