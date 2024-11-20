@@ -121,34 +121,32 @@ class MidiValidator:
         sources = self.config.get('sources', {})
         data = message.get('data', {})
         
+        # Mapping of message types to their source keys
+        type_to_source = {
+            'note_on': 'note_on',
+            'note_off': 'note_off',
+            'cc': 'cc',
+            'pitch_bend': 'pitch_bend',
+            'channel_pressure': 'channel_pressure',
+            'pressure': 'channel_pressure'  # Handle potential type variation
+        }
+        
         # Check if message type is supported
-        if msg_type not in ['note_on', 'note_off', 'cc', 'pitch_bend', 'channel_pressure']:
-            Logging.log(f"Unsupported message type: {msg_type}")
+        if msg_type not in type_to_source:
+            Logging.log(f"Message rejected: Unsupported message type {msg_type}")
             return False
         
-        # Note message validation
-        if msg_type == 'note_on':
-            if 'note_on' not in sources:
-                Logging.log("Note On not supported in configuration")
-                return False
-            Logging.log(f"Note message accepted: {data.get('note')}")
-            return True
-            
-        elif msg_type == 'note_off':
-            if 'note_off' not in sources:
-                Logging.log("Note Off not supported in configuration")
-                return False
-            Logging.log(f"Note off accepted: {data.get('note')}")
-            return True
-            
-        # CC validation
-        elif msg_type == 'cc':
+        # Normalize source key
+        source_key = type_to_source[msg_type]
+        
+        # Specific validation for CC messages
+        if msg_type == 'cc':
             cc_number = data.get('number')
             if cc_number is not None:
                 # Check CC routing
                 cc_routing = self.config.get('cc_routing', {})
                 if str(cc_number) in cc_routing:
-                    Logging.log(f"CC {cc_number} accepted: defined in cc_routing")
+                    Logging.log(f"CC {cc_number} accepted: in cc_routing")
                     return True
                     
                 # Check module controls
@@ -158,18 +156,17 @@ class MidiValidator:
                     Logging.log(f"CC {cc_number} accepted: used in module control")
                     return True
                     
-                Logging.log(f"CC {cc_number} rejected: not used in configuration")
+                Logging.log(f"Message rejected: CC {cc_number} not in sources or module controls")
                 return False
         
-        # Other control messages
-        elif msg_type in ['pitch_bend', 'channel_pressure']:
-            source_type = 'pitch_bend' if msg_type == 'pitch_bend' else 'channel_pressure'
-            if source_type in sources:
-                Logging.log(f"{msg_type} accepted")
-                return True
+        # Check if source is defined in configuration
+        if source_key not in sources:
+            Logging.log(f"Message rejected: {source_key} not in instrument sources")
+            return False
         
-        Logging.log(f"Message rejected: {msg_type}")
-        return False
+        # Log acceptance for other message types
+        Logging.log(f"{msg_type} accepted")
+        return True
         
     def is_cc_used_in_module(self, module_name, cc_number):
         """
@@ -302,7 +299,7 @@ class MidiTranslator:
         
         return value
 
-class VoiceRouter:
+class VoiceNav:
     """
     Handles routing to voices and parameters.
     Manages voice allocation and parameter updates.
@@ -400,25 +397,25 @@ class VoiceRouter:
         
         return None
 
-class Router:
+class RouteMap:
     """
     Core message routing orchestration.
     Coordinates the flow of MIDI messages through the system.
     """
     def __init__(self, voice_manager):
         """
-        Initialize the Router with specialized components.
+        Initialize the RouteMap with specialized components.
         
         Args:
-            voice_manager (MPEVoiceManager): Voice management system
+            voice_manager (VoiceManager): Voice management system
         """
         self.voice_manager = voice_manager
         self.validator = MidiValidator()
         self.translator = MidiTranslator()
-        self.voice_router = VoiceRouter(voice_manager)
+        self.voice_router = VoiceNav(voice_manager)
         self.current_config = None
         
-        Logging.log("Initialized Router with components")
+        Logging.log("Initialized RouteMap with components")
         
     def set_config(self, config):
         """
@@ -445,7 +442,7 @@ class Router:
         Returns:
             dict: Routing result or None
         """
-        Logging.log("Routing message:")
+        Logging.log("Processing MIDI message:")
         Logging.log(message)
         
         # First check: Is message allowed

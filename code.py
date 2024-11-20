@@ -56,8 +56,8 @@ from hardware import RotaryEncoderHandler, VolumePotHandler
 from instrument_config import create_instrument, list_instruments
 from midi import MidiLogic
 from output_system import AudioOutputManager
-from voices import MPEVoiceManager
-from router import Router  # Updated import
+from voices import VoiceManager
+from router import RouteMap
 from constants import *
 
 import random
@@ -91,7 +91,7 @@ def _log(message, effect=None):
         print("\033[s", end='', file=sys.stderr)  # Save cursor position
         
         # Do 5 color cycles of the full string
-        for i in range(20):
+        for i in range(10):
             colored_text = ""
             # Generate full string with random colors per character
             for char in message:
@@ -198,16 +198,15 @@ class SynthManager:
     def _setup_synth(self):
         _log("Setting up synthesizer...")
         # Initialize voice manager with output manager
-        self.voice_manager = MPEVoiceManager(self.output_manager)
+        self.voice_manager = VoiceManager(self.output_manager)
         
         # Initialize message router with voice manager
-        self.message_router = Router(self.voice_manager)  # Updated class name
+        self.message_router = RouteMap(self.voice_manager)
         
         # Set initial instrument
         self.current_instrument = create_instrument('piano')
         if self.current_instrument:
             config = self.current_instrument.get_config()
-            self.voice_manager.set_config(config)
             self.message_router.set_config(config)
 
     def set_instrument(self, instrument_name):
@@ -215,7 +214,6 @@ class SynthManager:
         if new_instrument:
             self.current_instrument = new_instrument
             config = new_instrument.get_config()
-            self.voice_manager.set_config(config)
             self.message_router.set_config(config)
 
     def update(self):
@@ -381,7 +379,7 @@ class CandideConnectionManager:
 
 class Candide:
     def __init__(self):
-        _log("\nWakeup Candide!", effect='cycle')
+        _log("\nWakeup Candide!\n", effect='cycle')
         
         # Initialize audio output first
         self.output_manager = AudioOutputManager()
@@ -416,7 +414,7 @@ class Candide:
             initial_volume = self.hardware_manager.get_initial_volume()
             _log(f"Initial volume: {initial_volume:.3f}")
             self.output_manager.set_volume(initial_volume)
-            _log("\nCandide (v1.0) is awake!... ( ◔◡◔)♬", effect='cycle')
+            _log("\nCandide (v1.0) is awake!... ( ◔◡◔)♬\n", effect='cycle')
         except Exception as e:
             _log(f"[ERROR] Initialization error: {str(e)}")
             raise
@@ -505,7 +503,7 @@ class Candide:
         if self.output_manager:
             _log("Cleaning up audio...")
             self.output_manager.cleanup()
-        _log("\nCandide goes to sleep... ( ◡_◡)ᶻ 𝗓 𐰁", effect='cycle')
+        _log("\nCandide goes to sleep... ( ◡_◡)ᶻ 𝗓 𐰁\n", effect='cycle')
 
 def main():
     try:

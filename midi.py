@@ -9,6 +9,7 @@ Simply validates and passes through MIDI messages with channel information.
 import busio
 import time
 import sys
+import binascii
 from adafruit_midi import MIDI
 from constants import *
 
@@ -111,109 +112,185 @@ class MidiLogic:
         self.uart = uart
         self.text_callback = text_callback
         self.midi = MIDI(midi_in=self.uart, in_channel=0)
+        # Track MPE state per channel
+        self.channel_state = {}
+        for channel in range(16):
+            self.channel_state[channel] = {
+                'pitch_bend': 8192,  # Center value
+                'pressure': 0,
+                'cc74': 64,  # Center value for timbre
+                'in_mpe_setup': False
+            }
+        # Track partial message state
+        self.partial_message = {
+            'status': None,
+            'bytes_received': [],
+            'expected_bytes': 0
+        }
+
+    def _hex_dump(self, data):
+        """
+        Create a hex dump of the given data.
+        
+        Args:
+            data (bytes or list): Data to convert to hex
+        
+        Returns:
+            str: Formatted hex dump string
+        """
+        if not data:
+            return "No data to dump"
+        
+        # Convert to bytes if it's a list
+        if isinstance(data, list):
+            data = bytes(data)
+        
+        # Convert to hex and split into groups of two characters
+        hex_str = binascii.hexlify(data).decode('utf-8')
+        hex_groups = [hex_str[i:i+2] for i in range(0, len(hex_str), 2)]
+        
+        # Format hex dump with 8 bytes per line
+        lines = []
+        for i in range(0, len(hex_groups), 8):
+            line_group = hex_groups[i:i+8]
+            hex_line = ' '.join(line_group)
+            ascii_line = ''.join([chr(int(h, 16)) if 32 <= int(h, 16) < 127 else '.' for h in line_group])
+            lines.append(f"{hex_line:<24} {ascii_line}")
+        
+        return "\n".join(lines)
 
     def check_for_messages(self):
         """Check for and parse MIDI messages"""
         try:
             while self.uart.in_waiting:
-                # Read status byte
-                status_byte = self.uart.read(1)
-                if not status_byte:
-                    break
+                # If no partial message is being tracked, read a new status byte
+                if not self.partial_message['status']:
+                    status_byte = self.uart.read(1)
+                    if not status_byte:
+                        break
 
-                status = status_byte[0]
-                if status & 0x80:  # Is this a status byte?
-                    channel = status & 0x0F
-                    msg_type = status & 0xF0
-                    event = None
+                    status = status_byte[0]
+                    if status & 0x80:  # Is this a status byte?
+                        channel = status & 0x0F
+                        msg_type = status & 0xF0
 
-                    # Parse different message types
-                    if msg_type == MidiMessageType.NOTE_ON:
-                        note_byte = self.uart.read(1)
-                        velocity_byte = self.uart.read(1)
-                        if note_byte is None or velocity_byte is None:
-                            _log("[ERROR] Incomplete NOTE_ON message")
-                            break
-                        event = {
-                            'type': 'note_on',
+                        # Determine expected number of data bytes based on message type
+                        if msg_type in [MidiMessageType.NOTE_ON, MidiMessageType.NOTE_OFF, MidiMessageType.CONTROL_CHANGE]:
+                            expected_bytes = 2
+                        elif msg_type == MidiMessageType.CHANNEL_PRESSURE:
+                            expected_bytes = 1
+                        elif msg_type == MidiMessageType.PITCH_BEND:
+                            expected_bytes = 2
+                        else:
+                            # Unsupported message type, skip
+                            continue
+
+                        # Track partial message
+                        self.partial_message = {
+                            'status': status,
                             'channel': channel,
-                            'data': {
-                                'note': note_byte[0],
-                                'velocity': velocity_byte[0]
-                            }
+                            'msg_type': msg_type,
+                            'bytes_received': [],
+                            'expected_bytes': expected_bytes
                         }
-                        _log(f"Received NOTE_ON: Channel {channel}, Note {note_byte[0]}, Velocity {velocity_byte[0]}")
-                        _log(event)
 
-                    elif msg_type == MidiMessageType.NOTE_OFF:
-                        note_byte = self.uart.read(1)
-                        velocity_byte = self.uart.read(1)
-                        if note_byte is None or velocity_byte is None:
-                            _log("[ERROR] Incomplete NOTE_OFF message")
-                            break
-                        event = {
-                            'type': 'note_off',
-                            'channel': channel,
-                            'data': {
-                                'note': note_byte[0],
-                                'velocity': velocity_byte[0]
-                            }
+                # Read data bytes for the current message
+                while len(self.partial_message['bytes_received']) < self.partial_message['expected_bytes']:
+                    data_byte = self.uart.read(1)
+                    if data_byte is None:
+                        # Not enough bytes yet, wait for next iteration
+                        return
+                    self.partial_message['bytes_received'].append(data_byte[0])
+
+                # Process the complete message
+                status = self.partial_message['status']
+                channel = self.partial_message['channel']
+                msg_type = self.partial_message['msg_type']
+                data_bytes = self.partial_message['bytes_received']
+                event = None
+
+                if msg_type == MidiMessageType.NOTE_ON:
+                    event = {
+                        'type': 'note_on',
+                        'channel': channel,
+                        'data': {
+                            'note': data_bytes[0],
+                            'velocity': data_bytes[1],
+                            # Include current MPE state
+                            'initial_pitch_bend': self.channel_state[channel]['pitch_bend'],
+                            'initial_pressure': self.channel_state[channel]['pressure'],
+                            'initial_timbre': self.channel_state[channel]['cc74']
                         }
-                        _log(f"Received NOTE_OFF: Channel {channel}, Note {note_byte[0]}, Velocity {velocity_byte[0]}")
-                        _log(event)
+                    }
+                    _log(f"Received from Controller: Note On")
+                    _log(event)
+                    self.channel_state[channel]['in_mpe_setup'] = False
 
-                    elif msg_type == MidiMessageType.CONTROL_CHANGE:
-                        control_byte = self.uart.read(1)
-                        value_byte = self.uart.read(1)
-                        if control_byte is None or value_byte is None:
-                            _log("[ERROR] Incomplete CONTROL_CHANGE message")
-                            break
-                        event = {
-                            'type': 'cc',
-                            'channel': channel,
-                            'data': {
-                                'number': control_byte[0],
-                                'value': value_byte[0]
-                            }
+                elif msg_type == MidiMessageType.NOTE_OFF:
+                    event = {
+                        'type': 'note_off',
+                        'channel': channel,
+                        'data': {
+                            'note': data_bytes[0],
+                            'velocity': data_bytes[1]
                         }
-                        _log(f"Received CC:")
-                        _log(event)
+                    }
+                    _log(f"Received from Controller: Note Off")
+                    _log(event)
 
-                    elif msg_type == MidiMessageType.CHANNEL_PRESSURE:
-                        pressure_byte = self.uart.read(1)
-                        if pressure_byte is None:
-                            _log("[ERROR] Incomplete CHANNEL_PRESSURE message")
-                            break
-                        event = {
-                            'type': 'pressure',
-                            'channel': channel,
-                            'data': {
-                                'value': pressure_byte[0]
-                            }
+                elif msg_type == MidiMessageType.CONTROL_CHANGE:
+                    # Track CC74 (timbre) state
+                    if data_bytes[0] == 74:
+                        self.channel_state[channel]['cc74'] = data_bytes[1]
+                    
+                    event = {
+                        'type': 'cc',
+                        'channel': channel,
+                        'data': {
+                            'number': data_bytes[0],
+                            'value': data_bytes[1]
                         }
-                        _log(f"Received CHANNEL_PRESSURE: Channel {channel}, Pressure {pressure_byte[0]}")
-                        _log(event)
+                    }
+                    _log(f"Received from Controller: CC")
+                    _log(event)
 
-                    elif msg_type == MidiMessageType.PITCH_BEND:
-                        lsb_byte = self.uart.read(1)
-                        msb_byte = self.uart.read(1)
-                        if lsb_byte is None or msb_byte is None:
-                            _log("[ERROR] Incomplete PITCH_BEND message")
-                            break
-                        bend_value = (msb_byte[0] << 7) | lsb_byte[0]
-                        event = {
-                            'type': 'pitch_bend',
-                            'channel': channel,
-                            'data': {
-                                'value': bend_value
-                            }
+                elif msg_type == MidiMessageType.CHANNEL_PRESSURE:
+                    # Track pressure state
+                    self.channel_state[channel]['pressure'] = data_bytes[0]
+                    event = {
+                        'type': 'pressure',
+                        'channel': channel,
+                        'data': {
+                            'value': data_bytes[0]
                         }
-                        _log(f"Received PITCH_BEND: Channel {channel}, Value {bend_value}")
-                        _log(event)
+                    }
+                    _log(f"Received from Controller: Channel Pressure")
+                    _log(event)
 
-                    # Pass parsed message to callback if valid
-                    if event and self.text_callback:
-                        self.text_callback(event)
+                elif msg_type == MidiMessageType.PITCH_BEND:
+                    bend_value = (data_bytes[1] << 7) | data_bytes[0]
+                    # Track pitch bend state
+                    self.channel_state[channel]['pitch_bend'] = bend_value
+                    event = {
+                        'type': 'pitch_bend',
+                        'channel': channel,
+                        'data': {
+                            'value': bend_value
+                        }
+                    }
+                    _log(f"Received from Controller: Pitch Bend")
+                    _log(event)
+
+                # Pass parsed message to callback if valid
+                if event and self.text_callback:
+                    self.text_callback(event)
+
+                # Reset partial message tracking
+                self.partial_message = {
+                    'status': None,
+                    'bytes_received': [],
+                    'expected_bytes': 0
+                }
 
         except Exception as e:
             _log(f"[ERROR] Error reading UART: {str(e)}")
