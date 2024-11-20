@@ -94,7 +94,7 @@ class Route:
     Handles parameter routing with advanced processing capabilities.
     Supports various curve transformations and scaling.
     """
-    def __init__(self, source_id, target_id, processing=None, global_value_getter=None):
+    def __init__(self, source_id, target_id, processing=None):
         # Ensure processing is a dictionary, default to empty dict
         processing = processing or {}
         
@@ -109,7 +109,6 @@ class Route:
         # Safely extract processing parameters with defaults
         self.amount = FixedPoint.from_float(processing.get('amount', 1.0))
         self.curve = processing.get('curve', 'linear')
-        self.global_value_getter = global_value_getter
         
         # Extract range configuration with robust defaults
         range_config = processing.get('range', {})
@@ -125,16 +124,8 @@ class Route:
         """Process input value through configured transformations."""
         _log(f"Processing route value: source={self.source_id}, target={self.target_id}, input={value}")
         
-        # Check for global value if no input value provided
-        if value is None and self.global_value_getter:
-            # Try to get global value based on source_id
-            global_key = self.source_id.replace('.', '.')
-            value = self.global_value_getter(global_key)
-            _log(f"Retrieved global value for {global_key}: {value}")
-        
-        # If still no value, return None
         if value is None:
-            _log(f"[ERROR] No value found for source {self.source_id}")
+            _log(f"[ERROR] No value provided for source {self.source_id}")
             return None
         
         # Special handling for envelope parameters - keep as float
@@ -188,7 +179,7 @@ class NoteState:
     Comprehensive note state management with advanced routing capabilities.
     Handles per-note parameter tracking and modulation.
     """
-    def __init__(self, channel, note, velocity, config, synthesis, routes, global_value_getter=None):
+    def __init__(self, channel, note, velocity, config, synthesis, routes):
         _log(f"Creating NoteState:")
         _log(f"  channel={channel}")
         _log(f"  note={note}")
@@ -201,13 +192,12 @@ class NoteState:
         self.synthesis = synthesis
         self.config = config
         
-        # Update routes with global value getter
+        # Initialize routes
         self.routes = [
             Route(
                 route.source_id, 
                 route.target_id, 
-                route.processing, 
-                global_value_getter
+                route.processing
             ) for route in routes
         ]
         
@@ -352,10 +342,8 @@ class VoiceManager:
     def __init__(self, output_manager, sample_rate=SAMPLE_RATE):
         _log("Initializing VoiceManager")
         self.active_notes = {}
-        self.pending_values = {}
         self.current_config = None
         self.routes = []
-        self.global_value_getter = None  # New attribute for global value retrieval
         
         # Create synthesis instance
         self.synthesis = Synthesis()
@@ -376,16 +364,6 @@ class VoiceManager:
         except Exception as e:
             _log(f"[ERROR] Failed to initialize synthio synthesizer: {str(e)}")
             self.synthio_synth = None
-    
-    def set_global_value_getter(self, getter):
-        """
-        Set a function to retrieve global values.
-        
-        Args:
-            getter (callable): Function that takes a source key and returns a value
-        """
-        self.global_value_getter = getter
-        _log(f"Global value getter set: {getter}")
     
     def set_config(self, config):
         """Update current instrument configuration and pre-process routes"""
@@ -409,25 +387,10 @@ class VoiceManager:
             source_id = f"{source['id']}.{source['attribute']}" if 'attribute' in source else source['id']
             target_id = f"{destination['id']}.{destination['attribute']}" if 'attribute' in destination else destination['id']
             
-            route = Route(source_id, target_id, processing, self.global_value_getter)
+            route = Route(source_id, target_id, processing)
             self.routes.append(route)
             
         _log(f"Processed {len(self.routes)} routes from configuration")
-    
-    def store_pending_value(self, channel, source_id, value, control_name=None):
-        """Store values that arrive before note-on event."""
-        key = (channel, source_id)
-        self.pending_values[key] = (value, control_name)
-        _log(f"Stored pending value: channel={channel}, source_id={source_id}, value={value}")
-    
-    def get_pending_values(self, channel):
-        """Retrieve and clear pending values for a specific channel."""
-        values = {}
-        for (c, source_id), (value, control_name) in list(self.pending_values.items()):
-            if c == channel:
-                values[source_id] = (value, control_name)
-                del self.pending_values[(c, source_id)]
-        return values
     
     def allocate_voice(self, channel, note, velocity):
         """Create a new voice for a note"""
@@ -441,12 +404,11 @@ class VoiceManager:
             return None
         
         try:
-            # Create note state with pre-processed routes and global value getter
+            # Create note state with pre-processed routes
             note_state = NoteState(
                 channel, note, velocity,
                 self.current_config, self.synthesis,
-                self.routes,
-                self.global_value_getter
+                self.routes
             )
             
             # Store voice
