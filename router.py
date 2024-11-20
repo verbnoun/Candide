@@ -260,6 +260,10 @@ class MidiTranslator:
         if msg_type == 'channel_pressure' and source_id == 'channel_pressure':
             return data.get('value', 0)
         
+        if msg_type == 'cc' and source_id == 'cc':
+            if attribute == 'value' and source.get('number') == data.get('number'):
+                return data.get('value', 0)
+        
         Logging.log("[ERROR] No source value found for specified source")
         
         return None
@@ -313,6 +317,68 @@ class VoiceNav:
     def __init__(self, voice_manager):
         self.voice_manager = voice_manager
         
+    def _update_config_value(self, destination, value):
+        """Update a value in the config based on destination path"""
+        if not self.voice_manager.current_config:
+            return
+            
+        # Split path into parts (e.g., 'amplifier.envelope.attack.time')
+        parts = destination.get('attribute', '').split('.')
+        if not parts:
+            return
+            
+        # Navigate to the correct location in config
+        config = self.voice_manager.current_config
+        current = config
+        
+        # Handle module.envelope.stage.param path
+        if len(parts) >= 4 and parts[1] == 'envelope':
+            module = current.get(parts[0], {})
+            if not module:
+                Logging.log(f"[ERROR] Module {parts[0]} not found")
+                return
+                
+            envelope = module.get('envelope', {})
+            if not envelope:
+                Logging.log(f"[ERROR] Envelope not found in {parts[0]}")
+                return
+                
+            stage = envelope.get(parts[2], {})
+            if not stage:
+                Logging.log(f"[ERROR] Stage {parts[2]} not found")
+                return
+                
+            param = stage.get(parts[3], {})
+            if not param:
+                Logging.log(f"[ERROR] Parameter {parts[3]} not found")
+                return
+                
+            # Update only the value field while preserving other fields
+            if isinstance(param, dict) and 'value' in param:
+                param['value'] = FixedPoint.to_float(value)
+                Logging.log(f"Updated envelope parameter: {destination.get('attribute')} = {FixedPoint.to_float(value)}")
+                return
+        
+        # Handle direct module parameters
+        if len(parts) == 2:
+            module = current.get(parts[0], {})
+            if not module:
+                Logging.log(f"[ERROR] Module {parts[0]} not found")
+                return
+                
+            param = module.get(parts[1], {})
+            if not param:
+                Logging.log(f"[ERROR] Parameter {parts[1]} not found")
+                return
+                
+            # Update only the value field while preserving other fields
+            if isinstance(param, dict) and 'value' in param:
+                param['value'] = FixedPoint.to_float(value)
+                Logging.log(f"Updated module parameter: {destination.get('attribute')} = {FixedPoint.to_float(value)}")
+                return
+        
+        Logging.log(f"[ERROR] Could not update config value: {destination.get('attribute')}")
+        
     def route_to_destination(self, destination, value, message):
         """
         Route a transformed value to its destination.
@@ -323,36 +389,47 @@ class VoiceNav:
             message (dict): Original MIDI message
         """
         dest_id = destination.get('id')
-        attribute = destination.get('attribute')
+        attribute = destination.get('attribute', '')
         
         Logging.log("Routing to destination:")
         Logging.log(f"  Destination ID: {dest_id}")
         Logging.log(f"  Attribute: {attribute}")
         Logging.log(f"  Value: {value}")
         
+        # For CC messages, update config first
+        if message.get('type') == 'cc':
+            self._update_config_value(destination, value)
+        
         # Find the corresponding voice
         channel = message.get('channel')
         note = message.get('data', {}).get('note')
-        voice = self.voice_manager.get_voice(channel, note)
         
-        if not voice:
-            Logging.log("[ERROR] No voice found for routing")
-            return
-        
-        Logging.log("Voice found for routing")
-        
-        # Route to specific module/parameter
-        if dest_id == 'oscillator' and attribute == 'frequency':
-            Logging.log("Routing to oscillator frequency")
-            voice.handle_value_change('frequency', value)
-        elif dest_id == 'amplifier' and attribute == 'gain':
-            Logging.log("Routing to amplifier gain")
-            voice.handle_value_change('amplitude', value)
-        elif dest_id == 'filter' and attribute == 'frequency':
-            Logging.log("Routing to filter frequency")
-            voice.handle_value_change('filter_freq', value)
+        # For CC messages, get all active voices
+        voices = []
+        if message.get('type') == 'cc':
+            voices = list(self.voice_manager.active_notes.values())
         else:
-            Logging.log("[ERROR] Unhandled destination routing")
+            voice = self.voice_manager.get_voice(channel, note)
+            if voice:
+                voices = [voice]
+        
+        # Apply value to all relevant voices
+        for voice in voices:
+            Logging.log(f"Routing to voice: channel={voice.channel}, note={voice.note}")
+            
+            # Handle envelope parameters
+            if '.' in attribute:
+                # e.g., 'envelope.attack.time'
+                voice.handle_value_change(attribute, value)
+            # Handle direct parameters
+            elif dest_id == 'oscillator' and attribute == 'frequency':
+                voice.handle_value_change('frequency', value)
+            elif dest_id == 'amplifier' and attribute == 'gain':
+                voice.handle_value_change('amplitude', value)
+            elif dest_id == 'filter' and attribute == 'frequency':
+                voice.handle_value_change('filter_freq', value)
+            else:
+                Logging.log(f"[ERROR] Unhandled destination: {dest_id}.{attribute}")
         
         Logging.log("Destination routing complete")
         
@@ -420,6 +497,7 @@ class RouteMap:
         self.translator = MidiTranslator()
         self.voice_router = VoiceNav(voice_manager)
         self.current_config = None
+        self.global_values = {}  # New attribute to store global values
         
         Logging.log("Initialized RouteMap with components")
         
@@ -434,6 +512,9 @@ class RouteMap:
         self.validator.set_config(config)
         self.translator.set_config(config)
         self.voice_manager.set_config(config)
+        
+        # Reset global values when configuration changes
+        self.global_values = {}
         
         Logging.log(f"Configuration set for instrument: {config.get('name', 'Unknown')}")
         Logging.log(config)
@@ -484,11 +565,7 @@ class RouteMap:
                 Logging.log("Voice released")
                 return {'type': 'voice_released', 'voice': voice}
         
-        # Handle CC messages
-        if msg_type == 'cc':
-            return self.voice_router.route_cc_message(message)
-        
-        # Handle other control messages
+        # Process patches for all message types including CC
         patches = self.current_config.get('patches', [])
         Logging.log(f"Processing patches: {len(patches)} patches")
         
@@ -497,6 +574,16 @@ class RouteMap:
             source = patch.get('source', {})
             destination = patch.get('destination', {})
             processing = patch.get('processing', {})
+            
+            # CRITICAL CHANGE: Only process CC patches for CC messages
+            if msg_type == 'cc':
+                # Skip non-CC patches
+                if source.get('id') != 'cc':
+                    continue
+                
+                # Ensure CC number matches
+                if source.get('number') != data.get('number'):
+                    continue
             
             Logging.log("Processing patch:")
             Logging.log(f"  Source: {source}")
@@ -512,8 +599,16 @@ class RouteMap:
                 Logging.log(f"[ERROR] Route source {source_id} not found in configuration")
                 continue
             
-            # Determine source value
-            source_value = self.translator.get_source_value(source, message)
+            # For CC messages, use the value directly
+            if msg_type == 'cc' and source_id == 'cc' and source.get('attribute') == 'value':
+                source_value = data.get('value')
+                
+                # Store global value for potential later use
+                global_source_key = f"{source_id}.{source.get('number')}"
+                self.global_values[global_source_key] = source_value
+            else:
+                # For other messages, use translator
+                source_value = self.translator.get_source_value(source, message)
             
             if source_value is not None:
                 processed_any_patch = True
@@ -550,3 +645,15 @@ class RouteMap:
     def process_updates(self):
         """Process any pending updates in voice management"""
         self.voice_manager.cleanup_voices()
+    
+    def get_global_value(self, source_key):
+        """
+        Retrieve a global value by source key.
+        
+        Args:
+            source_key (str): Key to retrieve global value
+        
+        Returns:
+            value or None if not found
+        """
+        return self.global_values.get(source_key)

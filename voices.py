@@ -73,11 +73,11 @@ def _log(message):
     RESET = "\033[0m" 
     
     if VOICES_DEBUG:
-        if "rejected" in message:
+        if "rejected" in str(message):
             color = DARK_GRAY
-        elif "[ERROR]" in message:
+        elif "[ERROR]" in str(message):
             color = RED
-        elif "[SYNTHIO]" in message:
+        elif "[SYNTHIO]" in str(message):
             color = GREEN
         else:
             color = CYAN
@@ -94,291 +94,189 @@ class Route:
     Handles parameter routing with advanced processing capabilities.
     Supports various curve transformations and scaling.
     """
-    def __init__(self, config):
-        _log(f"Creating Route with config:")
-        _log(config)
+    def __init__(self, source_id, target_id, processing, global_value_getter=None):
+        _log(f"Creating Route:")
+        _log(f"  Source: {source_id}")
+        _log(f"  Target: {target_id}")
+        _log(f"  Processing: {processing}")
         
-        # Direct config validation - fail fast if missing required fields
-        if not isinstance(config, dict):
-            _log("[ERROR] Route config must be a dictionary")
-            raise ValueError("Route config must be a dictionary")
-            
-        self.source_id = config['source']
-        self.target_id = config['target']
+        self.source_id = source_id
+        self.target_id = target_id
+        self.amount = FixedPoint.from_float(processing.get('amount', 1.0))
+        self.curve = processing.get('curve', 'linear')
+        self.global_value_getter = global_value_getter
         
-        if not self.source_id or not self.target_id:
-            _log("[ERROR] Route requires both source and target IDs")
-            raise ValueError("Route requires both source and target IDs")
+        # Extract range configuration
+        range_config = processing.get('range', {})
+        self.in_min = range_config.get('in_min', 0)
+        self.in_max = range_config.get('in_max', 127)
+        self.out_min = FixedPoint.from_float(range_config.get('out_min', 0.0))
+        self.out_max = FixedPoint.from_float(range_config.get('out_max', 1.0))
         
-        self.amount = FixedPoint.from_float(config.get('amount', 1.0))
-        self.curve = config['curve']
-        
-        # Direct range extraction - no recursive processing
-        range_config = config.get('range', {})
-        self.min_value = FixedPoint.from_float(range_config.get('min', 0.0))
-        self.max_value = FixedPoint.from_float(range_config.get('max', 1.0))
-        
-        # State tracking
-        self.current_value = FixedPoint.ZERO
-        self.last_value = FixedPoint.ZERO
-        
-        _log(f"Route created successfully:")
-        _log(f"  Source: {self.source_id}")
-        _log(f"  Target: {self.target_id}")
-        _log(f"  Amount: {self.amount}")
-        _log(f"  Curve: {self.curve}")
-    
     def process_value(self, value):
-        """
-        Process input value through configured transformations.
-        
-        Args:
-            value (float/int): Input value to process
-        
-        Returns:
-            FixedPoint: Processed and scaled value
-        """
+        """Process input value through configured transformations."""
         _log(f"Processing route value: source={self.source_id}, target={self.target_id}, input={value}")
         
+        # Check for global value if no input value provided
+        if value is None and self.global_value_getter:
+            # Try to get global value based on source_id
+            global_key = self.source_id.replace('.', '.')
+            value = self.global_value_getter(global_key)
+            _log(f"Retrieved global value for {global_key}: {value}")
+        
+        # If still no value, return None
+        if value is None:
+            _log(f"[ERROR] No value found for source {self.source_id}")
+            return None
+        
+        # Range mapping
         if not isinstance(value, FixedPoint):
-            value = FixedPoint.from_float(value)
+            value = FixedPoint.from_float(float(value))
+            
+        # Normalize input to 0-1 range
+        if self.in_max != self.in_min:
+            value = FixedPoint.from_float(
+                (float(value) - self.in_min) / (self.in_max - self.in_min)
+            )
         
-        # Store previous value
-        self.last_value = self.current_value
-        
-        # Direct curve application without recursive processing
+        # Apply curve
         if self.curve == 'exponential':
-            processed = self._exponential_curve(value)
-            _log(f"Applied exponential curve transformation")
+            value = FixedPoint.multiply(value, value)
         elif self.curve == 'logarithmic':
-            processed = self._logarithmic_curve(value)
-            _log(f"Applied logarithmic curve transformation")
+            value = FixedPoint.ONE - FixedPoint.multiply(FixedPoint.ONE - value, FixedPoint.ONE - value)
         elif self.curve == 's_curve':
-            processed = self._s_curve(value)
-            _log(f"Applied S-curve transformation")
-        else:  # linear
-            processed = value
-            _log(f"Using linear transformation")
+            x2 = FixedPoint.multiply(value, value)
+            x3 = FixedPoint.multiply(x2, value)
+            value = FixedPoint.multiply(x2, FixedPoint.from_float(3.0)) - \
+                   FixedPoint.multiply(x3, FixedPoint.from_float(2.0))
+            
+        # Scale to output range
+        range_size = self.out_max - self.out_min
+        value = self.out_min + FixedPoint.multiply(value, range_size)
         
-        # Direct range scaling
-        range_size = self.max_value - self.min_value
-        scaled_value = self.min_value + FixedPoint.multiply(processed, range_size)
+        # Apply amount
+        value = FixedPoint.multiply(value, self.amount)
         
-        # Apply modulation amount
-        self.current_value = FixedPoint.multiply(scaled_value, self.amount)
-        
-        _log(f"Route processed: last_value={self.last_value}, current_value={self.current_value}")
-        
-        return self.current_value
-    
-    def _exponential_curve(self, value):
-        """Exponential curve transformation"""
-        _log(f"Computing exponential curve for value: {value}")
-        exp_scale = FixedPoint.from_float(5.0)
-        scaled = FixedPoint.multiply(value, exp_scale)
-        x2 = FixedPoint.multiply(scaled, scaled)
-        x3 = FixedPoint.multiply(x2, scaled)
-        processed = (FixedPoint.ONE + scaled + 
-                     FixedPoint.multiply(x2, FixedPoint.from_float(0.5)) + 
-                     FixedPoint.multiply(x3, FixedPoint.from_float(0.166)))
-        result = FixedPoint.multiply(processed, FixedPoint.from_float(0.0084))
-        _log(f"Exponential curve result: {result}")
-        return result
-    
-    def _logarithmic_curve(self, value):
-        """Logarithmic curve transformation"""
-        _log(f"Computing logarithmic curve for value: {value}")
-        result = FixedPoint.ONE - FixedPoint.multiply(
-            FixedPoint.ONE - value,
-            FixedPoint.ONE - value
-        )
-        _log(f"Logarithmic curve result: {result}")
-        return result
-    
-    def _s_curve(self, value):
-        """S-curve transformation"""
-        _log(f"Computing S-curve for value: {value}")
-        x2 = FixedPoint.multiply(value, value)
-        x3 = FixedPoint.multiply(x2, value)
-        result = FixedPoint.multiply(x2, FixedPoint.from_float(3.0)) - \
-               FixedPoint.multiply(x3, FixedPoint.from_float(2.0))
-        _log(f"S-curve result: {result}")
-        return result
+        _log(f"Route processed: value={value}")
+        return value
 
 class NoteState:
     """
     Comprehensive note state management with advanced routing capabilities.
     Handles per-note parameter tracking and modulation.
     """
-    def __init__(self, channel, note, velocity, config, synthesis):
+    def __init__(self, channel, note, velocity, config, synthesis, routes, global_value_getter=None):
         _log(f"Creating NoteState:")
         _log(f"  channel={channel}")
         _log(f"  note={note}")
         _log(f"  velocity={velocity}")
         
-        if not isinstance(config, dict):
-            _log("[ERROR] NoteState config must be a dictionary")
-            raise ValueError("NoteState config must be a dictionary")
-        
         self.channel = channel
         self.note = note
         self.active = True
         self.creation_time = time.monotonic()
-        self.last_update = self.creation_time
-        self.config = config
         self.synthesis = synthesis
+        self.config = config
         
-        # Explicit parameter initialization with FixedPoint values
+        # Update routes with global value getter
+        self.routes = [
+            Route(
+                route.source_id, 
+                route.target_id, 
+                route.processing, 
+                global_value_getter
+            ) for route in routes
+        ]
+        
+        # Initialize core parameters
+        velocity_fixed = FixedPoint.normalize_midi_value(velocity)
+        note_fixed = FixedPoint.from_float(float(note))
+        freq_fixed = FixedPoint.midi_note_to_fixed(note)
+        
         self.parameter_values = {
-            'note': FixedPoint.from_float(float(note)),  # Fixed-point note number
-            'velocity': FixedPoint.normalize_midi_value(velocity),  # Normalized to fixed-point
-            'frequency': FixedPoint.midi_note_to_fixed(note),  # Fixed-point frequency
-            'amplitude': FixedPoint.normalize_midi_value(velocity)  # Normalized to fixed-point
+            'amplitude': velocity_fixed,
+            'note_on.note': note_fixed,
+            'note_on.velocity': velocity_fixed,
+            'frequency': freq_fixed
         }
         
         _log("Initialized parameter values:")
         for key, value in self.parameter_values.items():
             _log(f"  {key}: {value} (float: {FixedPoint.to_float(value)})")
         
-        # Initialize module parameters directly
-        for module_name in ['oscillator', 'amplifier', 'filter']:  # Keep all module support
-            if module_name in config:
-                self._init_module_parameters(module_name, config[module_name])
-        
-        # Flat route management
-        self.routes_by_source = {}
-        self.routes_by_target = {}
-        self._create_routes()
-        
         # Create synthio Note
         self.synth_note = self._create_synthio_note()
         
-        _log(f"NoteState initialized with {len(self.routes_by_source)} source routes")
-    
-    def _init_module_parameters(self, module_name, module_config):
-        """Initialize parameters for a module from config"""
-        _log(f"Initializing parameters for module: {module_name}")
-        
-        if not isinstance(module_config, dict):
-            return
-            
-        for param_name, param_data in module_config.items():
-            if isinstance(param_data, dict) and 'value' in param_data:
-                param_id = f"{module_name}.{param_name}"
-                self.parameter_values[param_id] = FixedPoint.from_float(param_data['value'])
-                _log(f"Set parameter {param_id} to {self.parameter_values[param_id]}")
-    
-    def _create_routes(self):
-        """Create routing configuration based on instrument patches."""
-        _log("Creating routes from instrument configuration")
-        
-        patches = self.config.get('patches', [])
-        if not patches:
-            _log("[ERROR] No patches found in configuration")
-            raise ValueError("No patches found in configuration")
-        
-        for patch_config in patches:
-            source = patch_config['source']
-            destination = patch_config['destination']
-            processing = patch_config['processing']
-            
-            # Flatten route configuration
-            route_config = {
-                'source': f"{source['id']}.{source['attribute']}" if 'attribute' in source else source['id'],
-                'target': f"{destination['id']}.{destination['attribute']}" if 'attribute' in destination else destination['id'],
-                'amount': processing.get('amount', 1.0),
-                'curve': processing.get('curve', 'linear'),
-                'range': processing.get('range', {})
-            }
-            
-            _log("Creating route with config:")
-            _log(route_config)
-            
-            # Create route with flattened config
-            route = Route(route_config)
-            
-            # Index routes directly
-            source_id = route.source_id
-            target_id = route.target_id
-            
-            if source_id not in self.routes_by_source:
-                self.routes_by_source[source_id] = []
-            self.routes_by_source[source_id].append(route)
-            
-            if target_id not in self.routes_by_target:
-                self.routes_by_target[target_id] = []
-            self.routes_by_target[target_id].append(route)
-            
-            _log(f"Route created and indexed: source={source_id}, target={target_id}")
-    
     def _create_synthio_note(self):
         """Create synthio Note object from config"""
         try:
             _log("[SYNTHIO] Creating Note object")
             
+            if 'oscillator' not in self.config:
+                _log("[ERROR] No oscillator configuration found")
+                return None
+                
             osc_config = self.config['oscillator']
-            waveform_config = osc_config['waveform']
-            env_config = self.config.get('envelope', {}).get('stages', {})
+            waveform_config = osc_config.get('waveform', {})
             
-            # Extract envelope values from config without defaults
-            attack = env_config.get('attack', {})
-            decay = env_config.get('decay', {})
-            sustain = env_config.get('sustain', {})
-            release = env_config.get('release', {})
-            
-            # Create envelope from config, converting fixed-point to float
-            envelope = synthio.Envelope(
-                attack_time=float(attack.get('time', {}).get('value', 0.1)),
-                decay_time=float(decay.get('time', {}).get('value', 0.05)),
-                release_time=float(release.get('time', {}).get('value', 0.2)),
-                attack_level=float(attack.get('level', {}).get('value', 1.0)),
-                sustain_level=float(sustain.get('level', {}).get('value', 0.8))
-            )
-            
-            _log("[SYNTHIO] Created envelope:")
-            _log(f"[SYNTHIO]   Attack: {envelope.attack_time}s")
-            _log(f"[SYNTHIO]   Decay: {envelope.decay_time}s")
-            _log(f"[SYNTHIO]   Release: {envelope.release_time}s")
-            _log(f"[SYNTHIO]   Attack Level: {envelope.attack_level}")
-            _log(f"[SYNTHIO]   Sustain Level: {envelope.sustain_level}")
-            
-            # Get waveform from synthesis
+            # Get waveform
             waveform = self.synthesis.waveform_manager.get_waveform(
-                waveform_config.get('default', 'triangle'),
+                waveform_config.get('type', 'triangle'),
                 waveform_config
             )
             if not waveform:
                 _log("[ERROR] Failed to get waveform")
-                raise ValueError("Failed to get waveform")
-                
-            _log(f"[SYNTHIO] Using waveform: {len(waveform)} samples")
+                return None
             
-            # Convert fixed-point values to float just before creating note
+            # Create note parameters
             note_params = {
                 'frequency': FixedPoint.to_float(self.parameter_values['frequency']),
-                'waveform': waveform,
-                'envelope': envelope,
-                'amplitude': FixedPoint.to_float(self.parameter_values['amplitude'])
+                'amplitude': FixedPoint.to_float(self.parameter_values['amplitude']),
+                'waveform': waveform
             }
             
-            # Add filter if configured
-            if 'filter' in self.config:
-                filter_config = self.config['filter']
-                note_params['filter'] = synthio.Biquad(
-                    filter_config.get('b0', 1.0),
-                    filter_config.get('b1', 0.0),
-                    filter_config.get('b2', 0.0),
-                    filter_config.get('a1', 0.0),
-                    filter_config.get('a2', 0.0)
-                )
+            # Only add envelope if it exists in config
+            if 'amplifier' in self.config and 'envelope' in self.config['amplifier']:
+                env_config = self.config['amplifier']['envelope']
+                
+                # Extract envelope parameters only if they exist in config
+                env_params = {}
+                
+                if 'attack' in env_config:
+                    attack = env_config['attack']
+                    if 'time' in attack and 'value' in attack['time']:
+                        env_params['attack_time'] = float(attack['time']['value'])
+                    if 'level' in attack and 'value' in attack['level']:
+                        env_params['attack_level'] = float(attack['level']['value'])
+                        
+                if 'decay' in env_config:
+                    decay = env_config['decay']
+                    if 'time' in decay and 'value' in decay['time']:
+                        env_params['decay_time'] = float(decay['time']['value'])
+                        
+                if 'sustain' in env_config:
+                    sustain = env_config['sustain']
+                    if 'level' in sustain and 'value' in sustain['level']:
+                        env_params['sustain_level'] = float(sustain['level']['value'])
+                        
+                if 'release' in env_config:
+                    release = env_config['release']
+                    if 'time' in release and 'value' in release['time']:
+                        env_params['release_time'] = float(release['time']['value'])
+                
+                # Only create envelope if we have parameters
+                if env_params:
+                    _log("[SYNTHIO] Creating envelope with params:")
+                    _log(env_params)
+                    note_params['envelope'] = synthio.Envelope(**env_params)
             
+            # Create note
             note = synthio.Note(**note_params)
             
             _log(f"[SYNTHIO] Created Note object:")
             _log(f"[SYNTHIO]   Frequency: {note.frequency:.1f}Hz")
             _log(f"[SYNTHIO]   Amplitude: {note.amplitude:.3f}")
-            _log(f"[SYNTHIO]   Has Filter: {hasattr(note, 'filter')}")
-            _log(f"[SYNTHIO]   Note ID: {id(note)}")
+            _log(f"[SYNTHIO]   Has Envelope: {'envelope' in note_params}")
             
             return note
             
@@ -390,32 +288,26 @@ class NoteState:
         """Process value changes through configured routes."""
         _log(f"Handling value change: source={source_id}, value={value}")
         
-        if source_id not in self.routes_by_source:
-            _log(f"[ERROR] No routes found for source: {source_id}")
-            return
-        
-        # Store source value directly
+        # Store source value
         self.parameter_values[source_id] = value
         
-        # Process through routes without recursion
-        for route in self.routes_by_source[source_id]:
-            processed_value = route.process_value(value)
-            target_id = route.target_id
-            
-            # Direct parameter update
-            self.parameter_values[target_id] = processed_value
-            
-            # Use synthesis for note parameter updates
-            if self.synth_note:
-                self.synthesis.update_note(self.synth_note, target_id, processed_value)
-            
-            _log(f"Route processed: source={source_id}, target={target_id}, processed_value={processed_value}")
-    
-    def get_parameter_value(self, param_id):
-        """Retrieve current value for a specific parameter."""
-        value = self.parameter_values.get(param_id, FixedPoint.ZERO)
-        _log(f"Retrieved parameter value: param_id={param_id}, value={value}")
-        return value
+        # Process through routes
+        for route in self.routes:
+            if route.source_id == source_id:
+                processed_value = route.process_value(value)
+                target_id = route.target_id
+                
+                # Store processed value
+                self.parameter_values[target_id] = processed_value
+                
+                # Update synthio note if needed
+                if self.synth_note:
+                    if target_id == 'oscillator.frequency':
+                        self.synth_note.frequency = FixedPoint.to_float(processed_value)
+                    elif target_id == 'amplifier.gain':
+                        self.synth_note.amplitude = FixedPoint.to_float(processed_value)
+                
+                _log(f"Route processed: target={target_id}, value={processed_value}")
     
     def handle_release(self):
         """Process note release"""
@@ -423,7 +315,6 @@ class NoteState:
         if self.active:
             self.active = False
             self.release_time = time.monotonic()
-            _log("[SYNTHIO] Note entering release phase")
             _log("Note release completed")
 
 class VoiceManager:
@@ -435,6 +326,8 @@ class VoiceManager:
         self.active_notes = {}
         self.pending_values = {}
         self.current_config = None
+        self.routes = []
+        self.global_value_getter = None  # New attribute for global value retrieval
         
         # Create synthesis instance
         self.synthesis = Synthesis()
@@ -446,48 +339,58 @@ class VoiceManager:
             )
             _log("[SYNTHIO] Initialized synthesizer")
             _log(f"[SYNTHIO] Sample Rate: {self.synthio_synth.sample_rate}")
+            
+            # Attach synthesizer to output manager
+            if output_manager and hasattr(output_manager, 'attach_synthesizer'):
+                output_manager.attach_synthesizer(self.synthio_synth)
+                _log("[SYNTHIO] Attached synthesizer to output manager")
+                
         except Exception as e:
             _log(f"[ERROR] Failed to initialize synthio synthesizer: {str(e)}")
             self.synthio_synth = None
-
-        # Attach synthesizer to output manager
-        if output_manager and hasattr(output_manager, 'attach_synthesizer'):
-            try:
-                output_manager.attach_synthesizer(self.synthio_synth)
-                _log("[SYNTHIO] Attached synthesizer to output manager")
-            except Exception as e:
-                _log(f"[ERROR] Failed to attach synthesizer: {str(e)}")
-
+    
+    def set_global_value_getter(self, getter):
+        """
+        Set a function to retrieve global values.
+        
+        Args:
+            getter (callable): Function that takes a source key and returns a value
+        """
+        self.global_value_getter = getter
+        _log(f"Global value getter set: {getter}")
+    
     def set_config(self, config):
-        """Update current instrument configuration"""
+        """Update current instrument configuration and pre-process routes"""
         _log(f"Setting instrument configuration:")
         _log(config)
         
         if not isinstance(config, dict):
             _log("[ERROR] VoiceManager config must be a dictionary")
             raise ValueError("VoiceManager config must be a dictionary")
-            
-        if 'oscillator' not in config:
-            _log("[ERROR] Configuration missing required oscillator module")
-            raise ValueError("Configuration missing required oscillator module")
-            
-        if 'amplifier' not in config:
-            _log("[ERROR] Configuration missing required amplifier module")
-            raise ValueError("Configuration missing required amplifier module")
         
         self.current_config = config
+        self.routes = []
         
-        if self.synthio_synth:
-            synth_config = config.get('synthesizer', {})
-            if synth_config:
-                self.synthio_synth.sample_rate = synth_config.get('sample_rate', 44100)
-                _log(f"[SYNTHIO] Updated sample rate: {self.synthio_synth.sample_rate}")
+        # Pre-process routes from patches
+        patches = config.get('patches', [])
+        for patch in patches:
+            source = patch.get('source', {})
+            destination = patch.get('destination', {})
+            processing = patch.get('processing', {})
+            
+            source_id = f"{source['id']}.{source['attribute']}" if 'attribute' in source else source['id']
+            target_id = f"{destination['id']}.{destination['attribute']}" if 'attribute' in destination else destination['id']
+            
+            route = Route(source_id, target_id, processing, self.global_value_getter)
+            self.routes.append(route)
+            
+        _log(f"Processed {len(self.routes)} routes from configuration")
     
     def store_pending_value(self, channel, source_id, value, control_name=None):
         """Store values that arrive before note-on event."""
         key = (channel, source_id)
         self.pending_values[key] = (value, control_name)
-        _log(f"Stored pending value: channel={channel}, source_id={source_id}, value={value}, control_name={control_name}")
+        _log(f"Stored pending value: channel={channel}, source_id={source_id}, value={value}")
     
     def get_pending_values(self, channel):
         """Retrieve and clear pending values for a specific channel."""
@@ -496,8 +399,6 @@ class VoiceManager:
             if c == channel:
                 values[source_id] = (value, control_name)
                 del self.pending_values[(c, source_id)]
-        
-        _log(f"Retrieved pending values for channel {channel}: {values}")
         return values
     
     def allocate_voice(self, channel, note, velocity):
@@ -508,31 +409,27 @@ class VoiceManager:
         _log(f"  velocity={velocity}")
         
         if not self.current_config:
-            _log("[ERROR] No current configuration available for voice allocation")
-            raise ValueError("No current configuration available for voice allocation")
+            _log("[ERROR] No current configuration available")
+            return None
         
         try:
-            note_state = NoteState(channel, note, velocity, self.current_config, self.synthesis)
+            # Create note state with pre-processed routes and global value getter
+            note_state = NoteState(
+                channel, note, velocity,
+                self.current_config, self.synthesis,
+                self.routes,
+                self.global_value_getter
+            )
             
-            # Apply pending values directly
-            pending = self.get_pending_values(channel)
-            for source_id, (value, _) in pending.items():
-                note_state.handle_value_change(source_id, value)
-            
+            # Store voice
             self.active_notes[(channel, note)] = note_state
             
+            # Press note if synthesizer available
             if self.synthio_synth and note_state.synth_note:
-                try:
-                    self.synthio_synth.press(note_state.synth_note)
-                    _log(f"[SYNTHIO] Pressed note {note} (ID: {id(note_state.synth_note)})")
-                    # Get envelope state after press
-                    env_state, env_value = self.synthio_synth.note_info(note_state.synth_note)
-                    _log(f"[SYNTHIO] Note envelope state: {env_state}")
-                    _log(f"[SYNTHIO] Note envelope value: {env_value:.3f}")
-                except Exception as e:
-                    _log(f"[ERROR] Failed to press synthio note: {str(e)}")
+                self.synthio_synth.press(note_state.synth_note)
+                _log(f"[SYNTHIO] Pressed note {note}")
             
-            _log(f"Voice allocated successfully: channel={channel}, note={note}")
+            _log(f"Voice allocated successfully")
             return note_state
             
         except Exception as e:
@@ -541,48 +438,16 @@ class VoiceManager:
     
     def get_voice(self, channel, note):
         """Retrieve an active voice."""
-        voice = self.active_notes.get((channel, note))
-        _log(f"Retrieving voice:")
-        _log(f"  channel={channel}")
-        _log(f"  note={note}")
-        _log(f"  voice={voice is not None}")
-        return voice
+        return self.active_notes.get((channel, note))
     
     def release_voice(self, channel, note):
         """Handle voice release"""
-        _log(f"Releasing voice:")
-        _log(f"  channel={channel}")
-        _log(f"  note={note}")
-        
         voice = self.get_voice(channel, note)
         if voice:
             voice.handle_release()
-            
             if self.synthio_synth and voice.synth_note:
-                try:
-                    # Get envelope state before release
-                    env_state, env_value = self.synthio_synth.note_info(voice.synth_note)
-                    _log(f"[SYNTHIO] Pre-release envelope state: {env_state}")
-                    _log(f"[SYNTHIO] Pre-release envelope value: {env_value:.3f}")
-                    
-                    self.synthio_synth.release(voice.synth_note)
-                    _log(f"[SYNTHIO] Released note {note} (ID: {id(voice.synth_note)})")
-                    
-                    # Get envelope state after release
-                    env_state, env_value = self.synthio_synth.note_info(voice.synth_note)
-                    _log(f"[SYNTHIO] Post-release envelope state: {env_state}")
-                    _log(f"[SYNTHIO] Post-release envelope value: {env_value:.3f}")
-                except Exception as e:
-                    _log(f"[ERROR] Failed to release synthio note: {str(e)}")
-            
-            _log(f"Voice released successfully:")
-            _log(f"  channel={channel}")
-            _log(f"  note={note}")
+                self.synthio_synth.release(voice.synth_note)
             return voice
-            
-        _log(f"No voice found to release:")
-        _log(f"  channel={channel}")
-        _log(f"  note={note}")
         return None
     
     def cleanup_voices(self):
@@ -591,18 +456,5 @@ class VoiceManager:
         for key in list(self.active_notes.keys()):
             note = self.active_notes[key]
             if not note.active and (current_time - note.release_time) > 0.5:
-                if self.synthio_synth and note.synth_note:
-                    # Check final note state before cleanup
-                    try:
-                        env_state, env_value = self.synthio_synth.note_info(note.synth_note)
-                        _log(f"[SYNTHIO] Final note state before cleanup:")
-                        _log(f"[SYNTHIO]   Note ID: {id(note.synth_note)}")
-                        _log(f"[SYNTHIO]   Envelope State: {env_state}")
-                        _log(f"[SYNTHIO]   Envelope Value: {env_value:.3f}")
-                    except Exception as e:
-                        _log(f"[SYNTHIO] Note already removed by synthio (ID: {id(note.synth_note)})")
-                
                 del self.active_notes[key]
-                _log(f"Removed inactive voice:")
-                _log(f"  channel={key[0]}")
-                _log(f"  note={key[1]}")
+                _log(f"Removed inactive voice: channel={key[0]}, note={key[1]}")

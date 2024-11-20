@@ -3,12 +3,6 @@ Instrument Configuration System
 
 Source of Routing and configuration structures for defining synthesizer instruments
 with robust parameter routing and modulation capabilities.
-
-Key Configuration Areas:
-- Basic instrument definition
-- Sound generation (oscillator, envelope, filter)
-- Modulation routing
-- Control mapping
 """
 from constants import ModSource, ModTarget
 from fixed_point_math import FixedPoint
@@ -118,6 +112,56 @@ class Piano(InstrumentConfig):
                     'value': 0.5,
                     'range': {'min': 0.0, 'max': 1.0},
                     'curve': 'linear'
+                },
+                'envelope': {  # Amplitude envelope (AEG)
+                    'attack': {
+                        'time': {
+                            'value': 0.1,
+                            'control': {
+                                'cc': 73,  # Standard MIDI Attack Time
+                                'name': 'Attack',
+                                'range': {'min': 0.001, 'max': 2.0}
+                            }
+                        },
+                        'level': {
+                            'value': 1.0,
+                            'control': {
+                                'cc': 75,  # Decay Time repurposed for attack level
+                                'name': 'Attack Level',
+                                'range': {'min': 0.0, 'max': 1.0}
+                            }
+                        }
+                    },
+                    'decay': {
+                        'time': {
+                            'value': 0.05,
+                            'control': {
+                                'cc': 75,  # Non-standard but logical after attack
+                                'name': 'Decay',
+                                'range': {'min': 0.001, 'max': 1.0}
+                            }
+                        }
+                    },
+                    'sustain': {
+                        'level': {
+                            'value': 0.8,
+                            'control': {
+                                'cc': 70,  # Sound Variation repurposed
+                                'name': 'Sustain',
+                                'range': {'min': 0.0, 'max': 1.0}
+                            }
+                        }
+                    },
+                    'release': {
+                        'time': {
+                            'value': 0.2,
+                            'control': {
+                                'cc': 72,  # Standard MIDI Release Time
+                                'name': 'Release',
+                                'range': {'min': 0.001, 'max': 2.0}
+                            }
+                        }
+                    }
                 }
             },
             
@@ -152,11 +196,24 @@ class Piano(InstrumentConfig):
                             'reference_pitch_note': 69
                         }
                     }
+                },
+                'cc': {
+                    'type': 'global',
+                    'attributes': {
+                        'number': {
+                            'type': 'int'
+                        },
+                        'value': {
+                            'range': {'min': 0, 'max': 127},
+                            'curve': 'linear'
+                        }
+                    }
                 }
             },
             
             # Patches
             'patches': [
+                # Note to frequency routing
                 {
                     'source': {'id': 'note_on', 'attribute': 'note'},
                     'destination': {'id': 'oscillator', 'attribute': 'frequency'},
@@ -165,6 +222,7 @@ class Piano(InstrumentConfig):
                         'curve': 'linear'
                     }
                 },
+                # Velocity to gain routing
                 {
                     'source': {'id': 'note_on', 'attribute': 'velocity'},
                     'destination': {'id': 'amplifier', 'attribute': 'gain'},
@@ -179,12 +237,98 @@ class Piano(InstrumentConfig):
                         }
                     }
                 },
+                # Note off to gain routing
                 {
                     'source': {'id': 'note_off', 'attribute': 'trigger'},
                     'destination': {'id': 'amplifier', 'attribute': 'gain'},
                     'processing': {
                         'amount': 0.0,  # Sets gain to zero on note off
                         'curve': 'linear'
+                    }
+                },
+                # CC to envelope parameter routings
+                {
+                    'source': {
+                        'id': 'cc',
+                        'attribute': 'value',
+                        'number': 73  # Attack Time
+                    },
+                    'destination': {
+                        'id': 'amplifier',
+                        'attribute': 'amplifier.envelope.attack.time'
+                    },
+                    'processing': {
+                        'amount': 1.0,
+                        'curve': 'linear',
+                        'range': {
+                            'in_min': 0,
+                            'in_max': 127,
+                            'out_min': 0.001,
+                            'out_max': 2.0
+                        }
+                    }
+                },
+                {
+                    'source': {
+                        'id': 'cc',
+                        'attribute': 'value',
+                        'number': 75  # Attack Level
+                    },
+                    'destination': {
+                        'id': 'amplifier',
+                        'attribute': 'amplifier.envelope.attack.level'
+                    },
+                    'processing': {
+                        'amount': 1.0,
+                        'curve': 'linear',
+                        'range': {
+                            'in_min': 0,
+                            'in_max': 127,
+                            'out_min': 0.0,
+                            'out_max': 1.0
+                        }
+                    }
+                },
+                {
+                    'source': {
+                        'id': 'cc',
+                        'attribute': 'value',
+                        'number': 70  # Sustain Level
+                    },
+                    'destination': {
+                        'id': 'amplifier',
+                        'attribute': 'amplifier.envelope.sustain.level'
+                    },
+                    'processing': {
+                        'amount': 1.0,
+                        'curve': 'linear',
+                        'range': {
+                            'in_min': 0,
+                            'in_max': 127,
+                            'out_min': 0.0,
+                            'out_max': 1.0
+                        }
+                    }
+                },
+                {
+                    'source': {
+                        'id': 'cc',
+                        'attribute': 'value',
+                        'number': 72  # Release Time
+                    },
+                    'destination': {
+                        'id': 'amplifier',
+                        'attribute': 'amplifier.envelope.release.time'
+                    },
+                    'processing': {
+                        'amount': 1.0,
+                        'curve': 'linear',
+                        'range': {
+                            'in_min': 0,
+                            'in_max': 127,
+                            'out_min': 0.001,
+                            'out_max': 2.0
+                        }
                     }
                 }
             ]
