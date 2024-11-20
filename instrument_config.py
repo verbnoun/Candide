@@ -97,121 +97,95 @@ class Piano(InstrumentConfig):
         super().__init__("Piano")
         
         self.config = {
-            # Basic Definition
             'name': "Piano",
             
-            # Required Parameters
-            'parameters': {
+            # Core Modules
+            'oscillator': {
                 'frequency': {
-                    'synthio_param': 'frequency',
-                    'default': 440.0,
+                    'value': 440.0,
                     'range': {'min': 20.0, 'max': 20000.0},
                     'curve': 'linear'
                 },
-                'amplitude': {
-                    'synthio_param': 'amplitude', 
-                    'default': 0.5,
-                    'range': {'min': 0.0, 'max': 1.0},
-                    'curve': 'linear'
-                },
                 'waveform': {
-                    'synthio_param': 'waveform',
-                    'default': 'triangle',
-                    'options': ['triangle'],
                     'type': 'triangle',
                     'size': 512,
-                    'amplitude': 32767 #16bit max
-                }
-            },
-            
-            # Envelope Configuration
-            'envelope': {
-                'stages': {
-                    'attack': {
-                        'time': {
-                            'value': 0.01,
-                            'control': {
-                                'cc': 72,
-                                'name': 'Attack Time',
-                                'range': {'min': 0.001, 'max': 2.0}
-                            }
-                        }
-                    },
-                    'decay': {
-                        'time': {
-                            'value': 0.1,
-                            'control': {
-                                'cc': 74,
-                                'name': 'Decay Time',
-                                'range': {'min': 0.01, 'max': 3.0}
-                            }
-                        }
-                    },
-                    'sustain': {
-                        'level': {
-                            'value': 0.5,
-                            'control': {
-                                'cc': 75,
-                                'name': 'Sustain Level',
-                                'range': {'min': 0.0, 'max': 1.0}
-                            }
-                        }
-                    },
-                    'release': {
-                        'time': {
-                            'value': 0.2,
-                            'control': {
-                                'cc': 76,
-                                'name': 'Release Time',
-                                'range': {'min': 0.01, 'max': 4.0}
-                            }
-                        }
-                    }
-                }
-            },
-            
-            # Message Routing
-            'message_routes': {
-                'note_on': {
-                    'source_id': 'note',
-                    'value_func': lambda data: data.get('note', 0),
-                    'target': 'frequency',
-                    'transform': {
-                        'type': 'midi_to_freq',
-                        'reference_pitch': 440.0,
-                        'reference_note': 69
-                    }
-                },
-                'note_off': {
-                    'source_id': 'gate',
-                    'value_func': lambda data: 0,
-                    'target': 'amplitude'
-                },
-                'cc': {
-                    'source_id': 'cc',
-                    'value_func': lambda data: data.get('value', 0),
-                    'target': 'parameter',
-                    'transform': {
-                        'type': 'normalize',
-                        'input_range': {'min': 0, 'max': 127},
-                        'output_range': {'min': 0.0, 'max': 1.0}
-                    }
+                    'amplitude': 32767  # 16bit max
                 }
             },
 
-            # Parameter Routing
-            'routes': [
-                {
-                    'source': 'velocity',
-                    'target': 'amplitude',
-                    'amount': 1.0,
+            'amplifier': {
+                'gain': {
+                    'value': 0.5,
+                    'range': {'min': 0.0, 'max': 1.0},
                     'curve': 'linear'
+                }
+            },
+            
+            # Signal Sources
+            'sources': {
+                'note_on': {
+                    'type': 'per_key',
+                    'attributes': {
+                        'trigger': {
+                            'type': 'bool'
+                        },
+                        'velocity': {
+                            'range': {'min': 0, 'max': 127},
+                            'curve': 'linear'
+                        },
+                        'note': {
+                            'transform': 'midi_to_frequency',
+                            'reference_pitch': 440.0,
+                            'reference_pitch_note': 69
+                        }
+                    }
+                },
+                'note_off': {
+                    'type': 'per_key',
+                    'attributes': {
+                        'trigger': {
+                            'type': 'bool'
+                        },
+                        'note': {
+                            'transform': 'midi_to_frequency',
+                            'reference_pitch': 440.0,
+                            'reference_pitch_note': 69
+                        }
+                    }
+                }
+            },
+            
+            # Patches
+            'patches': [
+                {
+                    'source': {'id': 'note_on', 'attribute': 'note'},
+                    'destination': {'id': 'oscillator', 'attribute': 'frequency'},
+                    'processing': {
+                        'amount': 1.0,
+                        'curve': 'linear'
+                    }
                 },
                 {
-                    'source': 'gate',
-                    'target': 'amplitude',
-                    'amount': 1.0,
-                    'curve': 'linear'
+                    'source': {'id': 'note_on', 'attribute': 'velocity'},
+                    'destination': {'id': 'amplifier', 'attribute': 'gain'},
+                    'processing': {
+                        'amount': 1.0,
+                        'curve': 'linear',
+                        'range': {
+                            'in_min': 0,
+                            'in_max': 127,
+                            'out_min': 0.0,
+                            'out_max': 1.0
+                        }
+                    }
+                },
+                {
+                    'source': {'id': 'note_off', 'attribute': 'trigger'},
+                    'destination': {'id': 'amplifier', 'attribute': 'gain'},
+                    'processing': {
+                        'amount': 0.0,  # Sets gain to zero on note off
+                        'curve': 'linear'
+                    }
                 }
             ]
         }
@@ -234,172 +208,201 @@ def list_instruments():
 SYNTHESIZER CONFIGURATION TEMPLATE
 ================================
 
-Complete template showing all possible configuration options.
-Copy relevant sections when creating new instruments.
-
-Required sections marked with [REQUIRED]
-
 Basic Instrument Definition [REQUIRED]
 ------------------------------------
 {
-    'name': str,        # Instrument name
-    'version': str,     # Version for tracking
-    
-    # [REQUIRED] Core Parameters
-    'parameters': {
-        'frequency': {
-            'synthio_param': 'frequency',
-            'default': float,
-            'range': {'min': float, 'max': float},
-            'curve': str  # linear|exponential
-        },
-        'amplitude': {
-            'synthio_param': 'amplitude',
-            'default': float,
-            'range': {'min': float, 'max': float},
-            'curve': str
-        },
-        'waveform': {
-            'synthio_param': 'waveform',
-            'default': str,
-            'options': [str],  # Possible waveform types
-            'type': str,       # Specific waveform type
-            'size': int,       # Buffer size (typically 512)
-            'amplitude': int   # Max amplitude (e.g., 32767 for 16-bit)
-        }
-    },
-    
-    # Envelope Configuration
-    'envelope': {
-        'stages': {
-            'attack': {
-                'time': {
-                    'value': float,
-                    'control': {
-                        'cc': int,
-                        'name': str,
-                        'range': {'min': float, 'max': float}
-                    }
-                },
-                'level': {  # Optional
-                    'value': float,
-                    'control': {
-                        'cc': int,
-                        'name': str,
-                        'range': {'min': float, 'max': float}
-                    }
-                }
-            },
-            'decay': {
-                'time': {
-                    # Same structure as attack
-                }
-            },
-            'sustain': {
-                'level': {
-                    # Level control only
-                }
-            },
-            'release': {
-                'time': {
-                    # Time control only
-                }
-            }
-        }
-    },
-    
-    # Filter Configuration
-    'filter': {
-        'type': str,    # lowpass|highpass|bandpass
-        'frequency': {
-            'value': float,
-            'control': {
-                'cc': int,
-                'name': str,
-                'range': {'min': float, 'max': float}
-            }
-        },
-        'resonance': {
-            # Same structure as frequency
-        }
-    },
-    
-    # Modulation Sources
-    'lfos': {
-        'lfo_name': {
-            'type': 'lfo',
-            'waveform': {
-                'type': str,
-                'size': int
-            },
-            'rate': {
-                'value': float,
-                'control': {
-                    'cc': int,
-                    'name': str,
-                    'range': {'min': float, 'max': float}
-                }
-            },
-            'amount': {
-                # Same structure as rate
-            }
-        }
-    },
-    
-    # [REQUIRED] Message Routing
-    'message_routes': {
-        'note_on': {
-            'source_id': str,
-            'value_func': callable,
-            'target': str,
-            'transform': {
-                'type': str,
-                'reference_pitch': float,
-                'reference_note': int
-            }
-        },
-        'note_off': {
-            'source_id': str,
-            'value_func': callable,
-            'target': str
-        },
-        'cc': {
-            'source_id': str,
-            'value_func': callable,
-            'target': str,
-            'transform': {
-                'type': str,
-                'input_range': dict,
-                'output_range': dict
-            }
-        }
-    },
-    
-    # [REQUIRED] Parameter Routing
-    'routes': [
-        {
-            'source': str,      # Source parameter
-            'target': str,      # Target parameter
-            'amount': float,    # Modulation amount
-            'curve': str        # Transform curve
-        }
-    ],
-    
-    # MPE Configuration
-    'mpe': {
-        'enabled': bool,
-        'pitch_bend_range': int,
-        'pressure': {
-            'enabled': bool,
-            'target': str,
-            'amount': float
-        },
-        'timbre': {
-            'enabled': bool,
-            'cc': int,
-            'target': str,
-            'amount': float
-        }
-    }
+   'name': str,        # Instrument name
+   'version': str,     # Version for tracking
+   
+   # [REQUIRED] Core Modules
+   'oscillator': {
+       'frequency': {
+           'value': float,
+           'range': {'min': float, 'max': float},
+           'curve': str  # linear|exponential
+       },
+       'waveform': {
+           'type': str,       # sine|triangle|saw|square|wavetable
+           'size': int,       # Buffer size (typically 512)
+           'amplitude': int    # Max amplitude (e.g., 32767 for 16-bit)
+       },
+       'envelope': {  # Pitch envelope
+           'attack': {
+               'time': {
+                   'value': float,
+                   'control': {
+                       'cc': int,
+                       'name': str,
+                       'range': {'min': float, 'max': float}
+                   }
+               },
+               'level': {
+                   'value': float,
+                   'control': {
+                       'cc': int,
+                       'name': str,
+                       'range': {'min': float, 'max': float}
+                   }
+               }
+           },
+           'decay': {...},
+           'sustain': {...},
+           'release': {...}
+       }
+   },
+
+   'filter': {
+       'type': str,    # lowpass|highpass|bandpass
+       'frequency': {
+           'value': float,
+           'control': {
+               'cc': int,
+               'name': str,
+               'range': {'min': float, 'max': float}
+           }
+       },
+       'resonance': {
+           'value': float,
+           'control': {
+               'cc': int,
+               'name': str,
+               'range': {'min': float, 'max': float}
+           }
+       },
+       'envelope': {  # Filter envelope (FEG)
+           'attack': {...},    # Same structure as oscillator envelope
+           'decay': {...},
+           'sustain': {...},
+           'release': {...}
+       }
+   },
+
+   'amplifier': {
+       'gain': {
+           'value': float,
+           'control': {
+               'cc': int,
+               'name': str,
+               'range': {'min': float, 'max': float}
+           }
+       },
+       'envelope': {  # Amplitude envelope (AEG)
+           'attack': {...},    # Same structure as oscillator envelope
+           'decay': {...},
+           'sustain': {...},
+           'release': {...}
+       }
+   },
+   
+   # Signal Sources
+   'sources': {
+       'note_on': {
+           'type': 'per_key',
+           'attributes': {
+               'trigger': {
+                   'type': 'bool'  # Simple trigger event
+               },
+               'velocity': {
+                   'range': {'min': 0, 'max': 127},
+                   'curve': str
+               },
+               'note': {
+                   'transform': 'midi_to_frequency',
+                   'reference_pitch': float,
+                   'reference_pitch_note': int
+               }
+           }
+       },
+       'note_off': {
+           'type': 'per_key',
+           'attributes': {
+               'trigger': {
+                   'type': 'bool'  # Simple trigger event
+               },
+               'note': {
+                   'transform': 'midi_to_frequency',
+                   'reference_pitch': float,
+                   'reference_pitch_note': int
+               }
+           }
+       },
+
+       # Per-key (polyphonic) sources
+       'key_pressure': {  # Poly aftertouch
+           'type': 'per_key',
+           'range': {'min': float, 'max': float},
+           'curve': str
+       },
+       'key_timbre': {  # Y-axis/CC74 per note
+           'type': 'per_key',
+           'range': {'min': float, 'max': float},
+           'curve': str
+       },
+       'key_bend': {
+           'type': 'per_key',
+           'range': {'min': float, 'max': float},  # In semitones
+           'curve': str
+       },
+
+       # Global sources
+       'channel_pressure': {  # Mono aftertouch
+           'type': 'global',
+           'range': {'min': float, 'max': float},
+           'curve': str
+       },
+       'pitch_bend': {
+           'type': 'global',
+           'range': {'min': float, 'max': float},  # In semitones
+           'curve': str
+       },
+       
+       # Generated sources (LFOs, etc)
+       'lfo1': {
+           'type': 'global',
+           'waveform': {
+               'type': str,
+               'size': int
+           },
+           'rate': {
+               'value': float,
+               'control': {
+                   'cc': int,
+                   'name': str,
+                   'range': {'min': float, 'max': float}
+               }
+           },
+           'amount': {...},
+           'envelope': {  # LFO fade envelope
+               'attack': {...},
+               'decay': {...},
+               'sustain': {...},
+               'release': {...}
+           }
+       }
+   },
+   
+   # Unified Patching System
+   'patches': [
+       {
+           'source': {
+               'id': str,          # Reference to a source (e.g., 'note_on', 'lfo1', 'key_pressure')
+               'attribute': str    # Optional - specific attribute of source (e.g., 'envelope.attack')
+           },
+           'destination': {
+               'id': str,          # Reference to a module (e.g., 'oscillator', 'filter')
+               'attribute': str    # Specific parameter (e.g., 'frequency', 'resonance')
+           },
+           'processing': {
+               'amount': float,    # Modulation amount/depth
+               'curve': str,       # Transform curve type
+               'range': {          # Optional range mapping
+                   'in_min': float,
+                   'in_max': float,
+                   'out_min': float,
+                   'out_max': float
+               }
+           }
+       }
+   ]
 }
 """

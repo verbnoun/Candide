@@ -22,7 +22,8 @@ Primary Class:
 import time
 import synthio
 from constants import *
-from mpe_handling import MPEVoiceManager, MPEMessageRouter
+from voices import MPEVoiceManager
+from router import MPEMessageRouter
 from fixed_point_math import FixedPoint
 from synthesis_engine import WaveformManager
 
@@ -263,7 +264,7 @@ class MPESynthesizer:
             
         try:
             if SYNTH_CO_DEBUG:
-                print(f"[SYNTHCO] Releasing voice ch:{voice.channel} note:{voice.note}")
+                print(f"[SYNTH CO] Releasing voice ch:{voice.channel} note:{voice.note}")
             if SYNTH_IO_DEBUG:
                 print(f"[SYNTHIO] Release Details:")
                 print(f"      Note Object ID: {id(voice.synth_note)}")
