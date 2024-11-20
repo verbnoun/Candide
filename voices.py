@@ -94,7 +94,10 @@ class Route:
     Handles parameter routing with advanced processing capabilities.
     Supports various curve transformations and scaling.
     """
-    def __init__(self, source_id, target_id, processing, global_value_getter=None):
+    def __init__(self, source_id, target_id, processing=None, global_value_getter=None):
+        # Ensure processing is a dictionary, default to empty dict
+        processing = processing or {}
+        
         _log(f"Creating Route:")
         _log(f"  Source: {source_id}")
         _log(f"  Target: {target_id}")
@@ -102,16 +105,21 @@ class Route:
         
         self.source_id = source_id
         self.target_id = target_id
+        
+        # Safely extract processing parameters with defaults
         self.amount = FixedPoint.from_float(processing.get('amount', 1.0))
         self.curve = processing.get('curve', 'linear')
         self.global_value_getter = global_value_getter
         
-        # Extract range configuration
+        # Extract range configuration with robust defaults
         range_config = processing.get('range', {})
         self.in_min = range_config.get('in_min', 0)
         self.in_max = range_config.get('in_max', 127)
         self.out_min = FixedPoint.from_float(range_config.get('out_min', 0.0))
         self.out_max = FixedPoint.from_float(range_config.get('out_max', 1.0))
+        
+        # Store the original processing configuration for reference
+        self.processing = processing
         
     def process_value(self, value):
         """Process input value through configured transformations."""
@@ -129,7 +137,22 @@ class Route:
             _log(f"[ERROR] No value found for source {self.source_id}")
             return None
         
-        # Range mapping
+        # Special handling for envelope parameters - keep as float
+        if 'envelope' in self.target_id:
+            # Range mapping for envelope parameters
+            if self.in_max != self.in_min:
+                value = (float(value) - self.in_min) / (self.in_max - self.in_min)
+                
+            # Scale to output range
+            value = value * (float(self.out_max) - float(self.out_min)) + float(self.out_min)
+            
+            # Apply amount
+            value = value * float(self.amount)
+            
+            _log(f"Envelope parameter processed: value={value}")
+            return value
+            
+        # Regular parameter processing using fixed point
         if not isinstance(value, FixedPoint):
             value = FixedPoint.from_float(float(value))
             
@@ -306,6 +329,11 @@ class NoteState:
                         self.synth_note.frequency = FixedPoint.to_float(processed_value)
                     elif target_id == 'amplifier.gain':
                         self.synth_note.amplitude = FixedPoint.to_float(processed_value)
+                    # Handle envelope parameter updates
+                    elif 'envelope' in target_id:
+                        # Envelope values are already floats
+                        if hasattr(self.synth_note, target_id.split('.')[-1]):
+                            setattr(self.synth_note, target_id.split('.')[-1], processed_value)
                 
                 _log(f"Route processed: target={target_id}, value={processed_value}")
     
