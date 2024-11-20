@@ -142,7 +142,7 @@ class MidiLogic:
                     # Pass parsed message to callback if valid
                     if event and self.text_callback:
                         if MIDI_DEBUG:
-                            print(f"[MIDI] : {event['type']} - Channel {event['channel']}, Data {event['data']}")
+                            print(f"[MIDI  ] {event['type']} - Channel {event['channel']}, Data {event['data']}")
                         self.text_callback(event)
 
         except Exception as e:

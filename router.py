@@ -5,37 +5,85 @@ Handles complex routing based on the new instrument configuration paradigm.
 """
 
 import time
+import sys
 from fixed_point_math import FixedPoint
 from constants import ModSource, ModTarget, ROUTER_DEBUG
 
+def _log(message):
+    """
+    Conditional logging function that respects ROUTER_DEBUG flag.
+    
+    Args:
+        message (str): Message to log
+    """
+    RED = "\033[31m"
+    GREEN = "\033[32m"
+    YELLOW = "\033[33m"
+    BLUE = "\033[34m"
+    MAGENTA = "\033[35m"
+    CYAN = "\033[36m"
+    WHITE = "\033[37m"
+    GRAY = "\033[37m"
+    DARK_GRAY = "\033[90m"
+    RESET = "\033[0m"
+
+    if ROUTER_DEBUG:
+        if "rejected" in message:
+            color = DARK_GRAY
+        elif "[ERROR]" in message:
+            color = RED
+        else:
+            color = BLUE
+        print(f"{color}[ROUTER] {message}{RESET}", file=sys.stderr)
+
 class MPEMessageRouter:
     """
-    Routes MIDI messages according to the new instrument configuration system.
-    Handles complex routing, source mapping, and parameter transformations.
+    Advanced MIDI message routing system for complex instrument configurations.
+    
+    Manages sophisticated routing logic, including:
+    - Source mapping
+    - Parameter transformations
+    - Message validation
+    - Voice allocation and management
+    
+    Supports dynamic configuration changes and provides detailed debug logging.
     """
     def __init__(self, voice_manager):
+        """
+        Initialize the MPE Message Router.
+        
+        Args:
+            voice_manager (MPEVoiceManager): Voice management system for handling note states
+        """
         self.voice_manager = voice_manager
         self.current_config = None
         
-        if ROUTER_DEBUG:
-            print("[ROUTER] Initialized with voice manager")
+        _log("Initialized with voice manager")
         
     def set_config(self, config):
-        """Set the current instrument configuration"""
+        """
+        Set the current instrument configuration and propagate to voice manager.
+        
+        Args:
+            config (dict): Instrument configuration dictionary
+        """
         self.current_config = config
         self.voice_manager.set_config(config)
         
-        if ROUTER_DEBUG:
-            print(f"[ROUTER] Configuration set for instrument: {config.get('name', 'Unknown')}")
-            print("[ROUTER] Configuration details:")
-            for key, value in config.items():
-                if key != 'patches':  # Skip patches array for brevity
-                    print(f"  {key}: {value}")
+        _log(f"Configuration set for instrument: {config.get('name', 'Unknown')}")
+        _log("Configuration details:")
+        for key, value in config.items():
+            if key != 'patches':  # Skip patches array for brevity
+                _log(f"  {key}: {value}")
     
     def _is_message_allowed(self, message):
         """
         Validate incoming MIDI message against instrument configuration.
-        More sophisticated validation that checks CC usage and source definitions.
+        
+        Performs sophisticated validation checking:
+        - Message type support
+        - CC usage
+        - Source definitions
         
         Args:
             message (dict): Incoming MIDI message
@@ -44,8 +92,7 @@ class MPEMessageRouter:
             bool: Whether the message is valid for this instrument
         """
         if not self.current_config or not message:
-            if ROUTER_DEBUG:
-                print("[ROUTER] Validation failed: No config or message")
+            _log("Validation failed: No config or message")
             return False
         
         msg_type = message.get('type')
@@ -54,27 +101,22 @@ class MPEMessageRouter:
         
         # Check if message type is supported
         if msg_type not in ['note_on', 'note_off', 'cc', 'pitch_bend', 'channel_pressure']:
-            if ROUTER_DEBUG:
-                print(f"[ROUTER] Unsupported message type: {msg_type}")
+            _log(f"Unsupported message type: {msg_type}")
             return False
         
         # Note message validation
         if msg_type == 'note_on':
             if 'note_on' not in sources:
-                if ROUTER_DEBUG:
-                    print("[ROUTER] Note on not supported in configuration")
+                _log("Note On not supported in configuration")
                 return False
-            if ROUTER_DEBUG:
-                print(f"[ROUTER] Note message accepted: {data.get('note')}")
+            _log(f"Note message accepted: {data.get('note')}")
             return True
             
         elif msg_type == 'note_off':
             if 'note_off' not in sources:
-                if ROUTER_DEBUG:
-                    print("[ROUTER] Note off not supported in configuration")
+                _log("Note Off not supported in configuration")
                 return False
-            if ROUTER_DEBUG:
-                print(f"[ROUTER] Note off accepted: {data.get('note')}")
+            _log(f"Note off accepted: {data.get('note')}")
             return True
             
         # CC validation
@@ -84,36 +126,40 @@ class MPEMessageRouter:
                 # Check CC routing
                 cc_routing = self.current_config.get('cc_routing', {})
                 if str(cc_number) in cc_routing:
-                    if ROUTER_DEBUG:
-                        print(f"[ROUTER] CC {cc_number} accepted: defined in cc_routing")
+                    _log(f"CC {cc_number} accepted: defined in cc_routing")
                     return True
                     
                 # Check module controls
                 if self._is_cc_used_in_module('oscillator', cc_number) or \
                    self._is_cc_used_in_module('filter', cc_number) or \
                    self._is_cc_used_in_module('amplifier', cc_number):
-                    if ROUTER_DEBUG:
-                        print(f"[ROUTER] CC {cc_number} accepted: used in module control")
+                    _log(f"CC {cc_number} accepted: used in module control")
                     return True
                     
-                if ROUTER_DEBUG:
-                    print(f"[ROUTER] CC {cc_number} rejected: not used in configuration")
+                _log(f"CC {cc_number} rejected: not used in configuration")
                 return False
         
         # Other control messages
         elif msg_type in ['pitch_bend', 'channel_pressure']:
             source_type = 'pitch_bend' if msg_type == 'pitch_bend' else 'channel_pressure'
             if source_type in sources:
-                if ROUTER_DEBUG:
-                    print(f"[ROUTER] {msg_type} accepted")
+                _log(f"{msg_type} accepted")
                 return True
         
-        if ROUTER_DEBUG:
-            print(f"[ROUTER] Message rejected: {msg_type}")
+        _log(f"Message rejected: {msg_type}")
         return False
     
     def _is_cc_used_in_module(self, module_name, cc_number):
-        """Check if a CC number is used in a module's controls"""
+        """
+        Check if a CC number is used in a module's controls.
+        
+        Args:
+            module_name (str): Name of the module to check
+            cc_number (int): CC number to search for
+        
+        Returns:
+            bool: Whether the CC number is used in the module
+        """
         if not self.current_config:
             return False
             
@@ -150,8 +196,7 @@ class MPEMessageRouter:
             float: Transformed value
         """
         if not transform_config:
-            if ROUTER_DEBUG:
-                print("[ROUTER] No transformation config, returning original value")
+            _log("No transformation config, returning original value")
             return value
         
         original_value = value
@@ -173,11 +218,10 @@ class MPEMessageRouter:
         elif curve == 's_curve':
             value = 3 * value ** 2 - 2 * value ** 3
         
-        if ROUTER_DEBUG:
-            print(f"[ROUTER] Value transformation:")
-            print(f"  Original value: {original_value}")
-            print(f"  Curve: {curve}")
-            print(f"  Transformed value: {value}")
+        _log("Value transformation:")
+        _log(f"  Original value: {original_value}")
+        _log(f"  Curve: {curve}")
+        _log(f"  Transformed value: {value}")
         
         return value
     
@@ -191,13 +235,11 @@ class MPEMessageRouter:
         Returns:
             dict: Routing result or None
         """
-        if ROUTER_DEBUG:
-            print("[ROUTER] Routing message:")
-            print(f"  Message: {message}")
+        _log("Routing message:")
+        _log(f"  Message: {message}")
         
+        # First check: Is message allowed
         if not self._is_message_allowed(message):
-            if ROUTER_DEBUG:
-                print("[ROUTER] Message validation failed")
             return None
         
         msg_type = message.get('type')
@@ -209,21 +251,24 @@ class MPEMessageRouter:
             note = data.get('note')
             velocity = data.get('velocity', 127) if msg_type == 'note_on' else 0
             
-            if ROUTER_DEBUG:
-                print(f"[ROUTER] Processing {msg_type}:")
-                print(f"  Channel: {channel}")
-                print(f"  Note: {note}")
-                print(f"  Velocity: {velocity}")
+            _log(f"Processing {msg_type}:")
+            _log(f"  Channel: {channel}")
+            _log(f"  Note: {note}")
+            _log(f"  Velocity: {velocity}")
             
             if msg_type == 'note_on':
                 voice = self.voice_manager.allocate_voice(channel, note, velocity)
-                if ROUTER_DEBUG:
-                    print("[ROUTER] Voice allocated")
+                if not voice:
+                    _log("[ERROR] Failed to allocate voice")
+                    return None
+                _log("Voice allocated")
                 return {'type': 'voice_allocated', 'voice': voice}
             else:
                 voice = self.voice_manager.release_voice(channel, note)
-                if ROUTER_DEBUG:
-                    print("[ROUTER] Voice released")
+                if not voice:
+                    _log("[ERROR] Failed to release voice")
+                    return None
+                _log("Voice released")
                 return {'type': 'voice_released', 'voice': voice}
         
         # Handle CC messages
@@ -232,26 +277,25 @@ class MPEMessageRouter:
         
         # Handle other control messages
         patches = self.current_config.get('patches', [])
-        if ROUTER_DEBUG:
-            print(f"[ROUTER] Processing patches: {len(patches)} patches")
+        _log(f"Processing patches: {len(patches)} patches")
         
+        processed_any_patch = False
         for patch in patches:
             source = patch.get('source', {})
             destination = patch.get('destination', {})
             processing = patch.get('processing', {})
             
-            if ROUTER_DEBUG:
-                print("[ROUTER] Processing patch:")
-                print(f"  Source: {source}")
-                print(f"  Destination: {destination}")
-                print(f"  Processing: {processing}")
+            _log("Processing patch:")
+            _log(f"  Source: {source}")
+            _log(f"  Destination: {destination}")
+            _log(f"  Processing: {processing}")
             
             # Determine source value
             source_value = self._get_source_value(source, message)
             
             if source_value is not None:
-                if ROUTER_DEBUG:
-                    print(f"[ROUTER] Source value: {source_value}")
+                processed_any_patch = True
+                _log(f"Source value: {source_value}")
                 
                 # Transform value
                 transformed_value = self._transform_value(
@@ -263,11 +307,10 @@ class MPEMessageRouter:
                 amount = processing.get('amount', 1.0)
                 modulated_value = transformed_value * amount
                 
-                if ROUTER_DEBUG:
-                    print("[ROUTER] Value processing:")
-                    print(f"  Transformed value: {transformed_value}")
-                    print(f"  Modulation amount: {amount}")
-                    print(f"  Modulated value: {modulated_value}")
+                _log("Value processing:")
+                _log(f"  Transformed value: {transformed_value}")
+                _log(f"  Modulation amount: {amount}")
+                _log(f"  Modulated value: {modulated_value}")
                 
                 # Route to destination
                 self._route_to_destination(
@@ -275,6 +318,10 @@ class MPEMessageRouter:
                     modulated_value, 
                     message
                 )
+        
+        # If no patches were processed, log an error
+        if not processed_any_patch:
+            _log("[ERROR] No patches processed for message")
         
         return None
     
@@ -292,21 +339,19 @@ class MPEMessageRouter:
         cc_value = message['data']['value']
         channel = message['channel']
         
-        if ROUTER_DEBUG:
-            print("[ROUTER] Routing CC message:")
-            print(f"  CC Number: {cc_number}")
-            print(f"  CC Value: {cc_value}")
+        _log("Routing CC message:")
+        _log(f"  CC Number: {cc_number}")
+        _log(f"  CC Value: {cc_value}")
         
         # Check CC routing in configuration
         cc_routing = self.current_config.get('cc_routing', {})
         
         if str(cc_number) in cc_routing:
             route = cc_routing[str(cc_number)]
-            if ROUTER_DEBUG:
-                print("[ROUTER] CC Route found:")
-                print(f"  Name: {route.get('name')}")
-                print(f"  Target: {route.get('target')}")
-                print(f"  Path: {route.get('path')}")
+            _log("CC Route found:")
+            _log(f"  Name: {route.get('name')}")
+            _log(f"  Target: {route.get('target')}")
+            _log(f"  Path: {route.get('path')}")
             
             # Normalize CC value using FixedPoint method
             normalized_value = FixedPoint.normalize_midi_value(cc_value)
@@ -322,6 +367,8 @@ class MPEMessageRouter:
                 normalized_value, 
                 message
             )
+        else:
+            _log("[ERROR] CC route not found despite passing initial validation")
         
         return None
     
@@ -342,12 +389,11 @@ class MPEMessageRouter:
         source_id = source.get('id')
         attribute = source.get('attribute')
         
-        if ROUTER_DEBUG:
-            print("[ROUTER] Extracting source value:")
-            print(f"  Source ID: {source_id}")
-            print(f"  Attribute: {attribute}")
-            print(f"  Message Type: {msg_type}")
-            print(f"  Message Data: {data}")
+        _log("Extracting source value:")
+        _log(f"  Source ID: {source_id}")
+        _log(f"  Attribute: {attribute}")
+        _log(f"  Message Type: {msg_type}")
+        _log(f"  Message Data: {data}")
         
         # Direct mapping for specific message types
         if msg_type == 'note_on' and source_id == 'note_on':
@@ -365,8 +411,7 @@ class MPEMessageRouter:
         if msg_type == 'channel_pressure' and source_id == 'channel_pressure':
             return data.get('value', 0)
         
-        if ROUTER_DEBUG:
-            print("[ROUTER] No source value found")
+        _log("[ERROR] No source value found for specified source")
         
         return None
     
@@ -382,37 +427,36 @@ class MPEMessageRouter:
         dest_id = destination.get('id')
         attribute = destination.get('attribute')
         
-        if ROUTER_DEBUG:
-            print("[ROUTER] Routing to destination:")
-            print(f"  Destination ID: {dest_id}")
-            print(f"  Attribute: {attribute}")
-            print(f"  Value: {value}")
+        _log("Routing to destination:")
+        _log(f"  Destination ID: {dest_id}")
+        _log(f"  Attribute: {attribute}")
+        _log(f"  Value: {value}")
         
         # Find the corresponding voice
         channel = message.get('channel')
         note = message.get('data', {}).get('note')
         voice = self.voice_manager.get_voice(channel, note)
         
-        if voice:
-            if ROUTER_DEBUG:
-                print("[ROUTER] Voice found for routing")
-            
-            # Route to specific module/parameter
-            if dest_id == 'oscillator' and attribute == 'frequency':
-                if ROUTER_DEBUG:
-                    print("[ROUTER] Routing to oscillator frequency")
-                voice.handle_value_change('frequency', value)
-            elif dest_id == 'amplifier' and attribute == 'gain':
-                if ROUTER_DEBUG:
-                    print("[ROUTER] Routing to amplifier gain")
-                voice.handle_value_change('amplitude', value)
-            elif dest_id == 'filter' and attribute == 'frequency':
-                if ROUTER_DEBUG:
-                    print("[ROUTER] Routing to filter frequency")
-                voice.handle_value_change('filter_freq', value)
-            
-            if ROUTER_DEBUG:
-                print("[ROUTER] Destination routing complete")
+        if not voice:
+            _log("[ERROR] No voice found for routing")
+            return
+        
+        _log("Voice found for routing")
+        
+        # Route to specific module/parameter
+        if dest_id == 'oscillator' and attribute == 'frequency':
+            _log("Routing to oscillator frequency")
+            voice.handle_value_change('frequency', value)
+        elif dest_id == 'amplifier' and attribute == 'gain':
+            _log("Routing to amplifier gain")
+            voice.handle_value_change('amplitude', value)
+        elif dest_id == 'filter' and attribute == 'frequency':
+            _log("Routing to filter frequency")
+            voice.handle_value_change('filter_freq', value)
+        else:
+            _log("[ERROR] Unhandled destination routing")
+        
+        _log("Destination routing complete")
     
     def process_updates(self):
         """Process any pending updates in voice management"""

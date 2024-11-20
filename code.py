@@ -51,11 +51,12 @@ import board
 import busio
 import digitalio
 import time
-from synthesizer_coordinator import MPESynthesizer
 from hardware import RotaryEncoderHandler, VolumePotHandler
 from instrument_config import create_instrument, list_instruments
 from midi import MidiLogic
 from output_system import AudioOutputManager
+from voices import MPEVoiceManager
+from router import MPEMessageRouter
 from constants import *
 
 class TransportManager:
@@ -138,31 +139,42 @@ class HardwareManager:
 
 class SynthManager:
     def __init__(self, output_manager):
-        self.synth = None
+        self.voice_manager = None
+        self.message_router = None
         self.current_instrument = None
         self.output_manager = output_manager
         self._setup_synth()
 
     def _setup_synth(self):
         print("Setting up synthesizer...")
-        self.synth = MPESynthesizer(output_manager=self.output_manager)
+        # Initialize voice manager with output manager
+        self.voice_manager = MPEVoiceManager(self.output_manager)
         
+        # Initialize message router with voice manager
+        self.message_router = MPEMessageRouter(self.voice_manager)
+        
+        # Set initial instrument
         self.current_instrument = create_instrument('piano')
         if self.current_instrument:
-            self.synth.set_instrument(self.current_instrument.get_config())
+            config = self.current_instrument.get_config()
+            self.voice_manager.set_config(config)
+            self.message_router.set_config(config)
 
     def set_instrument(self, instrument_name):
         new_instrument = create_instrument(instrument_name)
         if new_instrument:
             self.current_instrument = new_instrument
-            self.synth.set_instrument(new_instrument.get_config())
+            config = new_instrument.get_config()
+            self.voice_manager.set_config(config)
+            self.message_router.set_config(config)
 
     def update(self):
-        self.synth.update()
+        self.message_router.process_updates()
 
     def process_midi_events(self, events):
         if events:
-            self.synth.process_mpe_events(events)
+            for event in events:
+                self.message_router.route_message(event)
             
     def get_current_config(self):
         if self.current_instrument:
@@ -426,9 +438,9 @@ class Candide:
             self.cleanup()
 
     def cleanup(self):
-        if self.synth_manager.synth:
+        if self.synth_manager and self.synth_manager.voice_manager:
             print("Stopping synthesizer...")
-            self.synth_manager.synth.cleanup()
+            self.synth_manager.voice_manager.cleanup_voices()
         if self.midi:
             print("Cleaning up MIDI...")
             self.midi.cleanup()
