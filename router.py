@@ -238,6 +238,12 @@ class MidiTranslator:
         Logging.log(f"  Message Type: {msg_type}")
         Logging.log(f"  Message Data: {data}")
         
+        # Validate source against configuration
+        sources = self.config.get('sources', {})
+        if source_id not in sources:
+            Logging.log(f"[ERROR] Translation source {source_id} not found in configuration")
+            return None
+        
         # Direct mapping for specific message types
         if msg_type == 'note_on' and source_id == 'note_on':
             if attribute == 'velocity':
@@ -496,6 +502,15 @@ class RouteMap:
             Logging.log(f"  Source: {source}")
             Logging.log(f"  Destination: {destination}")
             Logging.log(f"  Processing: {processing}")
+            
+            # Validate source and destination against configuration
+            sources = self.current_config.get('sources', {})
+            source_id = source.get('id')
+            dest_id = destination.get('id')
+            
+            if source_id not in sources:
+                Logging.log(f"[ERROR] Route source {source_id} not found in configuration")
+                continue
             
             # Determine source value
             source_value = self.translator.get_source_value(source, message)

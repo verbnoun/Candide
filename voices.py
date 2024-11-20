@@ -8,7 +8,7 @@ import time
 import sys
 import synthio
 from fixed_point_math import FixedPoint
-from constants import VOICES_DEBUG
+from constants import VOICES_DEBUG, SAMPLE_RATE
 from synthesizer import Synthesis
 
 def _format_log_message(message):
@@ -228,16 +228,17 @@ class NoteState:
         self.config = config
         self.synthesis = synthesis
         
-        # Direct parameter initialization without recursion
+        # Explicit parameter initialization with FixedPoint values
         self.parameter_values = {
-            'note': FixedPoint.midi_note_to_fixed(note),
-            'velocity': FixedPoint.normalize_midi_value(velocity),
-            'frequency': FixedPoint.from_float(synthio.midi_to_hz(note)),
-            'amplitude': FixedPoint.normalize_midi_value(velocity)
+            'note': FixedPoint.from_float(float(note)),  # Fixed-point note number
+            'velocity': FixedPoint.normalize_midi_value(velocity),  # Normalized to fixed-point
+            'frequency': FixedPoint.midi_note_to_fixed(note),  # Fixed-point frequency
+            'amplitude': FixedPoint.normalize_midi_value(velocity)  # Normalized to fixed-point
         }
         
         _log("Initialized parameter values:")
-        _log(self.parameter_values)
+        for key, value in self.parameter_values.items():
+            _log(f"  {key}: {value} (float: {FixedPoint.to_float(value)})")
         
         # Initialize module parameters directly
         for module_name in ['oscillator', 'amplifier', 'filter']:  # Keep all module support
@@ -327,11 +328,11 @@ class NoteState:
             
             # Create envelope from config, converting fixed-point to float
             envelope = synthio.Envelope(
-                attack_time=FixedPoint.to_float(attack.get('time', {}).get('value')),
-                decay_time=FixedPoint.to_float(decay.get('time', {}).get('value')),
-                release_time=FixedPoint.to_float(release.get('time', {}).get('value')),
-                attack_level=FixedPoint.to_float(attack.get('level', {}).get('value')),
-                sustain_level=FixedPoint.to_float(sustain.get('level', {}).get('value'))
+                attack_time=float(attack.get('time', {}).get('value', 0.1)),
+                decay_time=float(decay.get('time', {}).get('value', 0.05)),
+                release_time=float(release.get('time', {}).get('value', 0.2)),
+                attack_level=float(attack.get('level', {}).get('value', 1.0)),
+                sustain_level=float(sustain.get('level', {}).get('value', 0.8))
             )
             
             _log("[SYNTHIO] Created envelope:")
@@ -352,7 +353,7 @@ class NoteState:
                 
             _log(f"[SYNTHIO] Using waveform: {len(waveform)} samples")
             
-            # Create note with all possible parameters
+            # Convert fixed-point values to float just before creating note
             note_params = {
                 'frequency': FixedPoint.to_float(self.parameter_values['frequency']),
                 'waveform': waveform,
@@ -422,7 +423,6 @@ class NoteState:
         if self.active:
             self.active = False
             self.release_time = time.monotonic()
-            self.handle_value_change('gate', FixedPoint.ZERO)
             _log("[SYNTHIO] Note entering release phase")
             _log("Note release completed")
 
@@ -430,7 +430,7 @@ class VoiceManager:
     """
     Manages voice lifecycle, allocation, and global voice state.
     """
-    def __init__(self, sample_rate=44100):
+    def __init__(self, output_manager, sample_rate=SAMPLE_RATE):
         _log("Initializing VoiceManager")
         self.active_notes = {}
         self.pending_values = {}
@@ -449,7 +449,15 @@ class VoiceManager:
         except Exception as e:
             _log(f"[ERROR] Failed to initialize synthio synthesizer: {str(e)}")
             self.synthio_synth = None
-    
+
+        # Attach synthesizer to output manager
+        if output_manager and hasattr(output_manager, 'attach_synthesizer'):
+            try:
+                output_manager.attach_synthesizer(self.synthio_synth)
+                _log("[SYNTHIO] Attached synthesizer to output manager")
+            except Exception as e:
+                _log(f"[ERROR] Failed to attach synthesizer: {str(e)}")
+
     def set_config(self, config):
         """Update current instrument configuration"""
         _log(f"Setting instrument configuration:")
@@ -504,7 +512,7 @@ class VoiceManager:
             raise ValueError("No current configuration available for voice allocation")
         
         try:
-            note_state = NoteState(channel, note, velocity, self.current_config, self.synth_engine)
+            note_state = NoteState(channel, note, velocity, self.current_config, self.synthesis)
             
             # Apply pending values directly
             pending = self.get_pending_values(channel)
