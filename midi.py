@@ -8,12 +8,63 @@ Simply validates and passes through MIDI messages with channel information.
 
 import busio
 import time
+import sys
 from adafruit_midi import MIDI
 from constants import *
+
+def _format_dict(d, indent=0):
+    """
+    Manually format a dictionary with indentation for Circuit Python
+    
+    Args:
+        d (dict): Dictionary to format
+        indent (int): Current indentation level
+    
+    Returns:
+        str: Formatted dictionary string
+    """
+    if not isinstance(d, dict):
+        return str(d)
+    
+    lines = ["{"]
+    for key, value in d.items():
+        if isinstance(value, dict):
+            # Nested dictionary
+            sub_lines = _format_dict(value, indent + 2).split('\n')
+            lines.append(" " * (indent + 2) + f"{key}: " + sub_lines[0])
+            lines.extend(" " * (indent + 2) + line for line in sub_lines[1:])
+        else:
+            lines.append(" " * (indent + 2) + f"{key}: {value}")
+    lines.append(" " * indent + "}")
+    return "\n".join(lines)
+
+def _log(message):
+    """
+    Conditional logging function that respects MIDI_DEBUG flag.
+    Args:
+        message (str or dict): Message to log
+    """
+    RED = "\033[31m"
+    PALE_YELLOW = "\033[93m"
+    RESET = "\033[0m" 
+    
+    if MIDI_DEBUG:
+        if "[ERROR]" in str(message):
+            color = RED
+        else:
+            color = PALE_YELLOW
+        
+        # If message is a dictionary, format with custom indentation
+        if isinstance(message, dict):
+            formatted_message = _format_dict(message)
+            print(f"{color}[MIDI  ] {formatted_message}{RESET}", file=sys.stderr)
+        else:
+            print(f"{color}[MIDI  ] {message}{RESET}", file=sys.stderr)
 
 class MidiUart:
     """Handles low-level UART communication"""
     def __init__(self, midi_tx, midi_rx):
+        _log("Initializing UART")
         self.uart = busio.UART(
             tx=midi_tx,
             rx=midi_rx,
@@ -25,7 +76,7 @@ class MidiUart:
             midi_in=self.uart,
             in_channel=tuple(range(16))  # All MIDI channels
         )
-        print("UART initialized")
+        _log("UART initialized successfully")
 
     def read_byte(self):
         """Read a single byte from UART if available"""
@@ -35,6 +86,7 @@ class MidiUart:
 
     def write(self, data):
         """Write data to UART"""
+        _log(f"Writing {len(data)} bytes to UART")
         return self.uart.write(data)
 
     @property
@@ -45,12 +97,13 @@ class MidiUart:
     def cleanup(self):
         """Clean shutdown of UART"""
         if self.uart:
+            _log("Deinitializing UART")
             self.uart.deinit()
 
 class MidiLogic:
     """Handles MIDI message parsing and validation"""
     def __init__(self, uart, text_callback):
-        print("Initializing MIDI Logic")
+        _log("Initializing MIDI Logic")
         self.uart = uart
         self.text_callback = text_callback
         self.midi = MIDI(midi_in=self.uart, in_channel=0)
@@ -75,6 +128,7 @@ class MidiLogic:
                         note_byte = self.uart.read(1)
                         velocity_byte = self.uart.read(1)
                         if note_byte is None or velocity_byte is None:
+                            _log("[ERROR] Incomplete NOTE_ON message")
                             break
                         event = {
                             'type': 'note_on',
@@ -84,11 +138,14 @@ class MidiLogic:
                                 'velocity': velocity_byte[0]
                             }
                         }
+                        _log(f"Received NOTE_ON: Channel {channel}, Note {note_byte[0]}, Velocity {velocity_byte[0]}")
+                        _log(event)
 
                     elif msg_type == MidiMessageType.NOTE_OFF:
                         note_byte = self.uart.read(1)
                         velocity_byte = self.uart.read(1)
                         if note_byte is None or velocity_byte is None:
+                            _log("[ERROR] Incomplete NOTE_OFF message")
                             break
                         event = {
                             'type': 'note_off',
@@ -98,11 +155,14 @@ class MidiLogic:
                                 'velocity': velocity_byte[0]
                             }
                         }
+                        _log(f"Received NOTE_OFF: Channel {channel}, Note {note_byte[0]}, Velocity {velocity_byte[0]}")
+                        _log(event)
 
                     elif msg_type == MidiMessageType.CONTROL_CHANGE:
                         control_byte = self.uart.read(1)
                         value_byte = self.uart.read(1)
                         if control_byte is None or value_byte is None:
+                            _log("[ERROR] Incomplete CONTROL_CHANGE message")
                             break
                         event = {
                             'type': 'cc',
@@ -112,10 +172,13 @@ class MidiLogic:
                                 'value': value_byte[0]
                             }
                         }
+                        _log(f"Received CC: Channel {channel}, Control {control_byte[0]}, Value {value_byte[0]}")
+                        _log(event)
 
                     elif msg_type == MidiMessageType.CHANNEL_PRESSURE:
                         pressure_byte = self.uart.read(1)
                         if pressure_byte is None:
+                            _log("[ERROR] Incomplete CHANNEL_PRESSURE message")
                             break
                         event = {
                             'type': 'pressure',
@@ -124,11 +187,14 @@ class MidiLogic:
                                 'value': pressure_byte[0]
                             }
                         }
+                        _log(f"Received CHANNEL_PRESSURE: Channel {channel}, Pressure {pressure_byte[0]}")
+                        _log(event)
 
                     elif msg_type == MidiMessageType.PITCH_BEND:
                         lsb_byte = self.uart.read(1)
                         msb_byte = self.uart.read(1)
                         if lsb_byte is None or msb_byte is None:
+                            _log("[ERROR] Incomplete PITCH_BEND message")
                             break
                         bend_value = (msb_byte[0] << 7) | lsb_byte[0]
                         event = {
@@ -138,18 +204,16 @@ class MidiLogic:
                                 'value': bend_value
                             }
                         }
+                        _log(f"Received PITCH_BEND: Channel {channel}, Value {bend_value}")
+                        _log(event)
 
                     # Pass parsed message to callback if valid
                     if event and self.text_callback:
-                        if MIDI_DEBUG:
-                            print(f"[MIDI  ] {event['type']} - Channel {event['channel']}, Data {event['data']}")
                         self.text_callback(event)
 
         except Exception as e:
-            if str(e):
-                print(f"Error reading UART: {str(e)}")
+            _log(f"[ERROR] Error reading UART: {str(e)}")
 
     def cleanup(self):
         """Clean shutdown"""
-        if MIDI_DEBUG:
-            print("Cleaning up MIDI system...")
+        _log("Cleaning up MIDI system...")

@@ -9,12 +9,61 @@ import sys
 from fixed_point_math import FixedPoint
 from constants import ModSource, ModTarget, ROUTER_DEBUG
 
+def _format_dict(d, indent=0):
+    """
+    Manually format a dictionary with precise indentation for Circuit Python
+    
+    Args:
+        d (dict): Dictionary to format
+        indent (int): Current indentation level
+    
+    Returns:
+        str: Formatted dictionary string
+    """
+    if not isinstance(d, dict):
+        return str(d)
+    
+    def _format_value(value, current_indent):
+        if isinstance(value, dict):
+            # Recursively format nested dictionaries
+            nested_lines = []
+            nested_lines.append("{ ")
+            for k, v in value.items():
+                if isinstance(v, dict):
+                    nested_sub_lines = _format_dict(v, current_indent + 2).split('\n')
+                    nested_lines.append(f"{k}: {nested_sub_lines[0]}")
+                    nested_lines.extend(nested_sub_lines[1:-1])
+                    nested_lines.append(nested_sub_lines[-1])
+                else:
+                    nested_lines.append(f"{k}: {v}")
+            nested_lines.append("}")
+            return "\n".join(nested_lines)
+        return str(value)
+    
+    lines = ["{ "]
+    for key, value in d.items():
+        value_str = _format_value(value, indent + 2)
+        
+        # If value is a multi-line dictionary, handle it specially
+        if "\n" in value_str:
+            lines.append(f"{key}: {value_str.split('\n')[0]}")
+            lines.extend(value_str.split('\n')[1:])
+        else:
+            lines.append(f"{key}: {value_str}")
+    
+    lines.append("}")
+    
+    # Add indentation to all lines except the first, which gets 9 spaces
+    indented_lines = [lines[0]] + [" " * (9 + 2 * (indent // 2)) + line for line in lines[1:]]
+    
+    return "\n".join(indented_lines)
+
 def _log(message):
     """
     Conditional logging function that respects ROUTER_DEBUG flag.
     
     Args:
-        message (str): Message to log
+        message (str or dict): Message to log
     """
     RED = "\033[31m"
     GREEN = "\033[32m"
@@ -28,13 +77,19 @@ def _log(message):
     RESET = "\033[0m"
 
     if ROUTER_DEBUG:
-        if "rejected" in message:
+        if "rejected" in str(message):
             color = DARK_GRAY
-        elif "[ERROR]" in message:
+        elif "[ERROR]" in str(message):
             color = RED
         else:
             color = BLUE
-        print(f"{color}[ROUTER] {message}{RESET}", file=sys.stderr)
+        
+        # If message is a dictionary, format with custom indentation
+        if isinstance(message, dict):
+            formatted_message = _format_dict(message)
+            print(f"{color}[ROUTER] {formatted_message}{RESET}", file=sys.stderr)
+        else:
+            print(f"{color}[ROUTER] {message}{RESET}", file=sys.stderr)
 
 class MPEMessageRouter:
     """
@@ -236,7 +291,7 @@ class MPEMessageRouter:
             dict: Routing result or None
         """
         _log("Routing message:")
-        _log(f"  Message: {message}")
+        _log(message)  # Removed json.dumps with indent
         
         # First check: Is message allowed
         if not self._is_message_allowed(message):
