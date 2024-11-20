@@ -57,24 +57,56 @@ from instrument_config import create_instrument, list_instruments
 from midi import MidiLogic
 from output_system import AudioOutputManager
 from voices import MPEVoiceManager
-from router import MPEMessageRouter
+from router import Router  # Updated import
 from constants import *
 
-def _log(message):
+import random
+import time
+import sys
+
+def _log(message, effect=None):
     """
-    Conditional logging function that respects DEBUG flag.
+    Conditional logging function with optional color animation.
     Args:
         message (str): Message to log
+        effect (str): Animation effect - 'cycle' (default: None)
     """
+    if not DEBUG:
+        return
+
+    # Basic ANSI colors that work well on most terminals
+    COLORS = [
+        "\033[36m",  # Cyan
+        "\033[34m",  # Blue
+        "\033[35m",  # Magenta
+        "\033[32m",  # Green
+        "\033[33m",  # Yellow
+    ]
+    RESET = "\033[0m"
     RED = "\033[31m"
     WHITE = "\033[37m"
-    RESET = "\033[0m" 
     
-    if DEBUG:
-        if "[ERROR]" in message:
-            color = RED
-        else:
-            color = WHITE
+    if effect == 'cycle':
+        # Move up one line after first print
+        print("\033[s", end='', file=sys.stderr)  # Save cursor position
+        
+        # Do 5 color cycles of the full string
+        for i in range(20):
+            colored_text = ""
+            # Generate full string with random colors per character
+            for char in message:
+                colored_text += random.choice(COLORS) + char
+            
+            if i == 0:
+                print(f"{colored_text}{RESET}", file=sys.stderr)
+            else:
+                # Restore position and clear line
+                print(f"\033[u\033[K{colored_text}{RESET}", file=sys.stderr)
+            time.sleep(0.1)
+        
+    else:
+        # Normal logging behavior
+        color = RED if "[ERROR]" in message else WHITE
         print(f"{color}[CANDID] {message}{RESET}", file=sys.stderr)
 
 class TransportManager:
@@ -169,7 +201,7 @@ class SynthManager:
         self.voice_manager = MPEVoiceManager(self.output_manager)
         
         # Initialize message router with voice manager
-        self.message_router = MPEMessageRouter(self.voice_manager)
+        self.message_router = Router(self.voice_manager)  # Updated class name
         
         # Set initial instrument
         self.current_instrument = create_instrument('piano')
@@ -349,7 +381,7 @@ class CandideConnectionManager:
 
 class Candide:
     def __init__(self):
-        _log("\nWakeup Candide!")
+        _log("\nWakeup Candide!", effect='cycle')
         
         # Initialize audio output first
         self.output_manager = AudioOutputManager()
@@ -384,7 +416,7 @@ class Candide:
             initial_volume = self.hardware_manager.get_initial_volume()
             _log(f"Initial volume: {initial_volume:.3f}")
             self.output_manager.set_volume(initial_volume)
-            _log("\nCandide (v1.0) is awake!... ( ◔◡◔)♬")
+            _log("\nCandide (v1.0) is awake!... ( ◔◡◔)♬", effect='cycle')
         except Exception as e:
             _log(f"[ERROR] Initialization error: {str(e)}")
             raise
@@ -473,7 +505,7 @@ class Candide:
         if self.output_manager:
             _log("Cleaning up audio...")
             self.output_manager.cleanup()
-        _log("\nCandide goes to sleep... ( ◡_◡)ᶻ 𝗓 𐰁")
+        _log("\nCandide goes to sleep... ( ◡_◡)ᶻ 𝗓 𐰁", effect='cycle')
 
 def main():
     try:
