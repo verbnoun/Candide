@@ -57,7 +57,7 @@ from instrument_config import create_instrument, list_instruments
 from midi import MidiLogic
 from output_system import AudioOutputManager
 from voices import VoiceManager
-from router import RouteMap
+from router import OscillatorRouter, FilterRouter, AmplifierRouter
 from constants import *
 
 import random
@@ -190,7 +190,7 @@ class HardwareManager:
 class SynthManager:
     def __init__(self, output_manager):
         self.voice_manager = None
-        self.message_router = None
+        self.routers = {}
         self.current_instrument = None
         self.output_manager = output_manager
         self._setup_synth()
@@ -200,29 +200,48 @@ class SynthManager:
         # Initialize voice manager with output manager
         self.voice_manager = VoiceManager(self.output_manager)
         
-        # Initialize message router with voice manager
-        self.message_router = RouteMap(self.voice_manager)
+        # Initialize specific routers
+        self.routers = {
+            'oscillator': OscillatorRouter(),
+            'filter': FilterRouter(),
+            'amplifier': AmplifierRouter()
+        }
         
         # Set initial instrument
         self.current_instrument = create_instrument('piano')
         if self.current_instrument:
             config = self.current_instrument.get_config()
-            self.message_router.set_config(config)
+            self._configure_routers(config)
+
+    def _configure_routers(self, config):
+        """Configure routers with instrument-specific settings"""
+        for router_name, router in self.routers.items():
+            module_config = config.get(router_name)
+            if module_config:
+                router.set_config(config)
+                _log(f"Configured {router_name} router", router_name)
 
     def set_instrument(self, instrument_name):
         new_instrument = create_instrument(instrument_name)
         if new_instrument:
             self.current_instrument = new_instrument
             config = new_instrument.get_config()
-            self.message_router.set_config(config)
+            self._configure_routers(config)
 
     def update(self):
-        self.message_router.process_updates()
+        """Process any pending updates across routers"""
+        for router in self.routers.values():
+            # Potential method to handle any periodic router tasks
+            pass
 
     def process_midi_events(self, events):
+        """Route MIDI events through appropriate routers"""
         if events:
             for event in events:
-                self.message_router.route_message(event)
+                # Route to appropriate router based on event type
+                for router in self.routers.values():
+                    if router.validate_message(event):
+                        router.process_message(event, self.voice_manager)
             
     def get_current_config(self):
         if self.current_instrument:

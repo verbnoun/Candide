@@ -5,77 +5,60 @@ and value processing capabilities.
 
 import sys
 from fixed_point_math import FixedPoint
+from constants import ROUTER_DEBUG
 
-class Logger:
-    """Enhanced logging system for module routers"""
+def _format_log_message(message):
+    """Format a dictionary message for console logging with specific indentation rules."""
+    if not isinstance(message, (dict, list)):
+        return str(message)
+        
+    # Handle non-recursive cases first
+    if isinstance(message, dict) and not message:
+        return '{}'
+    if isinstance(message, list) and not message:
+        return '[]'
+        
+    # Convert to simple string representation for complex objects
+    try:
+        if isinstance(message, dict):
+            items = []
+            for k, v in message.items():
+                if isinstance(v, (dict, list)):
+                    items.append(f"'{k}': {...}")
+                else:
+                    items.append(f"'{k}': {v}")
+            return '{' + ', '.join(items) + '}'
+        elif isinstance(message, list):
+            return '[...]'
+    except Exception:
+        return str(message)
+    
+    return str(message)
+
+def _log(message, module="ROUTER"):
+    """Conditional logging function that respects ROUTER_DEBUG flag."""
+    if not ROUTER_DEBUG:
+        return
+        
     RED = "\033[31m"
     GREEN = "\033[32m"
     YELLOW = "\033[33m"
     BLUE = "\033[34m"
-    MAGENTA = "\033[35m"
-    CYAN = "\033[36m"
-    WHITE = "\033[37m"
-    GRAY = "\033[37m"
-    DARK_GRAY = "\033[90m"
     RESET = "\033[0m"
-
-    @staticmethod
-    def format_message(message):
-        """Format complex messages with proper indentation"""
-        def format_value(value, indent_level=0):
-            base_indent = ' ' * 0
-            extra_indent = ' ' * 2
-            indent = base_indent + ' ' * (4 * indent_level)
-            
-            if isinstance(value, dict):
-                if not value:
-                    return '{}'
-                lines = ['{']
-                for k, v in value.items():
-                    formatted_v = format_value(v, indent_level + 1)
-                    lines.append(f"{indent + extra_indent}'{k}': {formatted_v},")
-                lines.append(f"{indent}}}")
-                return '\n'.join(lines)
-            
-            elif isinstance(value, list):
-                if not value:
-                    return '[]'
-                lines = ['[']
-                for item in value:
-                    formatted_item = format_value(item, indent_level + 1)
-                    lines.append(f"{indent + extra_indent}{formatted_item},")
-                lines.append(f"{indent}]")
-                return '\n'.join(lines)
-            
-            elif isinstance(value, str):
-                return f"'{value}'"
-            else:
-                return str(value)
-                
-        return format_value(message)
-
-    @staticmethod
-    def log(message, module="BASE", debug_flag=True):
-        """Enhanced logging with module context"""
-        if not debug_flag:
-            return
-            
-        color = Logger.BLUE
-        if isinstance(message, str):
-            if "rejected" in message:
-                color = Logger.DARK_GRAY
-            elif "[ERROR]" in message:
-                color = Logger.RED
-            elif "[SUCCESS]" in message:
-                color = Logger.GREEN
-            elif "[WARNING]" in message:
-                color = Logger.YELLOW
-
-        if isinstance(message, dict):
-            formatted = Logger.format_message(message)
-            print(f"{color}[MODULE:{module}]\n{formatted}{Logger.RESET}", file=sys.stderr)
+    
+    if isinstance(message, dict):
+        formatted = _format_log_message(message)
+        print(f"{BLUE}[{module}] {formatted}{RESET}", file=sys.stderr)
+    else:
+        if "[ERROR]" in str(message):
+            color = RED
+        elif "[SUCCESS]" in str(message):
+            color = GREEN
+        elif "[WARNING]" in str(message):
+            color = YELLOW
         else:
-            print(f"{color}[MODULE:{module}] {message}{Logger.RESET}", file=sys.stderr)
+            color = BLUE
+        print(f"{color}[{module}] {message}{RESET}", file=sys.stderr)
 
 class ModuleRouter:
     """Base class for module routing with advanced processing capabilities"""
@@ -86,8 +69,9 @@ class ModuleRouter:
     def set_config(self, config):
         """Update module configuration"""
         self.config = config
-        Logger.log(f"Configuration updated", self.module_name)
-        Logger.log(config, self.module_name)
+        _log(f"Configuration updated", self.module_name)
+        # Don't log full config, just indicate it was set
+        _log(f"Config size: {len(str(config))}", self.module_name)
         
     def get_module_config(self):
         """Get module-specific configuration"""
@@ -96,12 +80,8 @@ class ModuleRouter:
     def transform_value(self, value, transform_config):
         """Advanced value transformation with curves and ranges"""
         if not transform_config:
-            Logger.log("No transformation config", self.module_name)
             return value
             
-        Logger.log(f"Transforming value: {value}", self.module_name)
-        Logger.log(f"Transform config: {transform_config}", self.module_name)
-        
         # Convert to FixedPoint if needed
         if not isinstance(value, FixedPoint):
             value = FixedPoint.from_float(float(value))
@@ -144,17 +124,12 @@ class ModuleRouter:
             amount = FixedPoint.from_float(transform_config['amount'])
             value = FixedPoint.multiply(value, amount)
             
-        Logger.log(f"Transformed value: {value}", self.module_name)
         return value
         
     def extract_source_value(self, message, source_config):
         """Extract and validate source values from messages"""
         msg_type = message.get('type')
         data = message.get('data', {})
-        
-        Logger.log(f"Extracting source value", self.module_name)
-        Logger.log(f"Message: {message}", self.module_name)
-        Logger.log(f"Source config: {source_config}", self.module_name)
         
         source_type = source_config.get('type')
         attribute = source_config.get('attribute')
@@ -176,14 +151,12 @@ class ModuleRouter:
                 data.get('number') == source_config.get('number')):
                 return data.get('value', 0)
                 
-        Logger.log(f"No value found for source", self.module_name)
         return None
         
     def validate_message(self, message):
         """Base message validation with detailed checking"""
         module_config = self.get_module_config()
         if not module_config:
-            Logger.log(f"No {self.module_name} configuration available", self.module_name)
             return False
             
         msg_type = message.get('type')
@@ -195,10 +168,8 @@ class ModuleRouter:
             sources = param_config.get('sources', [])
             for source in sources:
                 if self._matches_source(message, source):
-                    Logger.log(f"Message valid for {param_name}", self.module_name)
                     return True
                     
-        Logger.log(f"Message not valid for {self.module_name}", self.module_name)
         return False
         
     def _matches_source(self, message, source_config):
