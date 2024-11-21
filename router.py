@@ -97,25 +97,42 @@ class ModuleRouter:
             _log(f"[WARNING] No valid config found for {self.module_name}")
             return
             
-        # Compile routes for each parameter
-        for param_name, param_config in module_config['parameters'].items():
-            if 'sources' not in param_config:
-                continue
-                
-            for source in param_config['sources']:
-                source_type = source.get('type')
-                if source_type == 'per_key':
-                    self._compile_per_key_route(source, param_name, param_config)
-                elif source_type == 'cc':
-                    self._compile_cc_route(source, param_name, param_config)
+        # Compile routes by recursively traversing parameter structure
+        self._compile_parameter_routes(module_config['parameters'])
                     
         _log(f"Route compilation complete for {self.module_name}")
         
-    def _compile_per_key_route(self, source, param_name, param_config):
-        """Compile per-key route"""
+    def _compile_parameter_routes(self, params, param_path=''):
+        """Recursively compile routes from nested parameter structure"""
+        for param_name, param_config in params.items():
+            # Build full parameter path
+            full_path = f"{param_path}.{param_name}" if param_path else param_name
+            
+            if isinstance(param_config, dict):
+                # Check for sources at this level
+                if 'sources' in param_config:
+                    for source in param_config['sources']:
+                        source_type = source.get('type')
+                        if source_type == 'per_key':
+                            self._compile_per_key_route(source, full_path, param_config)
+                        elif source_type == 'cc':
+                            self._compile_cc_route(source, full_path, param_config)
+                            
+                # Recurse into nested parameters (like envelope stages)
+                if 'parameters' in param_config:
+                    self._compile_parameter_routes(param_config['parameters'], full_path)
+                    
+                # Handle envelope structure
+                for key in ['attack', 'decay', 'sustain', 'release']:
+                    if key in param_config:
+                        stage_path = f"{full_path}.{key}"
+                        self._compile_parameter_routes(param_config[key], stage_path)
+        
+    def _compile_per_key_route(self, source, param_path, param_config):
+        """Compile per-key route with full parameter path"""
         route_info = {
             'module': self.module_name,
-            'parameter': param_name,
+            'parameter': param_path,
             'per_key': True,
             'transform': source.get('transform'),
             'range': param_config.get('range', {}),
@@ -123,11 +140,11 @@ class ModuleRouter:
         }
         self.route_cache.add_route('per_key', source['attribute'], route_info)
         
-    def _compile_cc_route(self, source, param_name, param_config):
-        """Compile CC route"""
+    def _compile_cc_route(self, source, param_path, param_config):
+        """Compile CC route with full parameter path"""
         route_info = {
             'module': self.module_name,
-            'parameter': param_name,
+            'parameter': param_path,
             'per_key': False,
             'range': param_config.get('range', {}),
             'curve': param_config.get('curve', 'linear')
@@ -136,52 +153,30 @@ class ModuleRouter:
         
     def transform_value(self, value, route_info):
         """Transform value based on route configuration"""
-        if not isinstance(value, FixedPoint):
-            value = FixedPoint.from_float(float(value))
+        if not isinstance(value, (int, float)):
+            return 0
             
-        if 'transform' in route_info:
-            if route_info['transform'] == 'midi_to_frequency':
-                return value  # Pass through for voice to handle
-                
+        # First normalize the input value to 0-1 range
+        normalized = FixedPoint.normalize_midi_value(value)
+            
+        # Apply range mapping if specified
         if 'range' in route_info:
             r = route_info['range']
-            value = self._apply_range_transform(value, r)
-            
-        if 'curve' in route_info:
-            value = self._apply_curve_transform(value, route_info['curve'])
-            
-        return value
-        
-    def _apply_range_transform(self, value, range_config):
-        """Apply range mapping"""
-        in_min = range_config.get('in_min', 0)
-        in_max = range_config.get('in_max', 127)
-        out_min = FixedPoint.from_float(range_config.get('out_min', 0.0))
-        out_max = FixedPoint.from_float(range_config.get('out_max', 1.0))
-        
-        if in_max != in_min:
-            value = FixedPoint.from_float(
-                (float(value) - in_min) / (in_max - in_min)
-            )
-            
-        range_size = out_max - out_min
-        return out_min + FixedPoint.multiply(value, range_size)
-        
-    def _apply_curve_transform(self, value, curve_type):
-        """Apply curve transformation"""
-        if curve_type == 'exponential':
-            return FixedPoint.multiply(value, value)
-        elif curve_type == 'logarithmic':
-            return FixedPoint.ONE - FixedPoint.multiply(
-                FixedPoint.ONE - value,
-                FixedPoint.ONE - value
-            )
-        elif curve_type == 's_curve':
-            x2 = FixedPoint.multiply(value, value)
-            x3 = FixedPoint.multiply(x2, value)
-            return FixedPoint.multiply(x2, FixedPoint.from_float(3.0)) - \
-                   FixedPoint.multiply(x3, FixedPoint.from_float(2.0))
-        return value
+            if 'min' in r and 'max' in r:
+                # Convert range bounds to fixed point
+                out_min = FixedPoint.from_float(float(r['min']))
+                out_max = FixedPoint.from_float(float(r['max']))
+                
+                # Calculate range size
+                range_size = out_max - out_min
+                
+                # Scale normalized value to output range
+                value = out_min + FixedPoint.multiply(normalized, range_size)
+                
+                # Convert back to float for final output
+                return FixedPoint.to_float(value)
+                
+        return FixedPoint.to_float(normalized)
         
     def process_message(self, message, voice_manager):
         """Transform MIDI message into parameter stream"""
@@ -191,23 +186,14 @@ class ModuleRouter:
         
         _log(f"Processing {msg_type} message on channel {channel}: {data}")
         
-        # Check whitelist first
+        # Handle CC messages
         if msg_type == 'cc':
-            if not self.route_cache.is_whitelisted('cc', data.get('number')):
-                _log(f"Message rejected: CC {data.get('number')} not in whitelist")
+            cc_num = data.get('number')
+            if not self.route_cache.is_whitelisted('cc', cc_num):
+                _log(f"Message rejected: CC {cc_num} not in whitelist")
                 return None
-        elif msg_type in ['note_on', 'note_off']:
-            attribute = data.get('attribute')
-            if not self.route_cache.is_whitelisted(msg_type, attribute):
-                _log(f"Message rejected: {msg_type} attribute '{attribute}' not in whitelist")
-                return None
-        else:
-            _log(f"Message rejected: message type '{msg_type}' not in whitelist")
-            return None
-        
-        # Get route for this message
-        if msg_type == 'cc':
-            route = self.route_cache.get_route('cc', data.get('number'))
+                
+            route = self.route_cache.get_route('cc', cc_num)
             if route:
                 value = self.transform_value(data.get('value', 0), route)
                 result = {
@@ -220,25 +206,78 @@ class ModuleRouter:
                 }
                 _log(f"Routed CC message: {result}")
                 return result
-            else:
-                _log(f"Message rejected: no route found for CC number {data.get('number')}")
                 
+        # Handle note messages
         elif msg_type in ['note_on', 'note_off']:
-            route = self.route_cache.get_route('per_key', data.get('attribute'))
-            if route:
-                value = self.transform_value(data.get('value', 0), route)
-                result = {
-                    'channel': channel,  # Per-key requires channel
-                    'target': {
-                        'module': route['module'],
-                        'parameter': route['parameter']
-                    },
-                    'value': value
-                }
-                _log(f"Routed {msg_type} message: {result}")
-                return result
+            results = []
+            
+            # Process note number if whitelisted
+            if self.route_cache.is_whitelisted(msg_type, 'note'):
+                _log(f"Note {msg_type} attribute 'note' is whitelisted")
+                note_route = self.route_cache.get_route('per_key', 'note')
+                if note_route:
+                    _log(f"Found per_key route for note -> {note_route['module']}.{note_route['parameter']}")
+                    if 'note' in data:
+                        value = self.transform_value(data['note'], note_route)
+                        stream = {
+                            'channel': channel,
+                            'target': {
+                                'module': note_route['module'],
+                                'parameter': note_route['parameter']
+                            },
+                            'value': value
+                        }
+                        results.append(stream)
+                        _log(f"Created note parameter stream: {stream}")
+            
+            # Process velocity if whitelisted for note_on
+            if msg_type == 'note_on' and self.route_cache.is_whitelisted(msg_type, 'velocity'):
+                _log("Note on velocity is whitelisted")
+                velocity_route = self.route_cache.get_route('per_key', 'velocity')
+                if velocity_route:
+                    _log(f"Found per_key route for velocity -> {velocity_route['module']}.{velocity_route['parameter']}")
+                    if 'velocity' in data:
+                        value = self.transform_value(data['velocity'], velocity_route)
+                        stream = {
+                            'channel': channel,
+                            'target': {
+                                'module': velocity_route['module'],
+                                'parameter': velocity_route['parameter']
+                            },
+                            'value': value
+                        }
+                        results.append(stream)
+                        _log(f"Created velocity parameter stream: {stream}")
+            
+            # Process note off trigger if whitelisted
+            if msg_type == 'note_off' and self.route_cache.is_whitelisted(msg_type, 'trigger'):
+                _log("Note off trigger is whitelisted")
+                trigger_route = self.route_cache.get_route('per_key', 'trigger')
+                if trigger_route:
+                    _log(f"Found per_key route for trigger -> {trigger_route['module']}.{trigger_route['parameter']}")
+                    stream = {
+                        'channel': channel,
+                        'target': {
+                            'module': trigger_route['module'],
+                            'parameter': trigger_route['parameter']
+                        },
+                        'value': 0  # Trigger off
+                    }
+                    results.append(stream)
+                    _log(f"Created trigger parameter stream: {stream}")
+            
+            if results:
+                _log(f"Sending {len(results)} parameter streams to voice manager")
+                return results
             else:
-                _log(f"Message rejected: no route found for {msg_type} attribute {data.get('attribute')}")
+                _log("No parameter streams created")
+                return None
+                
+        # All other message types must be explicitly whitelisted
+        else:
+            if not self.route_cache.is_whitelisted(msg_type):
+                _log(f"Message rejected: message type '{msg_type}' not in whitelist")
+                return None
                 
         return None
 

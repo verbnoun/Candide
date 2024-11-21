@@ -7,26 +7,19 @@ between hardware, MIDI, audio, and system components.
 
 Key Responsibilities:
 - Coordinate hardware input processing
-- Manage MIDI communication and event handling
+- Initialize system components
 - Control synthesizer state and instrument selection
 - Provide robust error handling and recovery mechanisms
-
-Primary Classes:
-- TransportManager: Manages UART communication infrastructure
-- HardwareManager: Initializes and manages hardware interfaces
-- SynthManager: Coordinates synth configuration and routing
-- Candide: Primary system coordinator
 """
 
 import board
-import busio
-import digitalio
 import time
 import sys
-from hardware import RotaryEncoderHandler, VolumePotHandler
+from hardware import HardwareManager
+from transport import TransportFactory
 from instrument_config import create_instrument, list_instruments
 from midi import MidiLogic
-from output_system import AudioOutputManager
+from output_system import AudioPipeline
 from voices import VoiceManager
 from router import OscillatorRouter, FilterRouter, AmplifierRouter
 from connection_manager import CandideConnectionManager
@@ -73,83 +66,6 @@ def _log(message, effect=None):
         color = RED if "[ERROR]" in message else WHITE
         print(f"{color}[CANDID] {message}{RESET}", file=sys.stderr)
 
-class TransportManager:
-    def __init__(self, tx_pin, rx_pin, baudrate=MIDI_BAUDRATE, timeout=UART_TIMEOUT):
-        _log("Initializing shared transport...")
-        self.uart = busio.UART(
-            tx=tx_pin,
-            rx=rx_pin,
-            baudrate=baudrate,
-            timeout=timeout,
-            bits=8,
-            parity=None,
-            stop=1
-        )
-        _log("Shared transport initialized")
-        
-    def get_uart(self):
-        return self.uart
-        
-    def flush_buffers(self):
-        start_time = time.monotonic()
-        while time.monotonic() - start_time < BUFFER_CLEAR_TIMEOUT:
-            if self.uart.in_waiting:
-                self.uart.read()
-            else:
-                break
-        
-    def cleanup(self):
-        if self.uart:
-            self.flush_buffers()
-            self.uart.deinit()
-
-class TextUart:
-    def __init__(self, uart):
-        self.uart = uart
-        self.last_write = 0
-        _log("Text protocol initialized")
-
-    def write(self, message):
-        current_time = time.monotonic()
-        delay_needed = MESSAGE_TIMEOUT - (current_time - self.last_write)
-        if delay_needed > 0:
-            time.sleep(delay_needed)
-            
-        if isinstance(message, str):
-            message = message.encode('utf-8')
-        result = self.uart.write(message)
-        self.last_write = time.monotonic()
-        return result
-
-class HardwareManager:
-    def __init__(self):
-        _log("Setting up hardware...")
-        self.encoder = None
-        self.volume_pot = None
-        self._setup_hardware()
-
-    def _setup_hardware(self):
-        self.encoder = RotaryEncoderHandler(
-            INSTRUMENT_ENC_CLK,
-            INSTRUMENT_ENC_DT
-        )
-        self.volume_pot = VolumePotHandler(VOLUME_POT)
-
-    def get_initial_volume(self):
-        return self.volume_pot.normalize_value(self.volume_pot.pot.value)
-
-    def read_encoder(self):
-        return self.encoder.read_encoder()
-
-    def read_pot(self):
-        return self.volume_pot.read_pot()
-        
-    def cleanup(self):
-        if self.encoder:
-            self.encoder.cleanup()
-        if self.volume_pot and self.volume_pot.pot:
-            self.volume_pot.pot.deinit()
-
 class SynthManager:
     """Manages instrument configuration and routing"""
     def __init__(self, output_manager):
@@ -195,16 +111,6 @@ class SynthManager:
             self.current_instrument = new_instrument
             self._configure_instrument(new_instrument)
 
-    def process_midi(self, message):
-        """Route MIDI message through appropriate router"""
-        if not message:
-            return
-            
-        for router in self.routers.values():
-            stream = router.process_message(message, self.voice_manager)
-            if stream:
-                self.voice_manager.process_parameter_stream(stream)
-
     def get_current_config(self):
         if self.current_instrument:
             return self.current_instrument.get_config()
@@ -245,19 +151,20 @@ class Candide:
     def __init__(self):
         _log("\nWakeup Candide!\n", effect='cycle')
         
-        self.output_manager = AudioOutputManager()
+        self.output_manager = AudioPipeline()
         self.hardware_manager = HardwareManager()
         self.synth_manager = SynthManager(self.output_manager)
         
-        self.transport = TransportManager(
+        # Create single shared UART transport
+        self.transport = TransportFactory.create_uart_transport(
             tx_pin=UART_TX,
             rx_pin=UART_RX,
             baudrate=UART_BAUDRATE,
             timeout=UART_TIMEOUT
         )
         
-        shared_uart = self.transport.get_uart()
-        self.text_uart = TextUart(shared_uart)
+        # Create text protocol using shared transport
+        self.text_uart = TransportFactory.create_text_protocol(self.transport)
         
         self.connection_manager = CandideConnectionManager(
             self.text_uart,
@@ -265,9 +172,12 @@ class Candide:
             self.transport
         )
         
+        # Initialize MIDI with shared transport
         self.midi = MidiLogic(
-            uart=shared_uart,
-            text_callback=self.connection_manager.handle_midi_message,
+            uart=self.transport,  # Use shared transport
+            router=self.synth_manager.routers['filter'],
+            connection_manager=self.connection_manager,
+            voice_manager=self.synth_manager.voice_manager
         )
         
         self.last_encoder_scan = 0
@@ -285,7 +195,7 @@ class Candide:
     def _check_volume(self):
         current_time = time.monotonic()
         if current_time - self.last_volume_scan >= UPDATE_INTERVAL:
-            new_volume = self.hardware_manager.read_pot()
+            new_volume = self.hardware_manager.read_volume()
             if new_volume is not None:
                 self.output_manager.set_volume(new_volume)
             self.last_volume_scan = current_time

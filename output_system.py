@@ -1,19 +1,17 @@
 """
-Audio Output Module
+Audio Output and Processing Module
 
-Provides audio output routing for the synthesizer.
+Provides comprehensive audio pipeline management for the synthesizer.
 
 Key Responsibilities:
-- Manage audio hardware initialization
-- Control audio output and volume
-- Provide basic audio system management
+- Manage complete audio processing chain
+- Handle audio routing and mixing
+- Provide advanced audio system controls
+- Support modular audio processing stages
 
 Primary Classes:
+- AudioPipeline: Comprehensive audio processing and routing system
 - AudioOutputManager: Centralized audio output management
-  * Initializes audio hardware (I2S)
-  * Manages audio mixer
-  * Controls volume
-  * Attaches synthesizer to audio output
 """
 
 import audiobusio
@@ -100,23 +98,42 @@ def _log(message):
         else:
             print(f"{color}[AUDIO] {message}{RESET}", file=sys.stderr)
 
-class AudioOutputManager:
-    """Central manager for audio output"""
-    def __init__(self):
-        self.mixer = None
-        self.audio = None
-        self.volume = FixedPoint.from_float(1.0)
-        self.attached_synth = None
+class AudioStage:
+    """Base class for audio processing stages"""
+    def __init__(self, name):
+        self.name = name
+        self.next_stage = None
+
+    def process(self, audio_data):
+        """Process audio data"""
+        raise NotImplementedError("Subclasses must implement process method")
+
+    def connect(self, next_stage):
+        """Connect to next processing stage"""
+        self.next_stage = next_stage
+        return next_stage
+
+class AudioPipeline:
+    """Comprehensive audio processing and routing system"""
+    def __init__(self, sample_rate=SAMPLE_RATE, channels=2):
+        _log("Initializing AudioPipeline")
+        self.sample_rate = sample_rate
+        self.channels = channels
         
-        _log("Initializing AudioOutputManager")
+        # Audio processing stages
+        self.stages = []
+        
+        # Audio output components
+        self.mixer = None
+        self.audio_out = None
+        
         self._setup_audio()
 
     def _setup_audio(self):
         """Initialize audio hardware and mixer"""
         try:
             _log("Setting up I2S output...")
-            # Set up I2S output
-            self.audio = audiobusio.I2SOut(
+            self.audio_out = audiobusio.I2SOut(
                 bit_clock=I2S_BIT_CLOCK,
                 word_select=I2S_WORD_SELECT,
                 data=I2S_DATA
@@ -124,100 +141,68 @@ class AudioOutputManager:
             _log("I2S output initialized successfully")
 
             _log("Initializing audio mixer...")
-            # Initialize mixer with stereo output
             self.mixer = audiomixer.Mixer(
-                sample_rate=SAMPLE_RATE,
+                sample_rate=self.sample_rate,
                 buffer_size=AUDIO_BUFFER_SIZE,
-                channel_count=2  # Stereo output
+                channel_count=self.channels
             )
             _log("Audio mixer initialized successfully")
 
             # Start audio
             _log("Starting audio playback...")
-            self.audio.play(self.mixer)
+            self.audio_out.play(self.mixer)
             _log("Audio playback started")
-
-            _log({
-                "event": "Audio System Status",
-                "i2s_initialized": self.audio is not None,
-                "mixer_initialized": self.mixer is not None,
-                "sample_rate": SAMPLE_RATE,
-                "buffer_size": AUDIO_BUFFER_SIZE,
-                "channels": 2,
-                "volume": FixedPoint.to_float(self.volume)
-            })
 
         except Exception as e:
             _log(f"[ERROR] Audio setup failed: {str(e)}")
             raise
 
+    def add_stage(self, stage):
+        """Add a processing stage to the pipeline"""
+        if self.stages:
+            self.stages[-1].connect(stage)
+        self.stages.append(stage)
+        return stage
+
     def attach_synthesizer(self, synth):
-        """Connect synthesizer to audio output"""
+        """Attach synthesizer to mixer"""
         try:
-            _log("Attempting to attach synthesizer...")
-            
             if not self.mixer:
                 _log("[ERROR] Cannot attach synthesizer - mixer not initialized")
-                return
-                
-            if not synth:
-                _log("[ERROR] Cannot attach synthesizer - synth object is None")
-                return
+                return False
 
-            # Store reference to attached synth
-            self.attached_synth = synth
-
-            # Connect to first mixer channel
             _log("Connecting synthesizer to mixer channel 0")
             self.mixer.voice[0].play(synth)
-
-            # Apply current volume
-            current_vol = FixedPoint.to_float(self.volume)
-            _log(f"Setting initial mixer volume to {current_vol:.2f}")
-            self.set_volume(current_vol)
-
+            
             _log({
-                "event": "Synthesizer Status",
-                "attached": True,
+                "event": "Synthesizer Attached",
                 "mixer_channel": 0,
-                "volume": current_vol,
                 "synth_type": type(synth).__name__
             })
+            return True
 
         except Exception as e:
             _log(f"[ERROR] Failed to attach synthesizer: {str(e)}")
-            _log({
-                "event": "Synthesizer Attachment Error",
-                "error": str(e),
-                "mixer_state": "initialized" if self.mixer else "not initialized",
-                "synth_state": "valid" if synth else "invalid"
-            })
+            return False
 
     def set_volume(self, normalized_volume):
-        """Set volume from normalized hardware input"""
+        """Set volume for the primary mixer channel"""
         try:
-            # Convert to fixed point and constrain
-            new_volume = FixedPoint.from_float(max(0.0, min(1.0, normalized_volume)))
-
+            # Constrain volume between 0 and 1
+            volume = max(0.0, min(1.0, normalized_volume))
+            
             if self.mixer:
-                # Check if volume change is significant (>0.1 or 10%)
-                current_vol = FixedPoint.to_float(self.volume)
-                new_vol = FixedPoint.to_float(new_volume)
-                
-                # Apply to mixer
-                self.mixer.voice[0].level = new_vol
+                current_vol = self.mixer.voice[0].level
+                self.mixer.voice[0].level = volume
 
-                # Log only if volume change is significant
-                if OUTPUT_AUDIO_DEBUG and abs(current_vol - new_vol) >= 0.1:
-                    _log(f"Volume changed from {current_vol:.2f} to {new_vol:.2f}")
-
-            self.volume = new_volume
+                if OUTPUT_AUDIO_DEBUG and abs(current_vol - volume) >= 0.1:
+                    _log(f"Volume changed from {current_vol:.2f} to {volume:.2f}")
 
         except Exception as e:
             _log(f"[ERROR] Volume update failed: {str(e)}")
 
-    def get_buffer_fullness(self):
-        """Get current buffer status"""
+    def get_buffer_status(self):
+        """Get detailed buffer status"""
         try:
             if self.mixer and hasattr(self.mixer.voice[0], 'buffer_fullness'):
                 buffer_fullness = self.mixer.voice[0].buffer_fullness
@@ -229,41 +214,34 @@ class AudioOutputManager:
                 })
                 return buffer_fullness
         except Exception as e:
-            _log(f"[ERROR] Error getting buffer fullness: {str(e)}")
-            _log({
-                "event": "Buffer Status Error",
-                "error": str(e),
-                "mixer_state": "initialized" if self.mixer else "not initialized"
-            })
+            _log(f"[ERROR] Error getting buffer status: {str(e)}")
         return 0
 
-    def update(self):
-        """Placeholder update method to maintain compatibility"""
-        # No-op method to prevent errors in existing code
-        pass
-
     def cleanup(self):
-        """Clean shutdown of audio system"""
+        """Comprehensive cleanup of audio system"""
         _log("Starting audio system cleanup")
 
-        if self.mixer:
-            try:
+        try:
+            # Stop and deinitialize mixer
+            if self.mixer:
                 _log("Shutting down mixer")
                 self.mixer.voice[0].level = 0
                 time.sleep(0.01)  # Allow final samples
-            except Exception as e:
-                _log(f"[ERROR] Mixer cleanup failed: {str(e)}")
 
-        if self.audio:
-            try:
+            # Stop and deinitialize I2S
+            if self.audio_out:
                 _log("Shutting down I2S")
-                self.audio.stop()
-                self.audio.deinit()
-            except Exception as e:
-                _log(f"[ERROR] I2S cleanup failed: {str(e)}")
+                self.audio_out.stop()
+                self.audio_out.deinit()
 
-        _log({
-            "event": "Cleanup Status",
-            "mixer_cleaned": self.mixer is not None,
-            "audio_cleaned": self.audio is not None
-        })
+            _log({
+                "event": "Cleanup Status",
+                "mixer_cleaned": self.mixer is not None,
+                "audio_cleaned": self.audio_out is not None
+            })
+
+        except Exception as e:
+            _log(f"[ERROR] Audio system cleanup failed: {str(e)}")
+
+# Maintain backward compatibility
+AudioOutputManager = AudioPipeline

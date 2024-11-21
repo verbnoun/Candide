@@ -1,11 +1,8 @@
 """
 Connection Management System for Candide Synthesizer
 
-Handles connection state and communication with base station, including:
-- Connection detection and state management
-- Handshake protocol
-- MIDI message handling
-- Heartbeat management
+Handles connection state and handshake protocol with base station.
+Validates handshake MIDI messages and manages connection state.
 """
 
 import time
@@ -35,7 +32,7 @@ class ConnectionState:
     RETRY_DELAY = "retry_delay"
 
 class CandideConnectionManager:
-    """Manages connection state and communication with base station"""
+    """Manages connection state and handshake protocol"""
     
     def __init__(self, text_uart, synth_manager, transport_manager):
         self.uart = text_uart
@@ -96,12 +93,16 @@ class CandideConnectionManager:
                 self._send_heartbeat()
                 
     def handle_midi_message(self, event):
+        """Handle MIDI messages for handshake validation"""
+        # Only process CC messages during handshake
         if not event or event['type'] != 'cc':
             return
             
+        # Check for handshake CC on channel 0
         if (event['channel'] == 0 and 
             event['data']['number'] == HANDSHAKE_CC):
             
+            # Validate handshake value when in DETECTED state
             if (event['data']['value'] == HANDSHAKE_VALUE and 
                 self.state == ConnectionState.DETECTED):
                 _log("Handshake CC received - sending config")
@@ -111,12 +112,6 @@ class CandideConnectionManager:
                 self.uart.write(f"{config_str}\n")
                 self.state = ConnectionState.CONNECTED
                 _log("Connection established")
-                return
-                
-        # Pass MIDI messages to synth_manager when connected        
-        if self.state == ConnectionState.CONNECTED:
-            _log(f"Passing MIDI to synth_manager: {event['type']}")
-            self.synth_manager.process_midi(event)
                 
     def _handle_initial_detection(self):
         """Handle initial base station detection"""

@@ -1,12 +1,11 @@
 """
 MIDI Message Processing Module
 
-Handles MIDI communication and message parsing.
+Handles MIDI communication, message parsing, and routing.
 Supports full MPE by accepting all MIDI channels (0-15).
-Simply validates and passes through MIDI messages with channel information.
+Routes MIDI messages to router and connection manager.
 """
 
-import busio
 import time
 import sys
 import binascii
@@ -14,17 +13,8 @@ from adafruit_midi import MIDI
 from constants import *
 
 def _format_log_message(message):
-    """
-    Format a dictionary message for console logging with specific indentation rules.
-    
-    Args:
-        message (dict): Message to format
-    
-    Returns:
-        str: Formatted message string
-    """
+    """Format a dictionary message for console logging"""
     def _format_value(value, indent_level=0):
-        """Recursively format values with proper indentation."""
         base_indent = ' ' * 0
         extra_indent = ' ' * 2
         indent = base_indent + ' ' * (4 * indent_level)
@@ -44,11 +34,7 @@ def _format_log_message(message):
     return _format_value(message)
 
 def _log(message):
-    """
-    Conditional logging function that respects MIDI_DEBUG flag.
-    Args:
-        message (str or dict): Message to log
-    """
+    """Conditional logging function"""
     RED = "\033[31m"
     PALE_YELLOW = "\033[93m"
     RESET = "\033[0m" 
@@ -59,59 +45,21 @@ def _log(message):
         else:
             color = PALE_YELLOW
         
-        # If message is a dictionary, format with custom indentation
         if isinstance(message, dict):
             formatted_message = _format_log_message(message)
             print(f"{color}{formatted_message}{RESET}", file=sys.stderr)
         else:
             print(f"{color}[MIDI  ] {message}{RESET}", file=sys.stderr)
 
-class MidiUart:
-    """Handles low-level UART communication"""
-    def __init__(self, midi_tx, midi_rx):
-        _log("Initializing UART")
-        self.uart = busio.UART(
-            tx=midi_tx,
-            rx=midi_rx,
-            baudrate=MIDI_BAUDRATE,
-            timeout=UART_TIMEOUT
-        )
-        # Accept all MIDI channels 0-15 for full MPE support
-        self.midi = MIDI(
-            midi_in=self.uart,
-            in_channel=tuple(range(16))  # All MIDI channels
-        )
-        _log("UART initialized successfully")
-
-    def read_byte(self):
-        """Read a single byte from UART if available"""
-        if self.uart.in_waiting:
-            return self.uart.read(1)[0]
-        return None
-
-    def write(self, data):
-        """Write data to UART"""
-        _log(f"Writing {len(data)} bytes to UART")
-        return self.uart.write(data)
-
-    @property
-    def in_waiting(self):
-        """Number of bytes waiting to be read"""
-        return self.uart.in_waiting
-
-    def cleanup(self):
-        """Clean shutdown of UART"""
-        if self.uart:
-            _log("Deinitializing UART")
-            self.uart.deinit()
-
 class MidiLogic:
-    """Handles MIDI message parsing and validation"""
-    def __init__(self, uart, text_callback):
+    """Handles MIDI message parsing and routing"""
+    def __init__(self, uart, router, connection_manager, voice_manager):
         _log("Initializing MIDI Logic")
-        self.uart = uart
-        self.text_callback = text_callback
-        self.midi = MIDI(midi_in=self.uart, in_channel=0)
+        self.uart = uart  # Now expects a transport instance
+        self.router = router
+        self.connection_manager = connection_manager
+        self.voice_manager = voice_manager
+        
         # Track MPE state per channel
         self.channel_state = {}
         for channel in range(16):
@@ -121,6 +69,7 @@ class MidiLogic:
                 'cc74': 64,  # Center value for timbre
                 'in_mpe_setup': False
             }
+            
         # Track partial message state
         self.partial_message = {
             'status': None,
@@ -129,27 +78,16 @@ class MidiLogic:
         }
 
     def _hex_dump(self, data):
-        """
-        Create a hex dump of the given data.
-        
-        Args:
-            data (bytes or list): Data to convert to hex
-        
-        Returns:
-            str: Formatted hex dump string
-        """
+        """Create a hex dump of the given data"""
         if not data:
             return "No data to dump"
         
-        # Convert to bytes if it's a list
         if isinstance(data, list):
             data = bytes(data)
         
-        # Convert to hex and split into groups of two characters
         hex_str = binascii.hexlify(data).decode('utf-8')
         hex_groups = [hex_str[i:i+2] for i in range(0, len(hex_str), 2)]
         
-        # Format hex dump with 8 bytes per line
         lines = []
         for i in range(0, len(hex_groups), 8):
             line_group = hex_groups[i:i+8]
@@ -281,9 +219,14 @@ class MidiLogic:
                     _log(f"Received from Controller: Pitch Bend")
                     _log(event)
 
-                # Pass parsed message to callback if valid
-                if event and self.text_callback:
-                    self.text_callback(event)
+                # Route message to both connection manager and router
+                if event:
+                    # Always send to connection manager for handshake detection
+                    self.connection_manager.handle_midi_message(event)
+                    
+                    # Send to router if connection manager is in connected state
+                    if self.connection_manager.is_connected():
+                        self.router.process_message(event, self.voice_manager)
 
                 # Reset partial message tracking
                 self.partial_message = {

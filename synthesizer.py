@@ -4,7 +4,7 @@ Synthesis Module
 Handles parameter manipulation and waveform generation for synthio notes.
 Provides calculations needed by voice modules to control synthesis.
 """
-
+import sys
 import array
 import math
 

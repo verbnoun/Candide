@@ -13,22 +13,10 @@ Key Responsibilities:
 - Enable precise input reading and filtering
 
 Primary Classes:
-- VolumePotHandler:
-  * Reads and normalizes volume potentiometer input
-  * Applies input filtering and thresholding
-  * Converts raw analog values to usable range
-
-- RotaryEncoderHandler:
-  * Manages rotary encoder for instrument selection
-  * Detects rotation direction and magnitude
-  * Generates hardware interaction events
-
-Key Features:
-- Precise analog-to-digital conversion
-- Configurable input sensitivity
-- Low-overhead hardware interaction
-- Support for debug and calibration modes
-- Flexible hardware configuration
+- HardwareComponent: Base class for hardware components
+- VolumeManager: Manages volume potentiometer
+- EncoderManager: Manages instrument selection encoder
+- HardwareManager: Coordinates hardware components
 """
 
 import board
@@ -36,12 +24,21 @@ import analogio
 import rotaryio
 from constants import *
 
-class VolumePotHandler:
-    """Handles volume potentiometer input processing"""
+class HardwareComponent:
+    """Base class for hardware components"""
+    def __init__(self):
+        self.is_active = False
+        
+    def cleanup(self):
+        """Clean shutdown of hardware component"""
+        pass
+
+class VolumeManager(HardwareComponent):
+    """Manages volume potentiometer functionality"""
     def __init__(self, pin):
+        super().__init__()
         self.pot = analogio.AnalogIn(pin)
         self.last_value = 0
-        self.is_active = False
     
     def normalize_value(self, value):
         """Convert ADC value to normalized range (0.0-1.0)"""
@@ -57,7 +54,7 @@ class VolumePotHandler:
         
         return round(normalized, 5)
 
-    def read_pot(self):
+    def read(self):
         """Read and process potentiometer value"""
         raw_value = self.pot.value
         change = abs(raw_value - self.last_value)
@@ -76,18 +73,19 @@ class VolumePotHandler:
             return normalized_new
             
         return None
-
-class RotaryEncoderHandler:
-    """Manages rotary encoder input for instrument selection"""
-    def __init__(self, clk_pin, dt_pin):
-        # Initialize encoder using rotaryio
-        self.encoder = rotaryio.IncrementalEncoder(clk_pin, dt_pin, divisor=2)
         
-        # Track state
+    def cleanup(self):
+        """Clean shutdown of potentiometer"""
+        if self.pot:
+            self.pot.deinit()
+
+class EncoderManager(HardwareComponent):
+    """Manages instrument selection encoder functionality"""
+    def __init__(self, clk_pin, dt_pin):
+        super().__init__()
+        self.encoder = rotaryio.IncrementalEncoder(clk_pin, dt_pin, divisor=2)
         self.last_position = 0
         self.current_position = 0
-        
-        # Reset initial state
         self.reset_position()
 
     def reset_position(self):
@@ -96,30 +94,63 @@ class RotaryEncoderHandler:
         self.last_position = 0
         self.current_position = 0
 
-    def read_encoder(self):
+    def read(self):
         """Read encoder and return events if position changed"""
         events = []
-        
-        # Read current position
         current_raw_position = self.encoder.position
         
-        # Check if the encoder position has changed
         if current_raw_position != self.last_position:
-            # Calculate direction (-1 for left, +1 for right)
             direction = 1 if current_raw_position > self.last_position else -1
 
             if HARDWARE_DEBUG:
                 print(f"Encoder movement: pos={current_raw_position}, last={self.last_position}, dir={direction}")
             
-            # Add event with direction
             events.append(('instrument_change', direction))
-            
-            # Update last_position for next read
             self.last_position = current_raw_position
         
         return events
 
+class HardwareManager:
+    """Coordinates hardware component interactions"""
+    def __init__(self):
+        self.volume = None
+        self.encoder = None
+        self._initialize_components()
+
+    def _initialize_components(self):
+        """Initialize all hardware components"""
+        try:
+            self.volume = VolumeManager(VOLUME_POT)
+            self.encoder = EncoderManager(INSTRUMENT_ENC_CLK, INSTRUMENT_ENC_DT)
+        except Exception as e:
+            print(f"[ERROR] Hardware initialization failed: {str(e)}")
+            self.cleanup()
+            raise
+
+    def get_initial_volume(self):
+        """Get initial normalized volume setting"""
+        if self.volume:
+            return self.volume.normalize_value(self.volume.pot.value)
+        return 0.0
+
+    def read_encoder(self):
+        """Read encoder state"""
+        if self.encoder:
+            return self.encoder.read()
+        return []
+
+    def read_volume(self):
+        """Read volume potentiometer state"""
+        if self.volume:
+            return self.volume.read()
+        return None
+        
     def cleanup(self):
-        """Clean shutdown of hardware"""
-        # No specific cleanup needed for encoder
-        pass
+        """Clean shutdown of all hardware components"""
+        if self.encoder:
+            self.encoder.cleanup()
+            self.encoder = None
+            
+        if self.volume:
+            self.volume.cleanup()
+            self.volume = None

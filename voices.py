@@ -21,6 +21,7 @@ def _log(message, module="VOICES"):
     BLUE = "\033[34m"
     YELLOW = "\033[33m"
     MAGENTA = "\033[35m"
+    GRAY = "\033[90m"
     RESET = "\033[0m"
     
     if isinstance(message, dict):
@@ -39,6 +40,8 @@ def _log(message, module="VOICES"):
             color = YELLOW
         elif "[CLEANUP]" in str(message):
             color = MAGENTA
+        elif "[REJECTED]" in str(message):
+            color = GRAY
         else:
             color = BLUE
         print(f"{color}[{module}] {message}{RESET}", file=sys.stderr)
@@ -54,10 +57,10 @@ class ModuleVoice:
         try:
             result = self.synthesis.update_note(note, parameter, value)
             if result:
-                _log(f"[UPDATE] {self.module_name} {parameter}={value}")
+                _log(f"[UPDATE] {self.module_name} {parameter}")
             return result
         except Exception as e:
-            _log(f"[ERROR] Failed to update {parameter}: {str(e)}")
+            _log(f"[ERROR] Update failed")
             return False
 
 class EnvelopeVoice(ModuleVoice):
@@ -85,10 +88,10 @@ class EnvelopeVoice(ModuleVoice):
                                 
             if len(env_params) >= 5:
                 self.envelope = synthio.Envelope(**env_params)
-                _log(f"[CREATE] Envelope parameters: {env_params}")
+                _log("[CREATE] Envelope created")
                 
         except Exception as e:
-            _log(f"[ERROR] Envelope creation failed: {str(e)}")
+            _log("[ERROR] Envelope failed")
             
     def update_parameter(self, note, stage, param, value):
         if not note or not hasattr(note, 'envelope'):
@@ -97,10 +100,10 @@ class EnvelopeVoice(ModuleVoice):
         try:
             param_name = f"{stage}_{param}"
             setattr(note.envelope, param_name, value)
-            _log(f"[UPDATE] Envelope {param_name}={value:.3f}")
+            _log(f"[UPDATE] Envelope {param_name}")
             return True
         except Exception as e:
-            _log(f"[ERROR] Envelope update failed: {str(e)}")
+            _log("[ERROR] Envelope update failed")
             return False
 
 class OscillatorVoice(ModuleVoice):
@@ -123,9 +126,9 @@ class OscillatorVoice(ModuleVoice):
                     osc_config['waveform'].get('type', 'triangle'),
                     osc_config['waveform']
                 )
-                _log(f"[CREATE] Waveform configured")
+                _log("[CREATE] Waveform configured")
         except Exception as e:
-            _log(f"[ERROR] Waveform configuration failed: {str(e)}")
+            _log("[ERROR] Waveform failed")
 
 class FilterVoice(ModuleVoice):
     """Filter parameter handling"""
@@ -142,10 +145,10 @@ class FilterVoice(ModuleVoice):
             
         try:
             setattr(note.filter, param, value)
-            _log(f"[UPDATE] Filter {param}={value:.3f}")
+            _log(f"[UPDATE] Filter {param}")
             return True
         except Exception as e:
-            _log(f"[ERROR] Filter update failed: {str(e)}")
+            _log("[ERROR] Filter update failed")
             return False
 
 class AmplifierVoice(ModuleVoice):
@@ -160,7 +163,7 @@ class AmplifierVoice(ModuleVoice):
 class Voice:
     """Complete voice with all modules"""
     def __init__(self, channel, params, config, synthesis):
-        _log(f"[CREATE] Creating voice on channel {channel}")
+        _log(f"[CREATE] Voice ch {channel}")
         
         self.channel = channel
         self.active = True
@@ -184,18 +187,18 @@ class Voice:
                 note_params['envelope'] = self.amplifier.envelope.envelope
                 
             note = synthio.Note(**note_params)
-            _log(f"[CREATE] Note parameters: {note_params}")
+            _log("[CREATE] Note created")
             return note
             
         except Exception as e:
-            _log(f"[ERROR] Note creation failed: {str(e)}")
+            _log("[ERROR] Note failed")
             return None
             
     def update_parameter(self, target, value):
         """Apply parameter update from router"""
         if not self.synth_note:
             return False
-            
+        
         try:
             module_name = target['module']
             parameter = target['parameter']
@@ -219,7 +222,7 @@ class Voice:
                 return module.update_parameter(self.synth_note, parameter, value)
                 
         except Exception as e:
-            _log(f"[ERROR] Parameter update failed: {str(e)}")
+            _log("[ERROR] Update failed")
             return False
             
     def release(self):
@@ -227,7 +230,7 @@ class Voice:
         if self.active:
             self.active = False
             self.release_time = time.monotonic()
-            _log(f"[RELEASE] Channel {self.channel}")
+            _log(f"[RELEASE] Ch {self.channel}")
 
 class VoiceManager:
     """Manages voice collection and parameter routing"""
@@ -245,20 +248,20 @@ class VoiceManager:
             
             if output_manager and hasattr(output_manager, 'attach_synthesizer'):
                 output_manager.attach_synthesizer(self.synthio_synth)
-                _log("[CREATE] Synthesizer initialized")
+                _log("[CREATE] Synth initialized")
                 
         except Exception as e:
-            _log(f"[ERROR] Synthesizer initialization failed: {str(e)}")
+            _log("[ERROR] Synth failed")
             self.synthio_synth = None
             
     def set_config(self, config):
         """Set current instrument configuration"""
         if not isinstance(config, dict):
-            _log("[ERROR] Invalid config format")
+            _log("[ERROR] Invalid config")
             raise ValueError("Config must be dictionary")
             
         self.current_config = config
-        _log("[UPDATE] New configuration set")
+        _log("[UPDATE] Config set")
         
     def process_parameter_stream(self, stream):
         """Process parameter stream from router"""
@@ -272,8 +275,14 @@ class VoiceManager:
         if not target:
             return
             
+        # Log received parameter stream
+        _log(f"Received parameter stream: {target['module']}.{target['parameter']} = {value}")
+        
         if channel is None:
             # Global parameter - update all voices
+            if not self.active_voices:
+                _log(f"[REJECTED] No active voices to apply {target['module']}.{target['parameter']} = {value}")
+                return
             for voice in self.active_voices.values():
                 voice.update_parameter(target, value)
         else:
@@ -281,6 +290,8 @@ class VoiceManager:
             voice = self.active_voices.get(channel)
             if voice:
                 voice.update_parameter(target, value)
+            else:
+                _log(f"[REJECTED] No voice on channel {channel} for {target['module']}.{target['parameter']} = {value}")
                 
     def create_voice(self, channel, params):
         """Create new voice"""
@@ -296,7 +307,7 @@ class VoiceManager:
                 return voice
                 
         except Exception as e:
-            _log(f"[ERROR] Voice creation failed: {str(e)}")
+            _log("[ERROR] Voice failed")
             
         return None
         
@@ -316,5 +327,5 @@ class VoiceManager:
         for channel in list(self.active_voices.keys()):
             voice = self.active_voices[channel]
             if not voice.active and (current_time - voice.release_time) > 0.5:
-                _log(f"[CLEANUP] Channel {channel}")
+                _log(f"[CLEANUP] Ch {channel}")
                 del self.active_voices[channel]
