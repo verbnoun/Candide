@@ -1,36 +1,34 @@
 """
-Advanced MPE Message Router for New Instrument Configuration System
-
-Handles complex routing based on the new instrument configuration paradigm.
+Module-specific routing system for synthesizer parameters with advanced validation
+and value processing capabilities.
 """
+
 import sys
 from fixed_point_math import FixedPoint
 
-class Logging:
-    """
-    Centralized logging functionality for router components.
-    Provides consistent message formatting and debug level control.
-    """
+class Logger:
+    """Enhanced logging system for module routers"""
+    RED = "\033[31m"
+    GREEN = "\033[32m"
+    YELLOW = "\033[33m"
+    BLUE = "\033[34m"
+    MAGENTA = "\033[35m"
+    CYAN = "\033[36m"
+    WHITE = "\033[37m"
+    GRAY = "\033[37m"
+    DARK_GRAY = "\033[90m"
+    RESET = "\033[0m"
+
     @staticmethod
-    def format_log_message(message):
-        """
-        Format a dictionary message for console logging with specific indentation rules.
-        Handles dictionaries, lists, and primitive values.
-        
-        Args:
-            message (dict): Message to format
-            
-        Returns:
-            str: Formatted message string
-        """
+    def format_message(message):
+        """Format complex messages with proper indentation"""
         def format_value(value, indent_level=0):
-            """Recursively format values with proper indentation."""
             base_indent = ' ' * 0
             extra_indent = ' ' * 2
             indent = base_indent + ' ' * (4 * indent_level)
             
             if isinstance(value, dict):
-                if not value:  # Handle empty dict
+                if not value:
                     return '{}'
                 lines = ['{']
                 for k, v in value.items():
@@ -40,7 +38,7 @@ class Logging:
                 return '\n'.join(lines)
             
             elif isinstance(value, list):
-                if not value:  # Handle empty list
+                if not value:
                     return '[]'
                 lines = ['[']
                 for item in value:
@@ -57,394 +55,320 @@ class Logging:
         return format_value(message)
 
     @staticmethod
-    def log(message, debug_flag=True):
-        """
-        Conditional logging function that respects debug flag.
-        
-        Args:
-            message (str or dict): Message to log
-            debug_flag (bool): Whether to output the log
-        """
-        RED = "\033[31m"
-        GREEN = "\033[32m"
-        YELLOW = "\033[33m"
-        BLUE = "\033[34m"
-        MAGENTA = "\033[35m"
-        CYAN = "\033[36m"
-        WHITE = "\033[37m"
-        GRAY = "\033[37m"
-        DARK_GRAY = "\033[90m"
-        RESET = "\033[0m"
-
-        if debug_flag:
-            if "rejected" in str(message):
-                color = DARK_GRAY
-            elif "[ERROR]" in str(message):
-                color = RED
-            else:
-                color = BLUE
+    def log(message, module="BASE", debug_flag=True):
+        """Enhanced logging with module context"""
+        if not debug_flag:
+            return
             
-            # If message is a dictionary, format with custom indentation
-            if isinstance(message, dict):
-                formatted_message = Logging.format_log_message(message)
-                print(f"{color}{formatted_message}{RESET}", file=sys.stderr)
-            else:
-                print(f"{color}[ROUTER] {message}{RESET}", file=sys.stderr)
+        color = Logger.BLUE
+        if isinstance(message, str):
+            if "rejected" in message:
+                color = Logger.DARK_GRAY
+            elif "[ERROR]" in message:
+                color = Logger.RED
+            elif "[SUCCESS]" in message:
+                color = Logger.GREEN
+            elif "[WARNING]" in message:
+                color = Logger.YELLOW
 
-class MidiValidator:
-    """
-    Validates incoming MIDI messages against instrument configuration.
-    Ensures messages are valid for the current configuration.
-    """
+        if isinstance(message, dict):
+            formatted = Logger.format_message(message)
+            print(f"{color}[MODULE:{module}]\n{formatted}{Logger.RESET}", file=sys.stderr)
+        else:
+            print(f"{color}[MODULE:{module}] {message}{Logger.RESET}", file=sys.stderr)
+
+class ModuleRouter:
+    """Base class for module routing with advanced processing capabilities"""
     def __init__(self, config=None):
         self.config = config
+        self.module_name = "BASE"
         
     def set_config(self, config):
-        """Update configuration"""
+        """Update module configuration"""
         self.config = config
+        Logger.log(f"Configuration updated", self.module_name)
+        Logger.log(config, self.module_name)
         
-    def is_message_allowed(self, message):
-        """
-        Validate incoming MIDI message against instrument configuration.
-        
-        Args:
-            message (dict): Incoming MIDI message
-        
-        Returns:
-            bool: Whether the message is valid for this instrument
-        """
-        if not self.config or not message:
-            Logging.log("Validation failed: No config or message")
-            return False
-        
-        msg_type = message.get('type')
-        sources = self.config.get('sources', {})
-        patches = self.config.get('patches', [])
-        data = message.get('data', {})
-        
-        # Basic message type validation
-        if msg_type not in ['note_on', 'note_off', 'cc', 'pitch_bend', 'channel_pressure']:
-            Logging.log(f"Message rejected: Unsupported message type {msg_type}")
-            return False
-            
-        # Note messages are always allowed if we have oscillator config
-        if msg_type in ['note_on', 'note_off'] and 'oscillator' in self.config:
-            return True
-            
-        # For CC messages, check patches
-        if msg_type == 'cc':
-            cc_number = data.get('number')
-            for patch in patches:
-                source = patch.get('source', {})
-                if source.get('id') == 'cc' and source.get('number') == cc_number:
-                    Logging.log(f"CC {cc_number} accepted: found in patches")
-                    return True
-            Logging.log(f"Message rejected: CC {cc_number} not found in patches")
-            return False
-            
-        # For other messages, check if source exists
-        source_key = {
-            'pitch_bend': 'pitch_bend',
-            'channel_pressure': 'channel_pressure'
-        }.get(msg_type)
-        
-        if source_key and source_key in sources:
-            Logging.log(f"{msg_type} accepted: source exists")
-            return True
-            
-        Logging.log(f"Message rejected: No valid source found")
-        return False
-
-class MidiTranslator:
-    """
-    Handles MIDI message value extraction and transformation.
-    Converts MIDI messages into normalized control values.
-    """
-    def __init__(self, config=None):
-        self.config = config
-        
-    def set_config(self, config):
-        """Update configuration"""
-        self.config = config
-        
-    def get_source_value(self, source, message):
-        """
-        Extract source value from a MIDI message.
-        
-        Args:
-            source (dict): Source configuration
-            message (dict): MIDI message
-        
-        Returns:
-            float/int/None: Extracted source value
-        """
-        msg_type = message.get('type')
-        data = message.get('data', {})
-        
-        source_id = source.get('id')
-        attribute = source.get('attribute')
-        
-        Logging.log("Extracting source value:")
-        Logging.log(f"  Source ID: {source_id}")
-        Logging.log(f"  Attribute: {attribute}")
-        Logging.log(f"  Message Type: {msg_type}")
-        Logging.log(f"  Message Data: {data}")
-        
-        # Direct value extraction based on message type
-        if msg_type == 'note_on' and source_id == 'note_on':
-            if attribute == 'velocity':
-                return data.get('velocity', 0)
-            if attribute == 'note':
-                return data.get('note', 0)
-                
-        elif msg_type == 'note_off' and source_id == 'note_off':
-            return 0  # Trigger value
-            
-        elif msg_type == 'pitch_bend' and source_id == 'pitch_bend':
-            return data.get('value', 0)
-            
-        elif msg_type == 'channel_pressure' and source_id == 'channel_pressure':
-            return data.get('value', 0)
-            
-        elif msg_type == 'cc' and source_id == 'cc':
-            if attribute == 'value' and source.get('number') == data.get('number'):
-                return data.get('value', 0)
-        
-        Logging.log("[ERROR] No source value found for specified source")
-        return None
+    def get_module_config(self):
+        """Get module-specific configuration"""
+        return self.config.get(self.module_name) if self.config else None
         
     def transform_value(self, value, transform_config):
-        """
-        Transform a value based on configuration.
-        
-        Args:
-            value (float/int): Input value
-            transform_config (dict): Transformation configuration
-        
-        Returns:
-            float: Transformed value
-        """
+        """Advanced value transformation with curves and ranges"""
         if not transform_config:
-            Logging.log("No transformation config, returning original value")
+            Logger.log("No transformation config", self.module_name)
             return value
+            
+        Logger.log(f"Transforming value: {value}", self.module_name)
+        Logger.log(f"Transform config: {transform_config}", self.module_name)
         
-        original_value = value
+        # Convert to FixedPoint if needed
+        if not isinstance(value, FixedPoint):
+            value = FixedPoint.from_float(float(value))
         
         # Range mapping
         if 'range' in transform_config:
             r = transform_config['range']
-            value = (
-                (value - r.get('in_min', 0)) / 
-                (r.get('in_max', 127) - r.get('in_min', 0))
-            ) * (r.get('out_max', 1.0) - r.get('out_min', 0.0)) + r.get('out_min', 0.0)
+            in_min = r.get('in_min', 0)
+            in_max = r.get('in_max', 127)
+            out_min = FixedPoint.from_float(r.get('out_min', 0.0))
+            out_max = FixedPoint.from_float(r.get('out_max', 1.0))
+            
+            # Normalize to 0-1
+            if in_max != in_min:
+                value = FixedPoint.from_float(
+                    (float(value) - in_min) / (in_max - in_min)
+                )
+                
+            # Scale to output range
+            range_size = out_max - out_min
+            value = out_min + FixedPoint.multiply(value, range_size)
         
-        # Curve transformation
+        # Apply curve
         curve = transform_config.get('curve', 'linear')
         if curve == 'exponential':
-            value = value ** 2
+            value = FixedPoint.multiply(value, value)
         elif curve == 'logarithmic':
-            value = 1 - (1 - value) ** 2
+            value = FixedPoint.ONE - FixedPoint.multiply(
+                FixedPoint.ONE - value,
+                FixedPoint.ONE - value
+            )
         elif curve == 's_curve':
-            value = 3 * value ** 2 - 2 * value ** 3
+            x2 = FixedPoint.multiply(value, value)
+            x3 = FixedPoint.multiply(x2, value)
+            value = FixedPoint.multiply(x2, FixedPoint.from_float(3.0)) - \
+                   FixedPoint.multiply(x3, FixedPoint.from_float(2.0))
         
-        Logging.log("Value transformation:")
-        Logging.log(f"  Original value: {original_value}")
-        Logging.log(f"  Curve: {curve}")
-        Logging.log(f"  Transformed value: {value}")
-        
-        return value
-
-class VoiceNav:
-    """
-    Handles routing to voices and parameters.
-    Manages voice allocation and parameter updates.
-    """
-    def __init__(self, voice_manager):
-        self.voice_manager = voice_manager
-        
-    def route_to_destination(self, destination, value, message):
-        """
-        Route a transformed value to its destination.
-        
-        Args:
-            destination (dict): Destination configuration
-            value (float): Transformed value
-            message (dict): Original MIDI message
-        """
-        dest_id = destination.get('id')
-        attribute = destination.get('attribute', '')
-        
-        Logging.log("Routing to destination:")
-        Logging.log(f"  Destination ID: {dest_id}")
-        Logging.log(f"  Attribute: {attribute}")
-        Logging.log(f"  Value: {value}")
-        
-        # Find the corresponding voice(s)
-        channel = message.get('channel')
-        note = message.get('data', {}).get('note')
-        
-        # For per-note messages, get specific voice
-        if message.get('type') in ['note_on', 'note_off']:
-            voice = self.voice_manager.get_voice(channel, note)
-            voices = [voice] if voice else []
-        else:
-            # For global messages (CC, pitch bend, etc), get all active voices
-            voices = list(self.voice_manager.active_notes.values())
-        
-        # Apply value to all relevant voices
-        for voice in voices:
-            Logging.log(f"Routing to voice: channel={voice.channel}, note={voice.note}")
+        # Apply amount if specified
+        if 'amount' in transform_config:
+            amount = FixedPoint.from_float(transform_config['amount'])
+            value = FixedPoint.multiply(value, amount)
             
-            # Handle envelope parameters
-            if '.' in attribute:
-                voice.handle_value_change(attribute, value)
-            # Handle direct parameters
-            elif dest_id == 'oscillator' and attribute == 'frequency':
-                voice.handle_value_change('frequency', value)
-            elif dest_id == 'amplifier' and attribute == 'gain':
-                voice.handle_value_change('amplitude', value)
-            elif dest_id == 'filter' and attribute == 'frequency':
-                voice.handle_value_change('filter_freq', value)
-            else:
-                Logging.log(f"[ERROR] Unhandled destination: {dest_id}.{attribute}")
+        Logger.log(f"Transformed value: {value}", self.module_name)
+        return value
         
-        Logging.log("Destination routing complete")
-
-class RouteMap:
-    """
-    Core message routing orchestration.
-    Coordinates the flow of MIDI messages through the system.
-    """
-    def __init__(self, voice_manager):
-        """
-        Initialize the RouteMap with specialized components.
-        
-        Args:
-            voice_manager (VoiceManager): Voice management system
-        """
-        self.voice_manager = voice_manager
-        self.validator = MidiValidator()
-        self.translator = MidiTranslator()
-        self.voice_router = VoiceNav(voice_manager)
-        self.current_config = None
-        
-        Logging.log("Initialized RouteMap with components")
-        
-    def set_config(self, config):
-        """
-        Set the current instrument configuration and propagate to components.
-        
-        Args:
-            config (dict): Instrument configuration dictionary
-        """
-        self.current_config = config
-        self.validator.set_config(config)
-        self.translator.set_config(config)
-        self.voice_manager.set_config(config)
-        
-        Logging.log(f"Configuration set for instrument: {config.get('name', 'Unknown')}")
-        Logging.log(config)
-    
-    def route_message(self, message):
-        """
-        Route a MIDI message through the instrument's configuration.
-        
-        Args:
-            message (dict): Incoming MIDI message
-        
-        Returns:
-            dict: Routing result or None
-        """
-        Logging.log("Processing MIDI message:")
-        Logging.log(message)
-        
-        # First check: Is message allowed
-        if not self.validator.is_message_allowed(message):
-            return None
-        
+    def extract_source_value(self, message, source_config):
+        """Extract and validate source values from messages"""
         msg_type = message.get('type')
         data = message.get('data', {})
-        channel = message.get('channel')
         
-        # Handle note messages
-        if msg_type in ['note_on', 'note_off']:
-            note = data.get('note')
-            velocity = data.get('velocity', 127) if msg_type == 'note_on' else 0
-            
-            Logging.log(f"Processing {msg_type}:")
-            Logging.log(f"  Channel: {channel}")
-            Logging.log(f"  Note: {note}")
-            Logging.log(f"  Velocity: {velocity}")
-            
+        Logger.log(f"Extracting source value", self.module_name)
+        Logger.log(f"Message: {message}", self.module_name)
+        Logger.log(f"Source config: {source_config}", self.module_name)
+        
+        source_type = source_config.get('type')
+        attribute = source_config.get('attribute')
+        
+        if source_type == 'per_key':
             if msg_type == 'note_on':
-                voice = self.voice_manager.allocate_voice(channel, note, velocity)
-                if not voice:
-                    Logging.log("[ERROR] Failed to allocate voice")
-                    return None
-                Logging.log("Voice allocated")
-                return {'type': 'voice_allocated', 'voice': voice}
-            else:
-                voice = self.voice_manager.release_voice(channel, note)
-                if not voice:
-                    Logging.log("[ERROR] Failed to release voice")
-                    return None
-                Logging.log("Voice released")
-                return {'type': 'voice_released', 'voice': voice}
-        
-        # Process patches for all message types
-        patches = self.current_config.get('patches', [])
-        Logging.log(f"Processing patches: {len(patches)} patches")
-        
-        processed_any_patch = False
-        for patch in patches:
-            source = patch.get('source', {})
-            destination = patch.get('destination', {})
-            processing = patch.get('processing', {})
-            
-            # For CC messages, match CC number
-            if msg_type == 'cc' and source.get('id') == 'cc':
-                if source.get('number') != data.get('number'):
-                    continue
-            
-            Logging.log("Processing patch:")
-            Logging.log(f"  Source: {source}")
-            Logging.log(f"  Destination: {destination}")
-            Logging.log(f"  Processing: {processing}")
-            
-            # Get source value
-            source_value = self.translator.get_source_value(source, message)
-            if source_value is not None:
-                processed_any_patch = True
-                Logging.log(f"Source value: {source_value}")
+                if attribute == 'velocity':
+                    return data.get('velocity', 0)
+                elif attribute == 'note':
+                    if source_config.get('transform') == 'midi_to_frequency':
+                        return FixedPoint.midi_note_to_fixed(data.get('note', 0))
+                    return data.get('note', 0)
+            elif msg_type == 'note_off':
+                if attribute == 'trigger':
+                    return 0
+                    
+        elif source_type == 'cc':
+            if (msg_type == 'cc' and 
+                data.get('number') == source_config.get('number')):
+                return data.get('value', 0)
                 
-                # Transform value
-                transformed_value = self.translator.transform_value(
-                    source_value, 
-                    processing
-                )
-                
-                # Apply modulation amount
-                amount = processing.get('amount', 1.0)
-                modulated_value = transformed_value * amount
-                
-                Logging.log("Value processing:")
-                Logging.log(f"  Transformed value: {transformed_value}")
-                Logging.log(f"  Modulation amount: {amount}")
-                Logging.log(f"  Modulated value: {modulated_value}")
-                
-                # Route to destination
-                self.voice_router.route_to_destination(
-                    destination, 
-                    modulated_value, 
-                    message
-                )
-        
-        # If no patches were processed, log an error
-        if not processed_any_patch:
-            Logging.log("[ERROR] No patches processed for message")
-        
+        Logger.log(f"No value found for source", self.module_name)
         return None
-    
-    def process_updates(self):
-        """Process any pending updates in voice management"""
-        self.voice_manager.cleanup_voices()
+        
+    def validate_message(self, message):
+        """Base message validation with detailed checking"""
+        module_config = self.get_module_config()
+        if not module_config:
+            Logger.log(f"No {self.module_name} configuration available", self.module_name)
+            return False
+            
+        msg_type = message.get('type')
+        data = message.get('data', {})
+        
+        # Check parameters and their sources
+        parameters = module_config.get('parameters', {})
+        for param_name, param_config in parameters.items():
+            sources = param_config.get('sources', [])
+            for source in sources:
+                if self._matches_source(message, source):
+                    Logger.log(f"Message valid for {param_name}", self.module_name)
+                    return True
+                    
+        Logger.log(f"Message not valid for {self.module_name}", self.module_name)
+        return False
+        
+    def _matches_source(self, message, source_config):
+        """Detailed source matching logic"""
+        msg_type = message.get('type')
+        data = message.get('data', {})
+        
+        source_type = source_config.get('type')
+        
+        if source_type == 'per_key':
+            if msg_type in ['note_on', 'note_off']:
+                attribute = source_config.get('attribute')
+                if msg_type == 'note_on':
+                    if attribute in ['velocity', 'note']:
+                        return True
+                elif msg_type == 'note_off':
+                    if attribute == 'trigger':
+                        return True
+                        
+        elif source_type == 'cc':
+            if msg_type == 'cc':
+                if data.get('number') == source_config.get('number'):
+                    return True
+                    
+        return False
+        
+    def process_message(self, message, voice_nav):
+        """Process message through module's routing rules"""
+        if not self.validate_message(message):
+            return False
+            
+        module_config = self.get_module_config()
+        parameters = module_config.get('parameters', {})
+        
+        processed = False
+        for param_name, param_config in parameters.items():
+            sources = param_config.get('sources', [])
+            for source in sources:
+                value = self.extract_source_value(message, source)
+                if value is not None:
+                    transformed = self.transform_value(value, source)
+                    voice_nav.route_to_destination(
+                        {'id': self.module_name, 'attribute': param_name},
+                        transformed,
+                        message
+                    )
+                    processed = True
+                    
+        return processed
+
+class OscillatorRouter(ModuleRouter):
+    """Oscillator-specific routing implementation"""
+    def __init__(self, config=None):
+        super().__init__(config)
+        self.module_name = "oscillator"
+        
+    def process_message(self, message, voice_nav):
+        """Handle oscillator-specific routing with frequency transformation"""
+        if not self.validate_message(message):
+            return False
+            
+        module_config = self.get_module_config()
+        parameters = module_config.get('parameters', {})
+        
+        # Special handling for frequency parameter
+        if 'frequency' in parameters:
+            freq_config = parameters['frequency']
+            for source in freq_config.get('sources', []):
+                value = self.extract_source_value(message, source)
+                if value is not None:
+                    if source.get('transform') == 'midi_to_frequency':
+                        # Let voice manager handle frequency conversion
+                        voice_nav.route_to_destination(
+                            {'id': 'oscillator', 'attribute': 'frequency'},
+                            value,
+                            message
+                        )
+                        return True
+                    else:
+                        transformed = self.transform_value(value, source)
+                        voice_nav.route_to_destination(
+                            {'id': 'oscillator', 'attribute': 'frequency'},
+                            transformed,
+                            message
+                        )
+                        return True
+                        
+        # Handle other oscillator parameters
+        return super().process_message(message, voice_nav)
+
+class FilterRouter(ModuleRouter):
+    """Filter-specific routing implementation"""
+    def __init__(self, config=None):
+        super().__init__(config)
+        self.module_name = "filter"
+        
+    def process_message(self, message, voice_nav):
+        """Handle filter parameter routing"""
+        if not self.validate_message(message):
+            return False
+            
+        module_config = self.get_module_config()
+        parameters = module_config.get('parameters', {})
+        
+        processed = False
+        for param_name in ['frequency', 'resonance', 'type']:
+            if param_name in parameters:
+                param_config = parameters[param_name]
+                for source in param_config.get('sources', []):
+                    value = self.extract_source_value(message, source)
+                    if value is not None:
+                        transformed = self.transform_value(value, source)
+                        voice_nav.route_to_destination(
+                            {'id': 'filter', 'attribute': param_name},
+                            transformed,
+                            message
+                        )
+                        processed = True
+                        
+        return processed
+
+class AmplifierRouter(ModuleRouter):
+    """Amplifier and envelope routing implementation"""
+    def __init__(self, config=None):
+        super().__init__(config)
+        self.module_name = "amplifier"
+        
+    def process_message(self, message, voice_nav):
+        """Handle amplifier and envelope routing"""
+        if not self.validate_message(message):
+            return False
+            
+        module_config = self.get_module_config()
+        parameters = module_config.get('parameters', {})
+        
+        processed = False
+        
+        # Handle gain parameter
+        if 'gain' in parameters:
+            gain_config = parameters['gain']
+            for source in gain_config.get('sources', []):
+                value = self.extract_source_value(message, source)
+                if value is not None:
+                    transformed = self.transform_value(value, source)
+                    voice_nav.route_to_destination(
+                        {'id': 'amplifier', 'attribute': 'gain'},
+                        transformed,
+                        message
+                    )
+                    processed = True
+        
+        # Handle envelope parameters
+        if 'envelope' in parameters:
+            env_config = parameters['envelope']
+            for stage in ['attack', 'decay', 'sustain', 'release']:
+                if stage in env_config:
+                    stage_config = env_config[stage]
+                    for param_type in ['time', 'level']:
+                        if param_type in stage_config:
+                            param_config = stage_config[param_type]
+                            for source in param_config.get('sources', []):
+                                value = self.extract_source_value(message, source)
+                                if value is not None:
+                                    transformed = self.transform_value(value, source)
+                                    voice_nav.route_to_destination(
+                                        {'id': 'amplifier',
+                                         'attribute': f'envelope.{stage}.{param_type}'},
+                                        transformed,
+                                        message
+                                    )
+                                    processed = True
+                                    
+        return processed
