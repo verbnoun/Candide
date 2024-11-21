@@ -1,68 +1,75 @@
 """
-Voice Management System for Candide Synthesizer
-Mirrors router.py's structure for voice parameter control
+Voice Management System
+
+Manages synthio note lifecycle and parameter application.
+Receives parameter streams from router and maintains voice state.
 """
 
 import time
 import sys
 import synthio
-from fixed_point_math import FixedPoint
 from constants import VOICES_DEBUG, SAMPLE_RATE
 from synthesizer import Synthesis
-from router import OscillatorRouter, FilterRouter, AmplifierRouter
 
-def _log(message):
+def _log(message, module="VOICES"):
+    """Strategic logging for voice state changes"""
     if not VOICES_DEBUG:
         return
+        
     RED = "\033[31m"
     GREEN = "\033[32m"
-    CYAN = "\033[36m"
+    BLUE = "\033[34m"
+    YELLOW = "\033[33m"
+    MAGENTA = "\033[35m"
     RESET = "\033[0m"
     
     if isinstance(message, dict):
-        print(f"{CYAN}{message}{RESET}", file=sys.stderr)
+        formatted = "\n"
+        for k, v in message.items():
+            formatted += f"  {k}: {v}\n"
+        print(f"{BLUE}[{module}]{formatted}{RESET}", file=sys.stderr)
     else:
         if "[ERROR]" in str(message):
             color = RED
-        elif "[SYNTHIO]" in str(message):
+        elif "[CREATE]" in str(message):
             color = GREEN
+        elif "[UPDATE]" in str(message):
+            color = BLUE
+        elif "[RELEASE]" in str(message):
+            color = YELLOW
+        elif "[CLEANUP]" in str(message):
+            color = MAGENTA
         else:
-            color = CYAN
-        print(f"{color}[VOICES] {message}{RESET}", file=sys.stderr)
+            color = BLUE
+        print(f"{color}[{module}] {message}{RESET}", file=sys.stderr)
 
-class VoiceModule:
+class ModuleVoice:
     """Base class for voice modules"""
     def __init__(self, config, synthesis):
-        self.config = config
         self.synthesis = synthesis
-        self.module_name = "BASE"
+        self.module_name = None
         
-    def get_config(self):
-        """Get module-specific configuration"""
-        return self.config.get(self.module_name) if self.config else None
-        
-    def update_parameter(self, note, param, value):
-        """Update parameter on synthio note"""
-        if not note:
-            return False
+    def update_parameter(self, note, parameter, value):
+        """Update parameter on note"""
         try:
-            if isinstance(value, FixedPoint):
-                value = FixedPoint.to_float(value)
-            return self.synthesis.update_note(note, param, value)
+            result = self.synthesis.update_note(note, parameter, value)
+            if result:
+                _log(f"[UPDATE] {self.module_name} {parameter}={value}")
+            return result
         except Exception as e:
-            _log(f"[ERROR] Failed to update {param}: {str(e)}")
+            _log(f"[ERROR] Failed to update {parameter}: {str(e)}")
             return False
 
-class EnvelopeVoice(VoiceModule):
-    """Envelope module that can be used by other modules"""
+class EnvelopeVoice(ModuleVoice):
+    """Envelope handling for any module"""
     def __init__(self, config, synthesis):
         super().__init__(config, synthesis)
         self.module_name = "envelope"
         self.envelope = None
-        self.create_envelope(config)
-        
-    def create_envelope(self, config):
-        """Create synthio envelope from config"""
+        if config:
+            self._create_envelope(config)
+            
+    def _create_envelope(self, config):
         try:
             env_params = {}
             env_config = config.get('parameters', {}).get('envelope', {})
@@ -76,35 +83,39 @@ class EnvelopeVoice(VoiceModule):
                             if 'value' in param_config:
                                 env_params[f"{stage}_{param}"] = param_config['value']
                                 
-            if len(env_params) >= 5:  # Minimum required params
+            if len(env_params) >= 5:
                 self.envelope = synthio.Envelope(**env_params)
+                _log(f"[CREATE] Envelope parameters: {env_params}")
                 
         except Exception as e:
-            _log(f"[ERROR] Failed to create envelope: {str(e)}")
+            _log(f"[ERROR] Envelope creation failed: {str(e)}")
             
     def update_parameter(self, note, stage, param, value):
-        """Update envelope parameter"""
         if not note or not hasattr(note, 'envelope'):
             return False
+            
         try:
-            if isinstance(value, FixedPoint):
-                value = FixedPoint.to_float(value)
-            setattr(note.envelope, f"{stage}_{param}", value)
+            param_name = f"{stage}_{param}"
+            setattr(note.envelope, param_name, value)
+            _log(f"[UPDATE] Envelope {param_name}={value:.3f}")
             return True
         except Exception as e:
-            _log(f"[ERROR] Failed to update envelope {stage}.{param}: {str(e)}")
+            _log(f"[ERROR] Envelope update failed: {str(e)}")
             return False
 
-class OscillatorVoice(VoiceModule):
-    """Oscillator-specific voice implementation"""
+class OscillatorVoice(ModuleVoice):
+    """Oscillator parameter handling"""
     def __init__(self, config, synthesis):
         super().__init__(config, synthesis)
         self.module_name = "oscillator"
         self.waveform = None
-        self.configure_waveform(config)
-        
-    def configure_waveform(self, config):
-        """Set up waveform from config"""
+        self.envelope = None
+        if config:
+            self._configure_waveform(config)
+            if 'envelope' in config:
+                self.envelope = EnvelopeVoice(config['envelope'], synthesis)
+                
+    def _configure_waveform(self, config):
         try:
             osc_config = config.get('parameters', {})
             if 'waveform' in osc_config:
@@ -112,134 +123,119 @@ class OscillatorVoice(VoiceModule):
                     osc_config['waveform'].get('type', 'triangle'),
                     osc_config['waveform']
                 )
+                _log(f"[CREATE] Waveform configured")
         except Exception as e:
-            _log(f"[ERROR] Failed to configure waveform: {str(e)}")
-            
-    def update_frequency(self, note, value):
-        """Update oscillator frequency"""
-        return self.update_parameter(note, 'frequency', value)
+            _log(f"[ERROR] Waveform configuration failed: {str(e)}")
 
-class FilterVoice(VoiceModule):
-    """Filter-specific voice implementation"""
+class FilterVoice(ModuleVoice):
+    """Filter parameter handling"""
     def __init__(self, config, synthesis):
         super().__init__(config, synthesis)
         self.module_name = "filter"
-        
+        self.envelope = None
+        if config and 'envelope' in config:
+            self.envelope = EnvelopeVoice(config['envelope'], synthesis)
+            
     def update_parameter(self, note, param, value):
-        """Update filter parameter"""
         if not note or not hasattr(note, 'filter'):
             return False
+            
         try:
-            if isinstance(value, FixedPoint):
-                value = FixedPoint.to_float(value)
             setattr(note.filter, param, value)
+            _log(f"[UPDATE] Filter {param}={value:.3f}")
             return True
         except Exception as e:
-            _log(f"[ERROR] Failed to update filter {param}: {str(e)}")
+            _log(f"[ERROR] Filter update failed: {str(e)}")
             return False
 
-class AmplifierVoice(VoiceModule):
-    """Amplifier-specific voice implementation"""
+class AmplifierVoice(ModuleVoice):
+    """Amplifier parameter handling"""
     def __init__(self, config, synthesis):
         super().__init__(config, synthesis)
         self.module_name = "amplifier"
         self.envelope = None
-        
-        # Create envelope if configured
-        if 'parameters' in config and 'envelope' in config['parameters']:
-            self.envelope = EnvelopeVoice(
-                {'parameters': {'envelope': config['parameters']['envelope']}},
-                synthesis
-            )
-            
-    def update_gain(self, note, value):
-        """Update amplifier gain"""
-        return self.update_parameter(note, 'amplitude', value)
+        if config and 'envelope' in config:
+            self.envelope = EnvelopeVoice(config['envelope'], synthesis)
 
 class Voice:
-    """Represents a voice with its modules and synthio note"""
-    def __init__(self, channel, note, velocity, config, synthesis):
+    """Complete voice with all modules"""
+    def __init__(self, channel, params, config, synthesis):
+        _log(f"[CREATE] Creating voice on channel {channel}")
+        
         self.channel = channel
-        self.note = note
-        self.velocity = velocity
         self.active = True
         self.creation_time = time.monotonic()
         
-        # Initialize modules
-        self.oscillator = OscillatorVoice(config.get('oscillator', {}), synthesis)
-        self.filter = FilterVoice(config.get('filter', {}), synthesis)
-        self.amplifier = AmplifierVoice(config.get('amplifier', {}), synthesis)
+        self.oscillator = OscillatorVoice(config.get('oscillator'), synthesis)
+        self.filter = FilterVoice(config.get('filter'), synthesis)
+        self.amplifier = AmplifierVoice(config.get('amplifier'), synthesis)
         
-        # Create synthio note
-        self.synth_note = self._create_note()
+        self.synth_note = self._create_note(params)
         
-    def _create_note(self):
+    def _create_note(self, params):
         """Create synthio note with initial parameters"""
         try:
-            freq = FixedPoint.midi_note_to_fixed(self.note)
-            amp = FixedPoint.normalize_midi_value(self.velocity)
+            note_params = params.copy()
             
-            params = {
-                'frequency': FixedPoint.to_float(freq),
-                'amplitude': FixedPoint.to_float(amp),
-                'waveform': self.oscillator.waveform
-            }
-            
-            if self.amplifier.envelope and self.amplifier.envelope.envelope:
-                params['envelope'] = self.amplifier.envelope.envelope
+            if self.oscillator.waveform:
+                note_params['waveform'] = self.oscillator.waveform
                 
-            note = synthio.Note(**params)
-            _log(f"[SYNTHIO] Created Note: freq={params['frequency']:.1f}Hz, amp={params['amplitude']:.3f}")
+            if self.amplifier.envelope:
+                note_params['envelope'] = self.amplifier.envelope.envelope
+                
+            note = synthio.Note(**note_params)
+            _log(f"[CREATE] Note parameters: {note_params}")
             return note
             
         except Exception as e:
-            _log(f"[ERROR] Failed to create note: {str(e)}")
+            _log(f"[ERROR] Note creation failed: {str(e)}")
             return None
             
-    def route_to_destination(self, destination, value, message):
-        """Route value to appropriate module parameter"""
+    def update_parameter(self, target, value):
+        """Apply parameter update from router"""
         if not self.synth_note:
-            return
+            return False
             
         try:
-            module_name = destination['id']
-            param = destination['attribute']
+            module_name = target['module']
+            parameter = target['parameter']
             
             if module_name == 'oscillator':
-                if param == 'frequency':
-                    self.oscillator.update_frequency(self.synth_note, value)
-                    
+                module = self.oscillator
             elif module_name == 'filter':
-                self.filter.update_parameter(self.synth_note, param, value)
-                
+                module = self.filter
             elif module_name == 'amplifier':
-                if 'envelope' in param:
-                    if self.amplifier.envelope:
-                        _, stage, param_type = param.split('.')
-                        self.amplifier.envelope.update_parameter(
-                            self.synth_note, stage, param_type, value
-                        )
-                else:
-                    self.amplifier.update_gain(self.synth_note, value)
-                    
+                module = self.amplifier
+            else:
+                return False
+                
+            if 'envelope' in parameter:
+                if module.envelope:
+                    _, stage, param = parameter.split('.')
+                    return module.envelope.update_parameter(
+                        self.synth_note, stage, param, value
+                    )
+            else:
+                return module.update_parameter(self.synth_note, parameter, value)
+                
         except Exception as e:
-            _log(f"[ERROR] Failed to route value: {str(e)}")
+            _log(f"[ERROR] Parameter update failed: {str(e)}")
+            return False
             
     def release(self):
-        """Handle note release"""
+        """Start voice release phase"""
         if self.active:
             self.active = False
             self.release_time = time.monotonic()
-            _log(f"Note released: channel={self.channel}, note={self.note}")
+            _log(f"[RELEASE] Channel {self.channel}")
 
 class VoiceManager:
-    """Manages voice lifecycle and routing"""
+    """Manages voice collection and parameter routing"""
     def __init__(self, output_manager, sample_rate=SAMPLE_RATE):
-        _log("Initializing VoiceManager")
+        _log("Initializing voice manager")
         self.active_voices = {}
         self.current_config = None
         self.synthesis = Synthesis()
-        self.routers = None
         
         try:
             self.synthio_synth = synthio.Synthesizer(
@@ -249,90 +245,76 @@ class VoiceManager:
             
             if output_manager and hasattr(output_manager, 'attach_synthesizer'):
                 output_manager.attach_synthesizer(self.synthio_synth)
-                _log("[SYNTHIO] Synthesizer initialized and attached")
+                _log("[CREATE] Synthesizer initialized")
                 
         except Exception as e:
             _log(f"[ERROR] Synthesizer initialization failed: {str(e)}")
             self.synthio_synth = None
             
     def set_config(self, config):
-        """Update current instrument configuration"""
-        _log(f"Setting instrument configuration")
-        
+        """Set current instrument configuration"""
         if not isinstance(config, dict):
-            _log("[ERROR] VoiceManager config must be a dictionary")
-            raise ValueError("VoiceManager config must be a dictionary")
-        
+            _log("[ERROR] Invalid config format")
+            raise ValueError("Config must be dictionary")
+            
         self.current_config = config
+        _log("[UPDATE] New configuration set")
         
-        # Initialize routers
-        self.routers = {
-            'oscillator': OscillatorRouter(config),
-            'filter': FilterRouter(config),
-            'amplifier': AmplifierRouter(config)
-        }
-    
-    def allocate_voice(self, channel, note, velocity):
-        """Create a new voice for a note"""
-        _log(f"Attempting to allocate voice:")
-        _log(f"  channel={channel}")
-        _log(f"  note={note}")
-        _log(f"  velocity={velocity}")
+    def process_parameter_stream(self, stream):
+        """Process parameter stream from router"""
+        if not stream or not self.current_config:
+            return
+            
+        channel = stream.get('channel')
+        target = stream.get('target')
+        value = stream.get('value')
         
-        if not self.current_config or not self.routers:
-            _log("[ERROR] No current configuration available")
+        if not target:
+            return
+            
+        if channel is None:
+            # Global parameter - update all voices
+            for voice in self.active_voices.values():
+                voice.update_parameter(target, value)
+        else:
+            # Per-key parameter - update specific voice
+            voice = self.active_voices.get(channel)
+            if voice:
+                voice.update_parameter(target, value)
+                
+    def create_voice(self, channel, params):
+        """Create new voice"""
+        if not self.current_config:
             return None
-        
+            
         try:
-            # Create voice
-            voice = Voice(channel, note, velocity, self.current_config, self.synthesis)
+            voice = Voice(channel, params, self.current_config, self.synthesis)
             
-            # Create note on message for initial routing
-            note_on = {
-                'type': 'note_on',
-                'channel': channel,
-                'data': {
-                    'note': note,
-                    'velocity': velocity
-                }
-            }
-            
-            # Route through module routers
-            for router in self.routers.values():
-                router.process_message(note_on, voice)
-            
-            self.active_voices[(channel, note)] = voice
-            
-            if self.synthio_synth and voice.synth_note:
+            if voice and voice.synth_note:
+                self.active_voices[channel] = voice
                 self.synthio_synth.press(voice.synth_note)
-                _log(f"[SYNTHIO] Pressed note {note}")
-            
-            _log(f"Voice allocated successfully")
-            return voice
-            
+                return voice
+                
         except Exception as e:
-            _log(f"[ERROR] Voice allocation failed: {str(e)}")
-            return None
-    
-    def get_voice(self, channel, note):
-        """Retrieve an active voice"""
-        return self.active_voices.get((channel, note))
-    
-    def release_voice(self, channel, note):
-        """Handle voice release"""
-        voice = self.get_voice(channel, note)
+            _log(f"[ERROR] Voice creation failed: {str(e)}")
+            
+        return None
+        
+    def release_voice(self, channel):
+        """Release voice"""
+        voice = self.active_voices.get(channel)
         if voice:
             voice.release()
-            if self.synthio_synth and voice.synth_note:
+            if voice.synth_note:
                 self.synthio_synth.release(voice.synth_note)
-            return voice
-        return None
-    
+            return True
+        return False
+        
     def cleanup_voices(self):
-        """Remove completed voices after grace period"""
+        """Remove completed voices"""
         current_time = time.monotonic()
-        for key in list(self.active_voices.keys()):
-            voice = self.active_voices[key]
+        for channel in list(self.active_voices.keys()):
+            voice = self.active_voices[channel]
             if not voice.active and (current_time - voice.release_time) > 0.5:
-                del self.active_voices[key]
-                _log(f"Removed inactive voice: channel={key[0]}, note={key[1]}")
+                _log(f"[CLEANUP] Channel {channel}")
+                del self.active_voices[channel]

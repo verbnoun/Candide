@@ -60,7 +60,39 @@ class InstrumentConfig:
                 
         config = self.config.copy()
         config['cc_routing'] = cc_routing
+        
+        # Generate MIDI whitelist if not already created
+        if not hasattr(self, 'midi_whitelist'):
+            self.midi_whitelist = self._generate_midi_whitelist()
+        config['midi_whitelist'] = self.midi_whitelist
+        
         return config
+
+    def _generate_midi_whitelist(self):
+        """Generate a whitelist of MIDI message types and numbers allowed by this instrument"""
+        whitelist = {
+            'cc': set(),
+            'note_on': {'velocity', 'note'},
+            'note_off': {'trigger'}
+        }
+        
+        def extract_midi_sources(obj):
+            if isinstance(obj, dict):
+                if 'sources' in obj:
+                    for source in obj['sources']:
+                        if source.get('type') == 'cc':
+                            whitelist['cc'].add(source.get('number'))
+                        elif source.get('type') == 'per_key':
+                            # Already added note_on/note_off attributes above
+                            pass
+                for value in obj.values():
+                    extract_midi_sources(value)
+            elif isinstance(obj, list):
+                for item in obj:
+                    extract_midi_sources(item)
+        
+        extract_midi_sources(self.config)
+        return whitelist
 
     def format_cc_config(self):
         """Format CC config string"""
@@ -84,6 +116,7 @@ class InstrumentConfig:
             pot_number += 1
             
         return "cc:" + ",".join(assignments)
+
 
 class Piano(InstrumentConfig):
     """Piano instrument with oscillator -> filter -> amplifier signal path"""

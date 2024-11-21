@@ -9,42 +9,13 @@ Key Responsibilities:
 - Coordinate hardware input processing
 - Manage MIDI communication and event handling
 - Control synthesizer state and instrument selection
-- Handle system connection and communication protocols
 - Provide robust error handling and recovery mechanisms
 
 Primary Classes:
-- TransportManager:
-  * Manages UART communication infrastructure
-  * Handles low-level transport layer operations
-  * Provides buffer management and cleanup
-
-- HardwareManager:
-  * Initializes and manages hardware interfaces
-  * Handles rotary encoder and volume potentiometer
-  * Provides hardware input reading capabilities
-
-- SynthManager:
-  * Coordinates synthesizer instrument configuration
-  * Manages instrument selection and MIDI event processing
-  * Interfaces with audio output system
-
-- CandideConnectionManager:
-  * Manages connection state with base station
-  * Handles handshake and communication protocols
-  * Provides connection status tracking
-
-- Candide:
-  * Primary system coordinator
-  * Integrates all system components
-  * Manages main execution loop and system lifecycle
-
-Key Features:
-- Flexible hardware input processing
-- Advanced MIDI event handling
-- Dynamic instrument selection
-- Robust communication protocols
-- Comprehensive error management
-- Configurable debug capabilities
+- TransportManager: Manages UART communication infrastructure
+- HardwareManager: Initializes and manages hardware interfaces
+- SynthManager: Coordinates synth configuration and routing
+- Candide: Primary system coordinator
 """
 
 import board
@@ -58,11 +29,10 @@ from midi import MidiLogic
 from output_system import AudioOutputManager
 from voices import VoiceManager
 from router import OscillatorRouter, FilterRouter, AmplifierRouter
+from connection_manager import CandideConnectionManager
 from constants import *
 
 import random
-import time
-import sys
 
 def _log(message, effect=None):
     """
@@ -87,25 +57,19 @@ def _log(message, effect=None):
     WHITE = "\033[37m"
     
     if effect == 'cycle':
-        # Move up one line after first print
-        print("\033[s", end='', file=sys.stderr)  # Save cursor position
+        print("\033[s", end='', file=sys.stderr)
         
-        # Do 5 color cycles of the full string
         for i in range(10):
             colored_text = ""
-            # Generate full string with random colors per character
             for char in message:
                 colored_text += random.choice(COLORS) + char
             
             if i == 0:
                 print(f"{colored_text}{RESET}", file=sys.stderr)
             else:
-                # Restore position and clear line
                 print(f"\033[u\033[K{colored_text}{RESET}", file=sys.stderr)
             time.sleep(0.1)
-        
     else:
-        # Normal logging behavior
         color = RED if "[ERROR]" in message else WHITE
         print(f"{color}[CANDID] {message}{RESET}", file=sys.stderr)
 
@@ -181,26 +145,23 @@ class HardwareManager:
         return self.volume_pot.read_pot()
         
     def cleanup(self):
-        """Clean up hardware resources"""
         if self.encoder:
             self.encoder.cleanup()
         if self.volume_pot and self.volume_pot.pot:
             self.volume_pot.pot.deinit()
 
 class SynthManager:
+    """Manages instrument configuration and routing"""
     def __init__(self, output_manager):
-        self.voice_manager = None
+        self.voice_manager = VoiceManager(output_manager)
         self.routers = {}
         self.current_instrument = None
-        self.output_manager = output_manager
         self._setup_synth()
 
     def _setup_synth(self):
         _log("Setting up synthesizer...")
-        # Initialize voice manager with output manager
-        self.voice_manager = VoiceManager(self.output_manager)
         
-        # Initialize specific routers
+        # Initialize routers
         self.routers = {
             'oscillator': OscillatorRouter(),
             'filter': FilterRouter(),
@@ -210,199 +171,81 @@ class SynthManager:
         # Set initial instrument
         self.current_instrument = create_instrument('piano')
         if self.current_instrument:
-            config = self.current_instrument.get_config()
-            self._configure_routers(config)
+            self._configure_instrument(self.current_instrument)
 
-    def _configure_routers(self, config):
-        """Configure routers with instrument-specific settings"""
-        for router_name, router in self.routers.items():
-            module_config = config.get(router_name)
-            if module_config:
-                router.set_config(config)
-                _log(f"Configured {router_name} router", router_name)
+    def _configure_instrument(self, instrument):
+        """Configure system for new instrument"""
+        config = instrument.get_config()
+        if not config:
+            return
+            
+        # Update voice manager config
+        self.voice_manager.set_config(config)
+        
+        # Configure routers
+        for router in self.routers.values():
+            router.compile_routes(config)
+            
+        _log(f"Configured instrument: {instrument.name}")
 
     def set_instrument(self, instrument_name):
+        """Switch to new instrument"""
         new_instrument = create_instrument(instrument_name)
         if new_instrument:
             self.current_instrument = new_instrument
-            config = new_instrument.get_config()
-            self._configure_routers(config)
+            self._configure_instrument(new_instrument)
 
-    def update(self):
-        """Process any pending updates across routers"""
-        for router in self.routers.values():
-            # Potential method to handle any periodic router tasks
-            pass
-
-    def process_midi_events(self, events):
-        """Route MIDI events through appropriate routers"""
-        if events:
-            for event in events:
-                # Route to appropriate router based on event type
-                for router in self.routers.values():
-                    if router.validate_message(event):
-                        router.process_message(event, self.voice_manager)
+    def process_midi(self, message):
+        """Route MIDI message through appropriate router"""
+        if not message:
+            return
             
+        for router in self.routers.values():
+            stream = router.process_message(message, self.voice_manager)
+            if stream:
+                self.voice_manager.process_parameter_stream(stream)
+
     def get_current_config(self):
         if self.current_instrument:
             return self.current_instrument.get_config()
         return None
 
     def format_cc_config(self):
-        """Format CC configuration string based on current instrument config"""
+        """Format CC configuration string for base station"""
         if not self.current_instrument:
-            _log("[ERROR] No current instrument to format CC config")
-            return "cc:"  # Return minimal valid config if no instrument
+            _log("[ERROR] No current instrument")
+            return "cc:"
             
         config = self.current_instrument.get_config()
         if not config or 'cc_routing' not in config:
-            _log("[ERROR] No CC routing configuration found")
+            _log("[ERROR] No CC routing found")
             return "cc:"
             
-        # Create pot to CC assignments with names
         assignments = []
         pot_number = 0
         
         for cc_number, routing in config['cc_routing'].items():
-            # Validate CC number is within range 0-127
             cc_num = int(cc_number)
             if not (0 <= cc_num <= 127):
-                _log(f"[ERROR] Invalid CC number: {cc_num}")
+                _log(f"[ERROR] Invalid CC: {cc_num}")
                 continue
                 
-            # Validate pot number is within range 0-13
             if pot_number > 13:
-                _log("[ERROR] Exceeded maximum pot number")
                 break
                 
-            # Get CC name from routing if available, otherwise use "CC{number}"
             cc_name = routing.get('name', f"CC{cc_num}")
             assignments.append(f"{pot_number}={cc_num}:{cc_name}")
             pot_number += 1
             
-        # Join assignments with commas
         config_str = "cc:" + ",".join(assignments)
-        
-        _log(f"Sending CC config: {config_str}")
-            
+        _log(f"CC config: {config_str}")
         return config_str
-
-class CandideConnectionManager:
-    def __init__(self, text_uart, synth_manager, transport_manager):
-        self.uart = text_uart
-        self.synth_manager = synth_manager
-        self.transport = transport_manager
-        
-        self.detect_pin = digitalio.DigitalInOut(DETECT_PIN)
-        self.detect_pin.direction = digitalio.Direction.INPUT
-        self.detect_pin.pull = digitalio.Pull.DOWN
-        
-        self.state = ConnectionState.STANDALONE
-        self.last_hello_time = 0
-        self.last_heartbeat_time = 0
-        self.handshake_start_time = 0
-        self.hello_count = 0
-        self.retry_start_time = 0
-        
-        _log("Candide connection manager initialized")
-        
-    def update_state(self):
-        current_time = time.monotonic()
-        
-        if not self.detect_pin.value:
-            if self.state != ConnectionState.STANDALONE:
-                self._handle_disconnection()
-            return
-            
-        if self.state == ConnectionState.STANDALONE and self.detect_pin.value:
-            self._handle_initial_detection()
-            
-        elif self.state == ConnectionState.DETECTED:
-            if current_time - self.last_hello_time >= HELLO_INTERVAL:
-                if self.hello_count < HANDSHAKE_MAX_RETRIES:
-                    self._send_hello()
-                    self.hello_count += 1
-                else:
-                    _log("Max hello retries reached - entering retry delay")
-                    self.state = ConnectionState.RETRY_DELAY
-                    self.retry_start_time = current_time
-                    self.hello_count = 0
-                    
-        elif self.state == ConnectionState.RETRY_DELAY:
-            if current_time - self.retry_start_time >= RETRY_DELAY:
-                _log("Retry delay complete - returning to DETECTED state")
-                self.state = ConnectionState.DETECTED
-                
-        elif self.state == ConnectionState.HANDSHAKING:
-            if current_time - self.handshake_start_time >= HANDSHAKE_TIMEOUT:
-                _log("Handshake timeout - returning to DETECTED state")
-                self.state = ConnectionState.DETECTED
-                self.hello_count = 0
-                
-        elif self.state == ConnectionState.CONNECTED:
-            if current_time - self.last_heartbeat_time >= HEARTBEAT_INTERVAL:
-                self._send_heartbeat()
-                
-    def handle_midi_message(self, event):
-        if not event or event['type'] != 'cc':
-            return
-            
-        if (event['channel'] == 0 and 
-            event['data']['number'] == HANDSHAKE_CC):
-            
-            if (event['data']['value'] == HANDSHAKE_VALUE and 
-                self.state == ConnectionState.DETECTED):
-                _log("Handshake CC received - sending config")
-                self.state = ConnectionState.HANDSHAKING
-                self.handshake_start_time = time.monotonic()
-                # Send properly formatted CC config
-                config_str = self.synth_manager.format_cc_config()
-                self.uart.write(f"{config_str}\n")
-                self.state = ConnectionState.CONNECTED
-                _log("Connection established")
-                
-    def _handle_initial_detection(self):
-        _log("Base station detected - initializing connection")
-        self.transport.flush_buffers()
-        time.sleep(SETUP_DELAY)
-        self.state = ConnectionState.DETECTED
-        self.hello_count = 0
-        self._send_hello()
-        
-    def _handle_disconnection(self):
-        _log("Base station disconnected")
-        self.transport.flush_buffers()
-        self.state = ConnectionState.STANDALONE
-        self.hello_count = 0
-        
-    def _send_hello(self):
-        try:
-            self.uart.write("hello\n")
-            self.last_hello_time = time.monotonic()
-        except Exception as e:
-            _log(f"[ERROR] Failed to send hello: {str(e)}")
-            
-    def _send_heartbeat(self):
-        try:
-            self.uart.write("♥︎\n")
-            self.last_heartbeat_time = time.monotonic()
-        except Exception as e:
-            _log(f"[ERROR] Failed to send heartbeat: {str(e)}")
-            
-    def cleanup(self):
-        if self.detect_pin:
-            self.detect_pin.deinit()
-
-    def is_connected(self):
-        return self.state == ConnectionState.CONNECTED
 
 class Candide:
     def __init__(self):
         _log("\nWakeup Candide!\n", effect='cycle')
         
-        # Initialize audio output first
         self.output_manager = AudioOutputManager()
-        
         self.hardware_manager = HardwareManager()
         self.synth_manager = SynthManager(self.output_manager)
         
@@ -415,15 +258,16 @@ class Candide:
         
         shared_uart = self.transport.get_uart()
         self.text_uart = TextUart(shared_uart)
-        self.midi = MidiLogic(
-            uart=shared_uart,
-            text_callback=self._handle_midi_message
-        )
         
         self.connection_manager = CandideConnectionManager(
             self.text_uart,
             self.synth_manager,
             self.transport
+        )
+        
+        self.midi = MidiLogic(
+            uart=shared_uart,
+            text_callback=self.connection_manager.handle_midi_message,
         )
         
         self.last_encoder_scan = 0
@@ -437,16 +281,6 @@ class Candide:
         except Exception as e:
             _log(f"[ERROR] Initialization error: {str(e)}")
             raise
-
-    def _handle_midi_message(self, event):
-        if not event:
-            return
-            
-        self.connection_manager.handle_midi_message(event)
-            
-        if self.connection_manager.state in [ConnectionState.HANDSHAKING, ConnectionState.CONNECTED]:
-            if event['type'] != 'note':
-                self.synth_manager.process_midi_events([event])
 
     def _check_volume(self):
         current_time = time.monotonic()
@@ -482,7 +316,7 @@ class Candide:
             self.connection_manager.update_state()
             self._check_encoder()
             self._check_volume()
-            self.synth_manager.update()
+            self.synth_manager.voice_manager.cleanup_voices()
             return True
             
         except Exception as e:
