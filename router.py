@@ -19,6 +19,7 @@ def _log(message, module="ROUTER"):
     GREEN = "\033[32m"
     YELLOW = "\033[33m"
     BLUE = "\033[34m"
+    LIGHT_BLUE = "\033[94m"
     GRAY = "\033[90m"
     RESET = "\033[0m"
     
@@ -27,18 +28,14 @@ def _log(message, module="ROUTER"):
         formatted = "\n"
         for k, v in message.items():
             formatted += f"  {k}: {v}\n"
-        print(f"{BLUE}[{module}]{formatted}{RESET}", file=sys.stderr)
+        print(f"{LIGHT_BLUE}[{module}]{formatted}{RESET}", file=sys.stderr)
     else:
         if "[ERROR]" in str(message):
             color = RED
-        elif "[SUCCESS]" in str(message):
-            color = GREEN
-        elif "[WARNING]" in str(message):
-            color = YELLOW
-        elif "rejected" in str(message).lower():
-            color = GRAY
-        else:
+        elif "[REJECTED]" in str(message):
             color = BLUE
+        else:
+            color = LIGHT_BLUE
         print(f"{color}[{module}] {message}{RESET}", file=sys.stderr)
 
 class RouteCache:
@@ -74,11 +71,35 @@ class RouteCache:
             return True
         return attribute in self.midi_whitelist[msg_type]
 
+class ChannelBuffer:
+    """Simple buffer for channel messages with max length"""
+    def __init__(self, max_len=10):
+        self.buffer = []
+        self.max_len = max_len
+    
+    def append(self, item):
+        """Add item to buffer, removing oldest if full"""
+        if len(self.buffer) >= self.max_len:
+            self.buffer.pop(0)
+        self.buffer.append(item)
+    
+    def clear(self):
+        """Clear the buffer"""
+        self.buffer = []
+
 class ModuleRouter:
     """Base router class"""
     def __init__(self):
         self.module_name = None
         self.route_cache = RouteCache()
+        # Buffer for recent MPE messages per channel
+        self.channel_buffers = {}
+        
+    def _get_channel_buffer(self, channel):
+        """Get or create buffer for a channel"""
+        if channel not in self.channel_buffers:
+            self.channel_buffers[channel] = ChannelBuffer()
+        return self.channel_buffers[channel]
         
     def compile_routes(self, config):
         """Extract and compile routes from config"""
@@ -186,11 +207,18 @@ class ModuleRouter:
         
         _log(f"Processing {msg_type} message on channel {channel}: {data}")
         
+        # Store MPE messages in channel buffer
+        if msg_type in ['pitch_bend', 'channel_pressure'] or (msg_type == 'cc' and data.get('number') == 74):
+            if self.route_cache.is_whitelisted(msg_type):
+                channel_buffer = self._get_channel_buffer(channel)
+                channel_buffer.append((msg_type, data))
+                _log(f"Buffered {msg_type} for channel {channel}")
+                
         # Handle CC messages
         if msg_type == 'cc':
             cc_num = data.get('number')
             if not self.route_cache.is_whitelisted('cc', cc_num):
-                _log(f"Message rejected: CC {cc_num} not in whitelist")
+                _log(f"[REJECTED] CC {cc_num} not in whitelist")
                 return None
                 
             route = self.route_cache.get_route('cc', cc_num)
@@ -266,6 +294,59 @@ class ModuleRouter:
                     results.append(stream)
                     _log(f"Created trigger parameter stream: {stream}")
             
+            # For note on, send buffered MPE messages after note
+            if msg_type == 'note_on':
+                # Send buffered MPE messages in order
+                channel_buffer = self._get_channel_buffer(channel)
+                for msg_type, data in channel_buffer.buffer:
+                    if msg_type == 'pitch_bend':
+                        route = self.route_cache.get_route('per_key', 'pitch_bend')
+                        if route:
+                            value = self.transform_value(data.get('value', 0), route)
+                            stream = {
+                                'channel': channel,
+                                'target': {
+                                    'module': route['module'],
+                                    'parameter': route['parameter']
+                                },
+                                'value': value
+                            }
+                            results.append(stream)
+                            _log(f"Sent buffered pitch bend: {stream}")
+                            
+                    elif msg_type == 'channel_pressure':
+                        route = self.route_cache.get_route('per_key', 'pressure')
+                        if route:
+                            value = self.transform_value(data.get('value', 0), route)
+                            stream = {
+                                'channel': channel,
+                                'target': {
+                                    'module': route['module'],
+                                    'parameter': route['parameter']
+                                },
+                                'value': value
+                            }
+                            results.append(stream)
+                            _log(f"Sent buffered pressure: {stream}")
+                            
+                    elif msg_type == 'cc' and data.get('number') == 74:
+                        route = self.route_cache.get_route('per_key', 'timbre')
+                        if route:
+                            value = self.transform_value(data.get('value', 0), route)
+                            stream = {
+                                'channel': channel,
+                                'target': {
+                                    'module': route['module'],
+                                    'parameter': route['parameter']
+                                },
+                                'value': value
+                            }
+                            results.append(stream)
+                            _log(f"Sent buffered timbre: {stream}")
+                
+                # Clear buffer after sending
+                channel_buffer.clear()
+            
             if results:
                 _log(f"Sending {len(results)} parameter streams to voice manager")
                 return results
@@ -276,10 +357,33 @@ class ModuleRouter:
         # All other message types must be explicitly whitelisted
         else:
             if not self.route_cache.is_whitelisted(msg_type):
-                _log(f"Message rejected: message type '{msg_type}' not in whitelist")
+                _log(f"[REJECTED] Message type '{msg_type}' not in whitelist")
                 return None
                 
         return None
+
+class MasterRouter(ModuleRouter):
+    """Master router that coordinates between module routers"""
+    def __init__(self, routers):
+        super().__init__()
+        self.module_name = "master"
+        self.routers = routers
+        
+    def compile_routes(self, config):
+        """Compile routes for all module routers"""
+        for router in self.routers.values():
+            router.compile_routes(config)
+            
+    def process_message(self, message, voice_manager):
+        """Process message through all module routers"""
+        for router in self.routers.values():
+            result = router.process_message(message, voice_manager)
+            if result:
+                if isinstance(result, list):
+                    for stream in result:
+                        voice_manager.process_parameter_stream(stream)
+                else:
+                    voice_manager.process_parameter_stream(result)
 
 class OscillatorRouter(ModuleRouter):
     """Routes messages to oscillator parameters"""

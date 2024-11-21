@@ -23,6 +23,7 @@ def _log(message, module="VOICES"):
     MAGENTA = "\033[35m"
     GRAY = "\033[90m"
     RESET = "\033[0m"
+    LIGHT_MAGENTA = "\033[95m"
     
     if isinstance(message, dict):
         formatted = "\n"
@@ -32,18 +33,10 @@ def _log(message, module="VOICES"):
     else:
         if "[ERROR]" in str(message):
             color = RED
-        elif "[CREATE]" in str(message):
-            color = GREEN
-        elif "[UPDATE]" in str(message):
-            color = BLUE
-        elif "[RELEASE]" in str(message):
-            color = YELLOW
-        elif "[CLEANUP]" in str(message):
-            color = MAGENTA
         elif "[REJECTED]" in str(message):
-            color = GRAY
+            color = MAGENTA
         else:
-            color = BLUE
+            color = LIGHT_MAGENTA
         print(f"{color}[{module}] {message}{RESET}", file=sys.stderr)
 
 class ModuleVoice:
@@ -60,7 +53,7 @@ class ModuleVoice:
                 _log(f"[UPDATE] {self.module_name} {parameter}")
             return result
         except Exception as e:
-            _log(f"[ERROR] Update failed")
+            _log(f"[ERROR] Update failed: {str(e)}")
             return False
 
 class EnvelopeVoice(ModuleVoice):
@@ -136,19 +129,35 @@ class FilterVoice(ModuleVoice):
         super().__init__(config, synthesis)
         self.module_name = "filter"
         self.envelope = None
+        self.current_frequency = 20000  # Default to max frequency
+        self.current_q = 0.707  # Default Q factor
         if config and 'envelope' in config:
             self.envelope = EnvelopeVoice(config['envelope'], synthesis)
             
     def update_parameter(self, note, param, value):
-        if not note or not hasattr(note, 'filter'):
-            return False
-            
+        """Update filter parameters by creating a new filter"""
         try:
-            setattr(note.filter, param, value)
-            _log(f"[UPDATE] Filter {param}")
-            return True
+            if param == 'frequency':
+                self.current_frequency = float(value)
+            elif param == 'resonance':
+                self.current_q = float(value)
+                
+            # Create new filter with current parameters using synth's method
+            if hasattr(self.synthesis.synthio_synth, 'low_pass_filter'):
+                new_filter = self.synthesis.synthio_synth.low_pass_filter(
+                    frequency=self.current_frequency,
+                    Q=self.current_q
+                )
+                # Attach new filter to note
+                note.filter = new_filter
+                _log(f"[UPDATE] Filter {param} = {value}")
+                return True
+            else:
+                _log("[ERROR] Synthesizer does not support filters")
+                return False
+                
         except Exception as e:
-            _log("[ERROR] Filter update failed")
+            _log(f"[ERROR] Filter update failed: {str(e)}")
             return False
 
 class AmplifierVoice(ModuleVoice):
@@ -162,36 +171,47 @@ class AmplifierVoice(ModuleVoice):
 
 class Voice:
     """Complete voice with all modules"""
-    def __init__(self, channel, params, config, synthesis):
+    def __init__(self, channel, note_params, config, synthesis):
         _log(f"[CREATE] Voice ch {channel}")
         
         self.channel = channel
         self.active = True
         self.creation_time = time.monotonic()
+        self.note_number = note_params.get('note', 0)
         
         self.oscillator = OscillatorVoice(config.get('oscillator'), synthesis)
         self.filter = FilterVoice(config.get('filter'), synthesis)
         self.amplifier = AmplifierVoice(config.get('amplifier'), synthesis)
         
-        self.synth_note = self._create_note(params)
+        self.synth_note = self._create_note(note_params)
         
     def _create_note(self, params):
         """Create synthio note with initial parameters"""
         try:
-            note_params = params.copy()
+            note_params = {'frequency': params.get('frequency', 440)}
             
             if self.oscillator.waveform:
                 note_params['waveform'] = self.oscillator.waveform
                 
-            if self.amplifier.envelope:
+            if self.amplifier.envelope and self.amplifier.envelope.envelope:
                 note_params['envelope'] = self.amplifier.envelope.envelope
                 
+            # Create note first
             note = synthio.Note(**note_params)
             _log("[CREATE] Note created")
+            
+            # Create initial filter if synthesizer supports it
+            if self.filter and hasattr(self.filter.synthesis.synthio_synth, 'low_pass_filter'):
+                note.filter = self.filter.synthesis.synthio_synth.low_pass_filter(
+                    frequency=self.filter.current_frequency,
+                    Q=self.filter.current_q
+                )
+                _log("[CREATE] Initial filter attached")
+                
             return note
             
         except Exception as e:
-            _log("[ERROR] Note failed")
+            _log(f"[ERROR] Note failed: {str(e)}")
             return None
             
     def update_parameter(self, target, value):
@@ -222,7 +242,7 @@ class Voice:
                 return module.update_parameter(self.synth_note, parameter, value)
                 
         except Exception as e:
-            _log("[ERROR] Update failed")
+            _log(f"[ERROR] Update failed: {str(e)}")
             return False
             
     def release(self):
@@ -238,7 +258,7 @@ class VoiceManager:
         _log("Initializing voice manager")
         self.active_voices = {}
         self.current_config = None
-        self.synthesis = Synthesis()
+        self.pending_params = {}
         
         try:
             self.synthio_synth = synthio.Synthesizer(
@@ -250,9 +270,13 @@ class VoiceManager:
                 output_manager.attach_synthesizer(self.synthio_synth)
                 _log("[CREATE] Synth initialized")
                 
+            # Create synthesis instance with synth reference
+            self.synthesis = Synthesis(self.synthio_synth)
+                
         except Exception as e:
-            _log("[ERROR] Synth failed")
+            _log(f"[ERROR] Synth failed: {str(e)}")
             self.synthio_synth = None
+            self.synthesis = None
             
     def set_config(self, config):
         """Set current instrument configuration"""
@@ -278,6 +302,30 @@ class VoiceManager:
         # Log received parameter stream
         _log(f"Received parameter stream: {target['module']}.{target['parameter']} = {value}")
         
+        # Handle note creation
+        if target['module'] == 'oscillator' and target['parameter'] == 'frequency':
+            if channel not in self.active_voices:
+                # Create new voice
+                note_params = {'frequency': value}
+                voice = self.create_voice(channel, note_params)
+                
+                if voice:  # Only apply pending params if voice creation succeeded
+                    # Apply any pending parameters
+                    if channel in self.pending_params:
+                        for pending_target, pending_value in self.pending_params[channel]:
+                            voice.update_parameter(pending_target, pending_value)
+                        del self.pending_params[channel]
+                    
+                return
+                
+        # Store parameters that arrive before note creation
+        if channel is not None and channel not in self.active_voices:
+            if channel not in self.pending_params:
+                self.pending_params[channel] = []
+            self.pending_params[channel].append((target, value))
+            _log(f"Stored pending parameter for channel {channel}")
+            return
+            
         if channel is None:
             # Global parameter - update all voices
             if not self.active_voices:
@@ -307,7 +355,7 @@ class VoiceManager:
                 return voice
                 
         except Exception as e:
-            _log("[ERROR] Voice failed")
+            _log(f"[ERROR] Voice failed: {str(e)}")
             
         return None
         

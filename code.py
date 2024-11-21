@@ -21,7 +21,7 @@ from instrument_config import create_instrument, list_instruments
 from midi import MidiLogic
 from output_system import AudioPipeline
 from voices import VoiceManager
-from router import OscillatorRouter, FilterRouter, AmplifierRouter
+from router import OscillatorRouter, FilterRouter, AmplifierRouter, MasterRouter
 from connection_manager import CandideConnectionManager
 from constants import *
 
@@ -77,12 +77,15 @@ class SynthManager:
     def _setup_synth(self):
         _log("Setting up synthesizer...")
         
-        # Initialize routers
+        # Initialize module routers
         self.routers = {
             'oscillator': OscillatorRouter(),
             'filter': FilterRouter(),
             'amplifier': AmplifierRouter()
         }
+        
+        # Create master router with all module routers
+        self.master_router = MasterRouter(self.routers)
         
         # Set initial instrument
         self.current_instrument = create_instrument('piano')
@@ -98,9 +101,8 @@ class SynthManager:
         # Update voice manager config
         self.voice_manager.set_config(config)
         
-        # Configure routers
-        for router in self.routers.values():
-            router.compile_routes(config)
+        # Configure master router (which configures all module routers)
+        self.master_router.compile_routes(config)
             
         _log(f"Configured instrument: {instrument.name}")
 
@@ -172,10 +174,10 @@ class Candide:
             self.transport
         )
         
-        # Initialize MIDI with shared transport
+        # Initialize MIDI with shared transport and master router
         self.midi = MidiLogic(
-            uart=self.transport,  # Use shared transport
-            router=self.synth_manager.routers['filter'],
+            uart=self.transport,
+            router=self.synth_manager.master_router,  # Use master router instead of just filter router
             connection_manager=self.connection_manager,
             voice_manager=self.synth_manager.voice_manager
         )

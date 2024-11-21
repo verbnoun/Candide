@@ -58,8 +58,9 @@ class WaveformManager:
 
 class Synthesis:
     """Core synthesis parameter processing"""
-    def __init__(self):
+    def __init__(self, synthio_synth=None):
         self.waveform_manager = WaveformManager()
+        self.synthio_synth = synthio_synth
             
     def update_note(self, note, param_id, value):
         """Update synthio note parameter
@@ -86,13 +87,21 @@ class Synthesis:
                 return True
                 
             # Handle filter parameters    
-            elif hasattr(note, 'filter'):
+            elif hasattr(note, 'filter') and self.synthio_synth and hasattr(self.synthio_synth, 'low_pass_filter'):
                 if param_id == 'frequency':
-                    note.filter.frequency = float(value)
+                    # Create new filter with updated frequency
+                    note.filter = self.synthio_synth.low_pass_filter(
+                        frequency=float(value),
+                        Q=getattr(note.filter, 'q', 0.707)
+                    )
                     return True
                     
                 elif param_id == 'resonance':
-                    note.filter.q = float(value)  # Q factor for resonance
+                    # Create new filter with updated Q
+                    note.filter = self.synthio_synth.low_pass_filter(
+                        frequency=getattr(note.filter, 'frequency', 20000),
+                        Q=float(value)
+                    )
                     return True
                     
             return False
