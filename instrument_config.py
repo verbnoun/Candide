@@ -11,24 +11,6 @@ class InstrumentConfig:
         self.name = name
         self.config = {}
 
-    def _find_controls(self, config):
-        """Extract all control objects with CC numbers"""
-        controls = []
-        def extract_controls(obj):
-            if isinstance(obj, dict):
-                if 'type' in obj and obj.get('type') == 'cc':
-                    controls.append({
-                        'cc': obj.get('number'),
-                        'name': obj.get('name', f"CC{obj.get('number')}")
-                    })
-                for value in obj.values():
-                    extract_controls(value)
-            elif isinstance(obj, list):
-                for item in obj:
-                    extract_controls(item)
-        extract_controls(config)
-        return controls
-
     def _generate_midi_whitelist(self):
         """Generate a whitelist of allowed MIDI message types"""
         whitelist = {
@@ -47,10 +29,10 @@ class InstrumentConfig:
                     elif obj['type'] == 'per_key':
                         event = obj.get('event')
                         if event == 'note_on':
-                            whitelist['note_on'].add('note_number')
+                            whitelist['note_on'].add('note')
                             whitelist['note_on'].add('velocity')
                         elif event == 'note_off':
-                            whitelist['note_off'].add('note_number')
+                            whitelist['note_off'].add('note')
                 for value in obj.values():
                     scan_for_midi_endpoints(value)
             elif isinstance(obj, list):
@@ -96,7 +78,7 @@ class Piano(InstrumentConfig):
                         'controls': [
                             {
                                 'type': 'per_key',
-                                'event': 'note_number',
+                                'event': 'note',
                                 'transform': 'midi_to_frequency',
                                 'reference_pitch': 440.0,
                                 'reference_pitch_note': 69,

@@ -67,50 +67,11 @@ class CandideConnectionManager:
         return False
 
     def _format_cc_config(self):
-        """Format CC configuration string for base station"""
+        """Placeholder for CC configuration formatting"""
         _log("Formatting CC config...")
-        try:
-            # Get current instrument config
-            config = self.synth_manager.get_current_config()
-            if not config or not isinstance(config, dict):
-                _log("[ERROR] Invalid config format")
-                return "cc:"
-                
-            cc_routing = config.get('cc_routing', {})
-            if not cc_routing:
-                _log("[ERROR] No CC routing found")
-                return "cc:"
-                
-            assignments = []
-            pot_number = 0
-            
-            for cc_number, routing in cc_routing.items():
-                if not isinstance(routing, dict):
-                    continue
-                    
-                try:
-                    cc_num = int(cc_number)
-                except (ValueError, TypeError):
-                    continue
-                    
-                if not (0 <= cc_num <= 127):
-                    continue
-                    
-                if pot_number > 13:
-                    break
-                    
-                cc_name = routing.get('name', f"CC{cc_num}")
-                assignments.append(f"{pot_number}={cc_num}:{cc_name}")
-                pot_number += 1
-                
-            config_str = "cc:" + ",".join(assignments)
-            _log(f"CC config: {config_str}")
-            return config_str
-            
-        except Exception as e:
-            _log(f"[ERROR] Config formatting error: {str(e)}")
-            return "cc:"
-        
+        # Intentionally left empty to cause handshake failure
+        return "cc:"
+
     def update_state(self):
         """Update connection state based on current conditions"""
         current_time = time.monotonic()
