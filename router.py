@@ -24,7 +24,6 @@ def _log(message, module="ROUTER"):
     RESET = "\033[0m"
     
     if isinstance(message, dict):
-        # Format dict output for readability
         formatted = "\n"
         for k, v in message.items():
             formatted += f"  {k}: {v}\n"
@@ -42,20 +41,37 @@ class RouteCache:
     """Stores compiled routes from config"""
     def __init__(self):
         self.midi_whitelist = {}
-        self.routes = {}
+        self.routes = {
+            'controls': {},  # Routes for continuous controls
+            'triggers': {}   # Routes for trigger events
+        }
         
-    def add_route(self, source_type, source_id, route_info):
-        """Add a route mapping"""
+    def add_control_route(self, source_type, source_id, route_info):
+        """Add a continuous control route mapping"""
         key = f"{source_type}.{source_id}"
-        self.routes[key] = route_info
-        _log(f"Added route: {key} -> {route_info}")
+        self.routes['controls'][key] = route_info
+        _log(f"Added control route: {key} -> {route_info}")
         
-    def get_route(self, source_type, source_id):
-        """Get route info if it exists"""
+    def add_trigger_route(self, source_type, source_id, route_info):
+        """Add a trigger route mapping"""
         key = f"{source_type}.{source_id}"
-        route = self.routes.get(key)
+        self.routes['triggers'][key] = route_info
+        _log(f"Added trigger route: {key} -> {route_info}")
+        
+    def get_control_route(self, source_type, source_id):
+        """Get control route info if it exists"""
+        key = f"{source_type}.{source_id}"
+        route = self.routes['controls'].get(key)
         if route:
-            _log(f"Found route for {key}")
+            _log(f"Found control route for {key}")
+        return route
+        
+    def get_trigger_route(self, source_type, source_id):
+        """Get trigger route info if it exists"""
+        key = f"{source_type}.{source_id}"
+        route = self.routes['triggers'].get(key)
+        if route:
+            _log(f"Found trigger route for {key}")
         return route
         
     def set_whitelist(self, whitelist):
@@ -87,12 +103,10 @@ class ChannelBuffer:
         """Clear the buffer"""
         self.buffer = []
 
-class ModuleRouter:
-    """Base router class"""
+class Router:
+    """Routes MIDI messages to voice parameters based on config"""
     def __init__(self):
-        self.module_name = None
         self.route_cache = RouteCache()
-        # Buffer for recent MPE messages per channel
         self.channel_buffers = {}
         
     def _get_channel_buffer(self, channel):
@@ -104,100 +118,85 @@ class ModuleRouter:
     def compile_routes(self, config):
         """Extract and compile routes from config"""
         if not config:
-            _log(f"[WARNING] No config provided for {self.module_name}")
+            _log("[WARNING] No config provided")
             return
             
-        _log(f"Compiling routes for {self.module_name}")
+        _log("Compiling routes")
         
         # Store whitelist
         self.route_cache.set_whitelist(config.get('midi_whitelist', {}))
         
-        # Get module config
-        module_config = config.get(self.module_name, {})
-        if not module_config or 'parameters' not in module_config:
-            _log(f"[WARNING] No valid config found for {self.module_name}")
-            return
-            
-        # Compile routes by recursively traversing parameter structure
-        self._compile_parameter_routes(module_config['parameters'])
-                    
-        _log(f"Route compilation complete for {self.module_name}")
+        # Traverse config to compile routes
+        for module_name, module_config in config.items():
+            if isinstance(module_config, dict):
+                self._compile_module_routes(module_name, module_config)
         
-    def _compile_parameter_routes(self, params, param_path=''):
-        """Recursively compile routes from nested parameter structure"""
-        for param_name, param_config in params.items():
-            # Build full parameter path
-            full_path = f"{param_path}.{param_name}" if param_path else param_name
-            
-            if isinstance(param_config, dict):
-                # Check for sources at this level
-                if 'sources' in param_config:
-                    for source in param_config['sources']:
-                        source_type = source.get('type')
-                        if source_type == 'per_key':
-                            self._compile_per_key_route(source, full_path, param_config)
-                        elif source_type == 'cc':
-                            self._compile_cc_route(source, full_path, param_config)
-                            
-                # Recurse into nested parameters (like envelope stages)
-                if 'parameters' in param_config:
-                    self._compile_parameter_routes(param_config['parameters'], full_path)
-                    
-                # Handle envelope structure
-                for key in ['attack', 'decay', 'sustain', 'release']:
-                    if key in param_config:
-                        stage_path = f"{full_path}.{key}"
-                        self._compile_parameter_routes(param_config[key], stage_path)
+        _log("Route compilation complete")
         
-    def _compile_per_key_route(self, source, param_path, param_config):
-        """Compile per-key route with full parameter path"""
+    def _compile_module_routes(self, module_name, config, path=''):
+        """Compile routes for a module"""
+        # Process triggers at this level
+        if 'triggers' in config:
+            triggers = config['triggers']
+            if isinstance(triggers, dict):
+                for trigger_type, trigger_config in triggers.items():
+                    if 'sources' in trigger_config:
+                        for source in trigger_config['sources']:
+                            if source.get('type') != 'null':  # Skip null triggers
+                                trigger_path = f"{path}.{trigger_type}" if path else trigger_type
+                                self._create_trigger_route(module_name, source, trigger_path)
+                                
+        # Process controls at this level
+        if 'sources' in config and 'controls' in config['sources']:
+            for control in config['sources']['controls']:
+                self._create_control_route(module_name, control, path, config)
+                
+        # Recurse into other dictionaries
+        for key, value in config.items():
+            if isinstance(value, dict) and key not in ['sources', 'triggers']:
+                new_path = f"{path}.{key}" if path else key
+                self._compile_module_routes(module_name, value, new_path)
+                
+    def _create_trigger_route(self, module_name, source, trigger_path):
+        """Create a trigger route from source config"""
         route_info = {
-            'module': self.module_name,
-            'parameter': param_path,
-            'per_key': True,
-            'transform': source.get('transform'),
-            'range': param_config.get('range', {}),
-            'curve': param_config.get('curve', 'linear')
+            'module': module_name,
+            'path': trigger_path,
+            'type': 'trigger'
         }
-        self.route_cache.add_route('per_key', source['attribute'], route_info)
+        self.route_cache.add_trigger_route(source['type'], source['event'], route_info)
         
-    def _compile_cc_route(self, source, param_path, param_config):
-        """Compile CC route with full parameter path"""
+    def _create_control_route(self, module_name, source, param_path, param_config):
+        """Create a control route from source config"""
         route_info = {
-            'module': self.module_name,
-            'parameter': param_path,
-            'per_key': False,
-            'range': param_config.get('range', {}),
-            'curve': param_config.get('curve', 'linear')
+            'module': module_name,
+            'path': param_path,
+            'type': 'control',
+            'midi_range': source.get('midi_range', {'min': 0, 'max': 127}),
+            'output_range': param_config.get('output_range', {'min': 0, 'max': 1}),
+            'curve': param_config.get('curve', 'linear'),
+            'transform': source.get('transform')
         }
-        self.route_cache.add_route('cc', source['number'], route_info)
+        self.route_cache.add_control_route(source['type'], source['event'], route_info)
         
     def transform_value(self, value, route_info):
         """Transform value based on route configuration"""
         if not isinstance(value, (int, float)):
             return 0
             
-        # First normalize the input value to 0-1 range
-        normalized = FixedPoint.normalize_midi_value(value)
-            
-        # Apply range mapping if specified
-        if 'range' in route_info:
-            r = route_info['range']
-            if 'min' in r and 'max' in r:
-                # Convert range bounds to fixed point
-                out_min = FixedPoint.from_float(float(r['min']))
-                out_max = FixedPoint.from_float(float(r['max']))
-                
-                # Calculate range size
-                range_size = out_max - out_min
-                
-                # Scale normalized value to output range
-                value = out_min + FixedPoint.multiply(normalized, range_size)
-                
-                # Convert back to float for final output
-                return FixedPoint.to_float(value)
-                
-        return FixedPoint.to_float(normalized)
+        midi_range = route_info.get('midi_range', {'min': 0, 'max': 127})
+        output_range = route_info.get('output_range', {'min': 0, 'max': 1})
+        
+        # Normalize to 0-1 range based on input range
+        normalized = (value - midi_range['min']) / (midi_range['max'] - midi_range['min'])
+        normalized = max(0, min(1, normalized))  # Clamp to 0-1
+        
+        # Scale to output range
+        out_min = output_range['min']
+        out_max = output_range['max']
+        value = out_min + (normalized * (out_max - out_min))
+        
+        return value
         
     def process_message(self, message, voice_manager):
         """Transform MIDI message into parameter stream"""
@@ -214,21 +213,22 @@ class ModuleRouter:
                 channel_buffer.append((msg_type, data))
                 _log(f"Buffered {msg_type} for channel {channel}")
                 
-        # Handle CC messages
+        # Handle CC messages (continuous controls)
         if msg_type == 'cc':
             cc_num = data.get('number')
             if not self.route_cache.is_whitelisted('cc', cc_num):
                 _log(f"[REJECTED] CC {cc_num} not in whitelist")
                 return None
                 
-            route = self.route_cache.get_route('cc', cc_num)
+            route = self.route_cache.get_control_route('cc', cc_num)
             if route:
                 value = self.transform_value(data.get('value', 0), route)
                 result = {
                     'channel': None,  # Global parameter
                     'target': {
                         'module': route['module'],
-                        'parameter': route['parameter']
+                        'path': route['path'],
+                        'type': route['type']
                     },
                     'value': value
                 }
@@ -239,166 +239,67 @@ class ModuleRouter:
         elif msg_type in ['note_on', 'note_off']:
             results = []
             
-            # Process note number if whitelisted
-            if self.route_cache.is_whitelisted(msg_type, 'note'):
-                _log(f"Note {msg_type} attribute 'note' is whitelisted")
-                note_route = self.route_cache.get_route('per_key', 'note')
-                if note_route:
-                    _log(f"Found per_key route for note -> {note_route['module']}.{note_route['parameter']}")
-                    if 'note' in data:
-                        value = self.transform_value(data['note'], note_route)
+            # Handle trigger events
+            route = self.route_cache.get_trigger_route('per_key', 'note_' + msg_type.split('_')[1])
+            if route:
+                stream = {
+                    'channel': channel,
+                    'target': {
+                        'module': route['module'],
+                        'path': route['path'],
+                        'type': route['type']
+                    },
+                    'value': 1 if msg_type == 'note_on' else 0
+                }
+                results.append(stream)
+                
+            # Handle continuous controls
+            for control in ['note', 'velocity']:
+                if msg_type == 'note_on' or (msg_type == 'note_off' and control == 'note'):
+                    route = self.route_cache.get_control_route('per_key', control)
+                    if route and control in data:
+                        value = self.transform_value(data[control], route)
                         stream = {
                             'channel': channel,
                             'target': {
-                                'module': note_route['module'],
-                                'parameter': note_route['parameter']
+                                'module': route['module'],
+                                'path': route['path'],
+                                'type': route['type']
                             },
                             'value': value
                         }
                         results.append(stream)
-                        _log(f"Created note parameter stream: {stream}")
             
-            # Process velocity if whitelisted for note_on
-            if msg_type == 'note_on' and self.route_cache.is_whitelisted(msg_type, 'velocity'):
-                _log("Note on velocity is whitelisted")
-                velocity_route = self.route_cache.get_route('per_key', 'velocity')
-                if velocity_route:
-                    _log(f"Found per_key route for velocity -> {velocity_route['module']}.{velocity_route['parameter']}")
-                    if 'velocity' in data:
-                        value = self.transform_value(data['velocity'], velocity_route)
-                        stream = {
-                            'channel': channel,
-                            'target': {
-                                'module': velocity_route['module'],
-                                'parameter': velocity_route['parameter']
-                            },
-                            'value': value
-                        }
-                        results.append(stream)
-                        _log(f"Created velocity parameter stream: {stream}")
-            
-            # Process note off trigger if whitelisted
-            if msg_type == 'note_off' and self.route_cache.is_whitelisted(msg_type, 'trigger'):
-                _log("Note off trigger is whitelisted")
-                trigger_route = self.route_cache.get_route('per_key', 'trigger')
-                if trigger_route:
-                    _log(f"Found per_key route for trigger -> {trigger_route['module']}.{trigger_route['parameter']}")
-                    stream = {
-                        'channel': channel,
-                        'target': {
-                            'module': trigger_route['module'],
-                            'parameter': trigger_route['parameter']
-                        },
-                        'value': 0  # Trigger off
-                    }
-                    results.append(stream)
-                    _log(f"Created trigger parameter stream: {stream}")
-            
-            # For note on, send buffered MPE messages after note
+            # For note on, send buffered MPE messages
             if msg_type == 'note_on':
-                # Send buffered MPE messages in order
                 channel_buffer = self._get_channel_buffer(channel)
                 for msg_type, data in channel_buffer.buffer:
                     if msg_type == 'pitch_bend':
-                        route = self.route_cache.get_route('per_key', 'pitch_bend')
-                        if route:
-                            value = self.transform_value(data.get('value', 0), route)
-                            stream = {
-                                'channel': channel,
-                                'target': {
-                                    'module': route['module'],
-                                    'parameter': route['parameter']
-                                },
-                                'value': value
-                            }
-                            results.append(stream)
-                            _log(f"Sent buffered pitch bend: {stream}")
-                            
+                        route = self.route_cache.get_control_route('per_key', 'pitch_bend')
                     elif msg_type == 'channel_pressure':
-                        route = self.route_cache.get_route('per_key', 'pressure')
-                        if route:
-                            value = self.transform_value(data.get('value', 0), route)
-                            stream = {
-                                'channel': channel,
-                                'target': {
-                                    'module': route['module'],
-                                    'parameter': route['parameter']
-                                },
-                                'value': value
-                            }
-                            results.append(stream)
-                            _log(f"Sent buffered pressure: {stream}")
-                            
+                        route = self.route_cache.get_control_route('per_key', 'pressure')
                     elif msg_type == 'cc' and data.get('number') == 74:
-                        route = self.route_cache.get_route('per_key', 'timbre')
-                        if route:
-                            value = self.transform_value(data.get('value', 0), route)
-                            stream = {
-                                'channel': channel,
-                                'target': {
-                                    'module': route['module'],
-                                    'parameter': route['parameter']
-                                },
-                                'value': value
-                            }
-                            results.append(stream)
-                            _log(f"Sent buffered timbre: {stream}")
-                
-                # Clear buffer after sending
+                        route = self.route_cache.get_control_route('per_key', 'timbre')
+                    else:
+                        continue
+                        
+                    if route:
+                        value = self.transform_value(data.get('value', 0), route)
+                        stream = {
+                            'channel': channel,
+                            'target': {
+                                'module': route['module'],
+                                'path': route['path'],
+                                'type': route['type']
+                            },
+                            'value': value
+                        }
+                        results.append(stream)
+                        
                 channel_buffer.clear()
-            
-            if results:
-                _log(f"Sending {len(results)} parameter streams to voice manager")
-                return results
-            else:
-                _log("No parameter streams created")
-                return None
                 
-        # All other message types must be explicitly whitelisted
-        else:
-            if not self.route_cache.is_whitelisted(msg_type):
-                _log(f"[REJECTED] Message type '{msg_type}' not in whitelist")
-                return None
+            if results:
+                _log(f"Sending {len(results)} parameter streams")
+                return results
                 
         return None
-
-class MasterRouter(ModuleRouter):
-    """Master router that coordinates between module routers"""
-    def __init__(self, routers):
-        super().__init__()
-        self.module_name = "master"
-        self.routers = routers
-        
-    def compile_routes(self, config):
-        """Compile routes for all module routers"""
-        for router in self.routers.values():
-            router.compile_routes(config)
-            
-    def process_message(self, message, voice_manager):
-        """Process message through all module routers"""
-        for router in self.routers.values():
-            result = router.process_message(message, voice_manager)
-            if result:
-                if isinstance(result, list):
-                    for stream in result:
-                        voice_manager.process_parameter_stream(stream)
-                else:
-                    voice_manager.process_parameter_stream(result)
-
-class OscillatorRouter(ModuleRouter):
-    """Routes messages to oscillator parameters"""
-    def __init__(self):
-        super().__init__()
-        self.module_name = "oscillator"
-
-class FilterRouter(ModuleRouter):
-    """Routes messages to filter parameters"""
-    def __init__(self):
-        super().__init__()
-        self.module_name = "filter"
-
-class AmplifierRouter(ModuleRouter):
-    """Routes messages to amplifier parameters"""
-    def __init__(self):
-        super().__init__()
-        self.module_name = "amplifier"

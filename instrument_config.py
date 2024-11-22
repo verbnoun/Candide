@@ -16,57 +16,64 @@ class InstrumentConfig:
             'name': name
         }
 
-    def _find_controls(self, config):
+    def _find_controls(self, config, prefix=''):
         """Extract all control objects with CC numbers"""
         controls = []
-        
-        def extract_controls(obj):
+
+        def extract_controls(obj, parent_path=''):
             if isinstance(obj, dict):
-                if all(key in obj for key in ['cc', 'name']):
-                    controls.append(obj)
+                if 'type' in obj and obj.get('type') == 'cc':
+                    controls.append({
+                        'cc': obj.get('number'),
+                        'name': obj.get('name', f"CC{obj.get('number')}"),
+                        'target': obj.get('target', ModTarget.NONE),
+                        'path': parent_path
+                    })
                 else:
-                    for value in obj.values():
-                        extract_controls(value)
+                    for key, value in obj.items():
+                        new_path = f"{parent_path}.{key}" if parent_path else key
+                        extract_controls(value, new_path)
             elif isinstance(obj, list):
                 for item in obj:
-                    extract_controls(item)
-                    
-        extract_controls(config)
+                    extract_controls(item, parent_path)
+
+        extract_controls(config, prefix)
         return controls
 
     def get_config(self):
         """Generate complete configuration with CC routing"""
-        # Find all controls with CC numbers
-        controls = self._find_controls(self.config)
-        
-        # Generate CC routing
-        cc_routing = {}
-        used_cc_numbers = set()
-        
-        for control in controls:
-            cc_num = control['cc']
-            if cc_num in used_cc_numbers or not (0 <= cc_num <= 127):
-                continue
-                
-            cc_routing[cc_num] = {
-                'name': control['name'],
-                'target': control.get('target', ModTarget.NONE),
-                'path': control.get('path', '')
-            }
-            used_cc_numbers.add(cc_num)
-            
-            if len(cc_routing) >= 14:
-                break
-                
-        config = self.config.copy()
-        config['cc_routing'] = cc_routing
-        
-        # Generate MIDI whitelist if not already created
-        if not hasattr(self, 'midi_whitelist'):
-            self.midi_whitelist = self._generate_midi_whitelist()
-        config['midi_whitelist'] = self.midi_whitelist
-        
-        return config
+        try:
+            # Find all controls with CC numbers
+            controls = self._find_controls(self.config)
+
+            # Generate CC routing
+            cc_routing = {}
+            used_cc_numbers = set()
+
+            for control in controls:
+                cc_num = control.get('cc')
+                if cc_num is None or cc_num in used_cc_numbers or not (0 <= cc_num <= 127):
+                    continue
+
+                cc_routing[str(cc_num)] = control
+                used_cc_numbers.add(cc_num)
+
+                if len(cc_routing) >= 14:
+                    break
+
+            # Create complete config
+            config = self.config.copy()
+            config['cc_routing'] = cc_routing
+
+            # Generate MIDI whitelist if not already created
+            if not hasattr(self, 'midi_whitelist'):
+                self.midi_whitelist = self._generate_midi_whitelist()
+            config['midi_whitelist'] = self.midi_whitelist
+
+            return config
+        except Exception as e:
+            print(f"[CONFIG] Error generating config: {str(e)}")
+            return None
 
     def _generate_midi_whitelist(self):
         """Generate a whitelist of MIDI message types and numbers allowed by this instrument"""
@@ -75,47 +82,26 @@ class InstrumentConfig:
             'note_on': {'velocity', 'note'},
             'note_off': {'trigger'}
         }
-        
+
         def extract_midi_sources(obj):
             if isinstance(obj, dict):
                 if 'sources' in obj:
                     for source in obj['sources']:
-                        if source.get('type') == 'cc':
-                            whitelist['cc'].add(source.get('number'))
-                        elif source.get('type') == 'per_key':
-                            # Already added note_on/note_off attributes above
-                            pass
+                        if isinstance(source, dict):
+                            if source.get('type') == 'cc':
+                                cc_num = source.get('number')
+                                if cc_num is not None:
+                                    whitelist['cc'].add(cc_num)
+                            elif source.get('type') == 'per_key':
+                                pass
                 for value in obj.values():
                     extract_midi_sources(value)
             elif isinstance(obj, list):
                 for item in obj:
                     extract_midi_sources(item)
-        
+
         extract_midi_sources(self.config)
         return whitelist
-
-    def format_cc_config(self):
-        """Format CC config string"""
-        cc_routing = self.get_config()['cc_routing']
-        if not cc_routing:
-            return "cc:"
-            
-        assignments = []
-        pot_number = 0
-        
-        for cc_number, routing in cc_routing.items():
-            cc_num = int(cc_number)
-            if not (0 <= cc_num <= 127):
-                continue
-                
-            if pot_number > 13:
-                break
-                
-            cc_name = routing.get('name', f"CC{cc_num}")
-            assignments.append(f"{pot_number}={cc_num}:{cc_name}")
-            pot_number += 1
-            
-        return "cc:" + ",".join(assignments)
 
 
 class Piano(InstrumentConfig):
@@ -127,61 +113,99 @@ class Piano(InstrumentConfig):
             'name': "Piano",
             
             'oscillator': {
-                'parameters': {
-                    'frequency': {
-                        'value': 440.0,
-                        'range': {'min': 20.0, 'max': 20000.0},
-                        'curve': 'linear',
+                'triggers': {
+                    'start': {
                         'sources': [
                             {
                                 'type': 'per_key',
-                                'attribute': 'note',
+                                'event': 'note_on'
+                            }
+                        ]
+                    },
+                    'stop': {
+                        'sources': [
+                            {
+                                'type': 'null',
+                                'event': 'note_off'
+                            }
+                        ]
+                    }
+                },
+                'frequency': {
+                    'value': 440.0,
+                    'output_range': {'min': 20.0, 'max': 20000.0},
+                    'curve': 'linear',
+                    'sources': {
+                        'controls': [
+                            {
+                                'type': 'per_key',
+                                'event': 'note',
                                 'transform': 'midi_to_frequency',
                                 'reference_pitch': 440.0,
                                 'reference_pitch_note': 69,
                                 'amount': 1.0
                             }
                         ]
-                    },
-                    'waveform': {
-                        'type': 'triangle',
-                        'size': 512,
-                        'amplitude': 32767
                     }
+                },
+                'waveform': {
+                    'type': 'triangle',
+                    'size': 512,
+                    'amplitude': 32767
                 }
             },
 
             'filter': {
-                'parameters': {
-                    'type': {
-                        'value': 'lowpass',
-                        'options': ['lowpass', 'highpass', 'bandpass']
-                    },
-                    'frequency': {
-                        'value': 1000,
-                        'range': {'min': 20.0, 'max': 20000.0},
-                        'curve': 'exponential',
+                'triggers': {
+                    'start': {
                         'sources': [
                             {
-                                'type': 'cc',
-                                'number': 74,  # MIDI CC standard for filter cutoff
-                                'name': 'Cutoff',
-                                'amount': 1.0,
-                                'range': {'in_min': 0, 'in_max': 127}
+                                'type': 'per_key',
+                                'event': 'note_on'
                             }
                         ]
                     },
-                    'resonance': {
-                        'value': 0.707,  # Default Q factor
-                        'range': {'min': 0.1, 'max': 2.0},
-                        'curve': 'linear',
+                    'stop': {
                         'sources': [
                             {
+                                'type': 'null',
+                                'event': 'note_off'
+                            }
+                        ]
+                    }
+                },
+                'type': {
+                    'value': 'lowpass',
+                    'options': ['lowpass', 'highpass', 'bandpass']
+                },
+                'frequency': {
+                    'value': 1000,
+                    'output_range': {'min': 20.0, 'max': 20000.0},
+                    'curve': 'exponential',
+                    'sources': {
+                        'controls': [
+                            {
                                 'type': 'cc',
-                                'number': 71,  # MIDI CC standard for resonance
+                                'number': 74,
+                                'name': 'Cutoff',
+                                'amount': 1.0,
+                                'midi_range': {'min': 0, 'max': 127}
+                            }
+                        ]
+                    }
+                },
+                'resonance': {
+                    'value': 0.707,
+                    'output_range': {'min': 0.1, 'max': 2.0},
+                    'curve': 'linear',
+                    'sources': {
+                        'controls': [
+                            {
+                                'type': 'cc',
+                                'number': 71,
                                 'name': 'Resonance',
                                 'amount': 1.0,
-                                'range': {'in_min': 0, 'in_max': 127}
+                                'midi_range': {'min': 0, 'max': 127}
                             }
                         ]
                     }
@@ -189,100 +213,134 @@ class Piano(InstrumentConfig):
             },
 
             'amplifier': {
-                'parameters': {
-                    'gain': {
-                        'value': 0.5,
-                        'range': {'min': 0.0, 'max': 1.0},
-                        'curve': 'linear',
+                'triggers': {
+                    'start': {
                         'sources': [
                             {
                                 'type': 'per_key',
-                                'attribute': 'velocity',
-                                'amount': 1.0,
-                                'range': {
-                                    'in_min': 0,
-                                    'in_max': 127,
-                                    'out_min': 0.0,
-                                    'out_max': 1.0
-                                }
-                            },
-                            {
-                                'type': 'per_key',
-                                'attribute': 'note_off',
-                                'amount': 0.0
+                                'event': 'note_on'
                             }
                         ]
                     },
-                    'envelope': {
-                        'attack': {
-                            'time': {
-                                'value': 0.1,
-                                'range': {'min': 0.001, 'max': 2.0},
-                                'sources': [
+                    'stop': {
+                        'sources': [
+                            {
+                                'type': 'null',
+                                'event': 'note_off'
+                            }
+                        ]
+                    }
+                },
+                'gain': {
+                    'value': 0.5,
+                    'output_range': {'min': 0.0, 'max': 1.0},
+                    'curve': 'linear',
+                    'sources': {
+                        'controls': [
+                            {
+                                'type': 'per_key',
+                                'event': 'velocity',
+                                'amount': 1.0,
+                                'midi_range': {'min': 0, 'max': 127}
+                            }
+                        ]
+                    }
+                },
+                'envelope': {
+                    'attack': {
+                        'triggers': {
+                            'sources': [
+                                {
+                                    'type': 'per_key',
+                                    'event': 'note_on'
+                                }
+                            ]
+                        },
+                        'time': {
+                            'value': 0.1,
+                            'output_range': {'min': 0.001, 'max': 2.0},
+                            'sources': {
+                                'controls': [
                                     {
                                         'type': 'cc',
                                         'number': 73,
                                         'name': 'Attack Time',
                                         'amount': 1.0,
-                                        'range': {'in_min': 0, 'in_max': 127}
+                                        'midi_range': {'min': 0, 'max': 127}
                                     }
                                 ]
-                            },
-                            'level': {
-                                'value': 1.0,
-                                'range': {'min': 0.0, 'max': 1.0},
-                                'sources': [
+                            }
+                        },
+                        'value': {
+                            'value': 1.0,
+                            'output_range': {'min': 0.0, 'max': 1.0},
+                            'sources': {
+                                'controls': [
                                     {
                                         'type': 'cc',
                                         'number': 75,
                                         'name': 'Attack Level',
                                         'amount': 1.0,
-                                        'range': {'in_min': 0, 'in_max': 127}
+                                        'midi_range': {'min': 0, 'max': 127}
                                     }
                                 ]
                             }
-                        },
-                        'decay': {
-                            'time': {
-                                'value': 0.05,
-                                'range': {'min': 0.001, 'max': 1.0},
-                                'sources': [
+                        }
+                    },
+                    'decay': {
+                        'time': {
+                            'value': 0.05,
+                            'output_range': {'min': 0.001, 'max': 1.0},
+                            'sources': {
+                                'controls': [
                                     {
                                         'type': 'cc',
                                         'number': 75,
                                         'name': 'Decay Time',
                                         'amount': 1.0,
-                                        'range': {'in_min': 0, 'in_max': 127}
+                                        'midi_range': {'min': 0, 'max': 127}
                                     }
                                 ]
                             }
-                        },
-                        'sustain': {
-                            'level': {
-                                'value': 0.8,
-                                'range': {'min': 0.0, 'max': 1.0},
-                                'sources': [
+                        }
+                    },
+                    'sustain': {
+                        'value': {
+                            'value': 0.8,
+                            'output_range': {'min': 0.0, 'max': 1.0},
+                            'sources': {
+                                'controls': [
                                     {
                                         'type': 'cc',
                                         'number': 70,
                                         'name': 'Sustain',
                                         'amount': 1.0,
-                                        'range': {'in_min': 0, 'in_max': 127}
+                                        'midi_range': {'min': 0, 'max': 127}
                                     }
                                 ]
                             }
+                        }
+                    },
+                    'release': {
+                        'triggers': {
+                            'sources': [
+                                {
+                                    'type': 'per_key',
+                                    'event': 'note_off'
+                                }
+                            ]
                         },
-                        'release': {
-                            'time': {
-                                'value': 0.2,
-                                'range': {'min': 0.001, 'max': 2.0},
-                                'sources': [
+                        'time': {
+                            'value': 0.2,
+                            'output_range': {'min': 0.001, 'max': 2.0},
+                            'sources': {
+                                'controls': [
                                     {
                                         'type': 'cc',
                                         'number': 72,
                                         'name': 'Release Time',
                                         'amount': 1.0,
-                                        'range': {'in_min': 0, 'in_max': 127}
+                                        'midi_range': {'min': 0, 'max': 127}
                                     }
                                 ]
                             }

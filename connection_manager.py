@@ -53,6 +53,63 @@ class CandideConnectionManager:
         self.retry_start_time = 0
         
         _log("Candide connection manager initialized")
+
+    def send_config(self):
+        """Send current instrument config to base station"""
+        if self.state == ConnectionState.CONNECTED:
+            try:
+                config_str = self._format_cc_config()
+                if config_str:
+                    self.uart.write(f"{config_str}\n")
+                    return True
+            except Exception as e:
+                _log(f"[ERROR] Failed to send config: {str(e)}")
+        return False
+
+    def _format_cc_config(self):
+        """Format CC configuration string for base station"""
+        _log("Formatting CC config...")
+        try:
+            # Get current instrument config
+            config = self.synth_manager.get_current_config()
+            if not config or not isinstance(config, dict):
+                _log("[ERROR] Invalid config format")
+                return "cc:"
+                
+            cc_routing = config.get('cc_routing', {})
+            if not cc_routing:
+                _log("[ERROR] No CC routing found")
+                return "cc:"
+                
+            assignments = []
+            pot_number = 0
+            
+            for cc_number, routing in cc_routing.items():
+                if not isinstance(routing, dict):
+                    continue
+                    
+                try:
+                    cc_num = int(cc_number)
+                except (ValueError, TypeError):
+                    continue
+                    
+                if not (0 <= cc_num <= 127):
+                    continue
+                    
+                if pot_number > 13:
+                    break
+                    
+                cc_name = routing.get('name', f"CC{cc_num}")
+                assignments.append(f"{pot_number}={cc_num}:{cc_name}")
+                pot_number += 1
+                
+            config_str = "cc:" + ",".join(assignments)
+            _log(f"CC config: {config_str}")
+            return config_str
+            
+        except Exception as e:
+            _log(f"[ERROR] Config formatting error: {str(e)}")
+            return "cc:"
         
     def update_state(self):
         """Update connection state based on current conditions"""
@@ -94,24 +151,29 @@ class CandideConnectionManager:
                 
     def handle_midi_message(self, event):
         """Handle MIDI messages for handshake validation"""
-        # Only process CC messages during handshake
-        if not event or event['type'] != 'cc':
-            return
-            
-        # Check for handshake CC on channel 0
-        if (event['channel'] == 0 and 
-            event['data']['number'] == HANDSHAKE_CC):
-            
-            # Validate handshake value when in DETECTED state
-            if (event['data']['value'] == HANDSHAKE_VALUE and 
-                self.state == ConnectionState.DETECTED):
-                _log("Handshake CC received - sending config")
-                self.state = ConnectionState.HANDSHAKING
-                self.handshake_start_time = time.monotonic()
-                config_str = self.synth_manager.format_cc_config()
-                self.uart.write(f"{config_str}\n")
-                self.state = ConnectionState.CONNECTED
-                _log("Connection established")
+        try:
+            # Only process CC messages during handshake
+            if not event or not isinstance(event, dict) or event.get('type') != 'cc':
+                return
+                
+            # Check for handshake CC on channel 0
+            if (event.get('channel') == 0 and 
+                event.get('data', {}).get('number') == HANDSHAKE_CC):
+                
+                # Validate handshake value when in DETECTED state
+                if (event.get('data', {}).get('value') == HANDSHAKE_VALUE and 
+                    self.state == ConnectionState.DETECTED):
+                    _log("Handshake CC received - sending config")
+                    self.state = ConnectionState.HANDSHAKING
+                    self.handshake_start_time = time.monotonic()
+                    config_str = self._format_cc_config()
+                    if config_str:
+                        self.uart.write(f"{config_str}\n")
+                        self.state = ConnectionState.CONNECTED
+                        _log("Connection established")
+                    
+        except Exception as e:
+            _log(f"[ERROR] MIDI message handling error: {str(e)}")
                 
     def _handle_initial_detection(self):
         """Handle initial base station detection"""

@@ -44,16 +44,29 @@ class ModuleVoice:
     def __init__(self, config, synthesis):
         self.synthesis = synthesis
         self.module_name = None
+        self.config = config
         
-    def update_parameter(self, note, parameter, value):
-        """Update parameter on note"""
+    def handle_trigger(self, note, path, value):
+        """Handle a trigger event"""
+        _log(f"[TRIGGER] {self.module_name} {path} = {value}")
+        return True
+        
+    def handle_control(self, note, path, value):
+        """Handle a control value update"""
+        if not note:
+            return False
+            
         try:
-            result = self.synthesis.update_note(note, parameter, value)
+            # Split path into parts for nested parameters
+            parts = path.split('.')
+            param = parts[-1]  # Last part is the parameter name
+            
+            result = self.synthesis.update_note(note, param, value)
             if result:
-                _log(f"[UPDATE] {self.module_name} {parameter}")
+                _log(f"[CONTROL] {self.module_name} {path} = {value}")
             return result
         except Exception as e:
-            _log(f"[ERROR] Update failed: {str(e)}")
+            _log(f"[ERROR] Control update failed: {str(e)}")
             return False
 
 class EnvelopeVoice(ModuleVoice):
@@ -68,36 +81,65 @@ class EnvelopeVoice(ModuleVoice):
     def _create_envelope(self, config):
         try:
             env_params = {}
-            env_config = config.get('parameters', {}).get('envelope', {})
             
             for stage in ['attack', 'decay', 'sustain', 'release']:
-                if stage in env_config:
-                    stage_config = env_config[stage]
-                    for param in ['time', 'level']:
-                        if param in stage_config:
-                            param_config = stage_config[param]
-                            if 'value' in param_config:
-                                env_params[f"{stage}_{param}"] = param_config['value']
-                                
-            if len(env_params) >= 5:
+                stage_config = config.get(stage, {})
+                
+                # Get time value
+                if 'time' in stage_config:
+                    env_params[f"{stage}_time"] = stage_config['time'].get('value', 0.1)
+                    
+                # Get level/value
+                value_config = stage_config.get('value', {})
+                if value_config:
+                    env_params[f"{stage}_level"] = value_config.get('value', 1.0)
+                    
+            if len(env_params) >= 5:  # Need minimum parameters for envelope
                 self.envelope = synthio.Envelope(**env_params)
                 _log("[CREATE] Envelope created")
                 
         except Exception as e:
-            _log("[ERROR] Envelope failed")
+            _log(f"[ERROR] Envelope failed: {str(e)}")
             
-    def update_parameter(self, note, stage, param, value):
+    def handle_trigger(self, note, path, value):
+        """Handle envelope triggers like note_on/note_off"""
         if not note or not hasattr(note, 'envelope'):
             return False
             
         try:
-            param_name = f"{stage}_{param}"
-            setattr(note.envelope, param_name, value)
-            _log(f"[UPDATE] Envelope {param_name}")
-            return True
+            # path format: stage.triggers.event 
+            parts = path.split('.')
+            if len(parts) >= 2:
+                stage = parts[0]  # attack/release/etc
+                if value == 1:  # Trigger active
+                    _log(f"[TRIGGER] Envelope {stage}")
+                    # Logic to handle envelope stage triggering would go here
+                    return True
+                    
         except Exception as e:
-            _log("[ERROR] Envelope update failed")
+            _log(f"[ERROR] Envelope trigger failed: {str(e)}")
+            
+        return False
+        
+    def handle_control(self, note, path, value):
+        """Handle envelope parameter updates"""
+        if not note or not hasattr(note, 'envelope'):
             return False
+            
+        try:
+            parts = path.split('.')
+            if len(parts) >= 2:
+                stage = parts[0]  # attack/decay/sustain/release
+                param = parts[1]  # time/value
+                param_name = f"{stage}_{'level' if param == 'value' else param}"
+                setattr(note.envelope, param_name, value)
+                _log(f"[CONTROL] Envelope {param_name} = {value}")
+                return True
+                
+        except Exception as e:
+            _log(f"[ERROR] Envelope control failed: {str(e)}")
+            
+        return False
 
 class OscillatorVoice(ModuleVoice):
     """Oscillator parameter handling"""
@@ -105,60 +147,62 @@ class OscillatorVoice(ModuleVoice):
         super().__init__(config, synthesis)
         self.module_name = "oscillator"
         self.waveform = None
-        self.envelope = None
         if config:
             self._configure_waveform(config)
-            if 'envelope' in config:
-                self.envelope = EnvelopeVoice(config['envelope'], synthesis)
                 
     def _configure_waveform(self, config):
         try:
-            osc_config = config.get('parameters', {})
-            if 'waveform' in osc_config:
+            if 'waveform' in config:
                 self.waveform = self.synthesis.waveform_manager.get_waveform(
-                    osc_config['waveform'].get('type', 'triangle'),
-                    osc_config['waveform']
+                    config['waveform'].get('type', 'triangle'),
+                    config['waveform']
                 )
                 _log("[CREATE] Waveform configured")
         except Exception as e:
-            _log("[ERROR] Waveform failed")
+            _log(f"[ERROR] Waveform failed: {str(e)}")
+            
+    def handle_trigger(self, note, path, value):
+        """Handle oscillator triggers"""
+        _log(f"[TRIGGER] Oscillator {path} = {value}")
+        return True
 
 class FilterVoice(ModuleVoice):
     """Filter parameter handling"""
     def __init__(self, config, synthesis):
         super().__init__(config, synthesis)
         self.module_name = "filter"
-        self.envelope = None
         self.current_frequency = 20000  # Default to max frequency
         self.current_q = 0.707  # Default Q factor
-        if config and 'envelope' in config:
-            self.envelope = EnvelopeVoice(config['envelope'], synthesis)
             
-    def update_parameter(self, note, param, value):
-        """Update filter parameters by creating a new filter"""
+    def handle_control(self, note, path, value):
+        """Update filter parameters"""
         try:
+            param = path.split('.')[-1]  # Get last part of path
+            
             if param == 'frequency':
                 self.current_frequency = float(value)
             elif param == 'resonance':
                 self.current_q = float(value)
                 
-            # Create new filter with current parameters using synth's method
+            # Create new filter with current parameters
             if hasattr(self.synthesis.synthio_synth, 'low_pass_filter'):
                 new_filter = self.synthesis.synthio_synth.low_pass_filter(
                     frequency=self.current_frequency,
                     Q=self.current_q
                 )
-                # Attach new filter to note
                 note.filter = new_filter
-                _log(f"[UPDATE] Filter {param} = {value}")
+                _log(f"[CONTROL] Filter {param} = {value}")
                 return True
-            else:
-                _log("[ERROR] Synthesizer does not support filters")
-                return False
                 
         except Exception as e:
-            _log(f"[ERROR] Filter update failed: {str(e)}")
-            return False
+            _log(f"[ERROR] Filter control failed: {str(e)}")
+            
+        return False
+        
+    def handle_trigger(self, note, path, value):
+        """Handle filter triggers"""
+        _log(f"[TRIGGER] Filter {path} = {value}")
+        return True
 
 class AmplifierVoice(ModuleVoice):
     """Amplifier parameter handling"""
@@ -168,6 +212,23 @@ class AmplifierVoice(ModuleVoice):
         self.envelope = None
         if config and 'envelope' in config:
             self.envelope = EnvelopeVoice(config['envelope'], synthesis)
+            
+    def handle_trigger(self, note, path, value):
+        """Handle amplifier triggers including envelope triggers"""
+        parts = path.split('.')
+        if len(parts) >= 2 and parts[0] == 'envelope':
+            if self.envelope:
+                return self.envelope.handle_trigger(note, '.'.join(parts[1:]), value)
+        _log(f"[TRIGGER] Amplifier {path} = {value}")
+        return True
+        
+    def handle_control(self, note, path, value):
+        """Handle amplifier controls including envelope controls"""
+        parts = path.split('.')
+        if len(parts) >= 2 and parts[0] == 'envelope':
+            if self.envelope:
+                return self.envelope.handle_control(note, '.'.join(parts[1:]), value)
+        return super().handle_control(note, path, value)
 
 class Voice:
     """Complete voice with all modules"""
@@ -221,7 +282,8 @@ class Voice:
         
         try:
             module_name = target['module']
-            parameter = target['parameter']
+            path = target['path']
+            update_type = target['type']
             
             if module_name == 'oscillator':
                 module = self.oscillator
@@ -232,14 +294,10 @@ class Voice:
             else:
                 return False
                 
-            if 'envelope' in parameter:
-                if module.envelope:
-                    _, stage, param = parameter.split('.')
-                    return module.envelope.update_parameter(
-                        self.synth_note, stage, param, value
-                    )
-            else:
-                return module.update_parameter(self.synth_note, parameter, value)
+            if update_type == 'trigger':
+                return module.handle_trigger(self.synth_note, path, value)
+            else:  # control
+                return module.handle_control(self.synth_note, path, value)
                 
         except Exception as e:
             _log(f"[ERROR] Update failed: {str(e)}")
@@ -300,10 +358,13 @@ class VoiceManager:
             return
             
         # Log received parameter stream
-        _log(f"Received parameter stream: {target['module']}.{target['parameter']} = {value}")
+        _log(f"Received parameter stream: {target['module']}.{target['path']} = {value}")
         
-        # Handle note creation
-        if target['module'] == 'oscillator' and target['parameter'] == 'frequency':
+        # Handle note creation on oscillator frequency control
+        if (target['module'] == 'oscillator' and 
+            target['type'] == 'control' and 
+            target['path'] == 'frequency'):
+            
             if channel not in self.active_voices:
                 # Create new voice
                 note_params = {'frequency': value}
@@ -329,7 +390,7 @@ class VoiceManager:
         if channel is None:
             # Global parameter - update all voices
             if not self.active_voices:
-                _log(f"[REJECTED] No active voices to apply {target['module']}.{target['parameter']} = {value}")
+                _log(f"[REJECTED] No active voices to apply {target['module']}.{target['path']} = {value}")
                 return
             for voice in self.active_voices.values():
                 voice.update_parameter(target, value)
@@ -339,7 +400,7 @@ class VoiceManager:
             if voice:
                 voice.update_parameter(target, value)
             else:
-                _log(f"[REJECTED] No voice on channel {channel} for {target['module']}.{target['parameter']} = {value}")
+                _log(f"[REJECTED] No voice on channel {channel} for {target['module']}.{target['path']} = {value}")
                 
     def create_voice(self, channel, params):
         """Create new voice"""
@@ -353,7 +414,7 @@ class VoiceManager:
                 self.active_voices[channel] = voice
                 self.synthio_synth.press(voice.synth_note)
                 return voice
-                
+               
         except Exception as e:
             _log(f"[ERROR] Voice failed: {str(e)}")
             

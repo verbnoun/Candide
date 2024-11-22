@@ -21,7 +21,7 @@ from instrument_config import create_instrument, list_instruments
 from midi import MidiLogic
 from output_system import AudioPipeline
 from voices import VoiceManager
-from router import OscillatorRouter, FilterRouter, AmplifierRouter, MasterRouter
+from router import Router
 from connection_manager import CandideConnectionManager
 from constants import *
 
@@ -69,23 +69,17 @@ def _log(message, effect=None):
 class SynthManager:
     """Manages instrument configuration and routing"""
     def __init__(self, output_manager):
+        _log("Synth Manager init ...")
         self.voice_manager = VoiceManager(output_manager)
-        self.routers = {}
+        self.router = None
         self.current_instrument = None
         self._setup_synth()
 
     def _setup_synth(self):
-        _log("Setting up synthesizer...")
+        _log("Setting up synth ...")
         
-        # Initialize module routers
-        self.routers = {
-            'oscillator': OscillatorRouter(),
-            'filter': FilterRouter(),
-            'amplifier': AmplifierRouter()
-        }
-        
-        # Create master router with all module routers
-        self.master_router = MasterRouter(self.routers)
+        # Create single router
+        self.router = Router()
         
         # Set initial instrument
         self.current_instrument = create_instrument('piano')
@@ -94,60 +88,46 @@ class SynthManager:
 
     def _configure_instrument(self, instrument):
         """Configure system for new instrument"""
-        config = instrument.get_config()
-        if not config:
-            return
+        _log("Configuring system for new instrument ...")
+        try:
+            config = instrument.get_config()
+            if not config or not isinstance(config, dict):
+                _log("[ERROR] Invalid config format")
+                return
+                
+            # Update voice manager config
+            self.voice_manager.set_config(config)
             
-        # Update voice manager config
-        self.voice_manager.set_config(config)
-        
-        # Configure master router (which configures all module routers)
-        self.master_router.compile_routes(config)
-            
-        _log(f"Configured instrument: {instrument.name}")
+            # Configure router with new config
+            self.router.compile_routes(config)
+                
+            _log(f"Configured instrument: {instrument.name}")
+        except Exception as e:
+            _log(f"[ERROR] Configuration error: {str(e)}")
+            raise
 
     def set_instrument(self, instrument_name):
         """Switch to new instrument"""
+        _log("Switching to new instrument ...")
         new_instrument = create_instrument(instrument_name)
         if new_instrument:
             self.current_instrument = new_instrument
             self._configure_instrument(new_instrument)
 
     def get_current_config(self):
-        if self.current_instrument:
-            return self.current_instrument.get_config()
-        return None
-
-    def format_cc_config(self):
-        """Format CC configuration string for base station"""
+        """Get current instrument configuration"""
+        _log("Getting current instrument config ...")
         if not self.current_instrument:
-            _log("[ERROR] No current instrument")
-            return "cc:"
-            
-        config = self.current_instrument.get_config()
-        if not config or 'cc_routing' not in config:
-            _log("[ERROR] No CC routing found")
-            return "cc:"
-            
-        assignments = []
-        pot_number = 0
-        
-        for cc_number, routing in config['cc_routing'].items():
-            cc_num = int(cc_number)
-            if not (0 <= cc_num <= 127):
-                _log(f"[ERROR] Invalid CC: {cc_num}")
-                continue
-                
-            if pot_number > 13:
-                break
-                
-            cc_name = routing.get('name', f"CC{cc_num}")
-            assignments.append(f"{pot_number}={cc_num}:{cc_name}")
-            pot_number += 1
-            
-        config_str = "cc:" + ",".join(assignments)
-        _log(f"CC config: {config_str}")
-        return config_str
+            return None
+        try:
+            config = self.current_instrument.get_config()
+            if not isinstance(config, dict):
+                _log("[ERROR] Invalid config format")
+                return None
+            return config
+        except Exception as e:
+            _log(f"[ERROR] Error getting config: {str(e)}")
+            return None
 
 class Candide:
     def __init__(self):
@@ -174,10 +154,10 @@ class Candide:
             self.transport
         )
         
-        # Initialize MIDI with shared transport and master router
+        # Initialize MIDI with shared transport and router
         self.midi = MidiLogic(
             uart=self.transport,
-            router=self.synth_manager.master_router,  # Use master router instead of just filter router
+            router=self.synth_manager.router,
             connection_manager=self.connection_manager,
             voice_manager=self.synth_manager.voice_manager
         )
@@ -216,9 +196,8 @@ class Candide:
                         new_instrument = instruments[new_idx].lower().replace(' ', '_')
                         _log(f"Switching to instrument: {new_instrument}")
                         self.synth_manager.set_instrument(new_instrument)
-                        if self.connection_manager.state == ConnectionState.CONNECTED:
-                            config_str = self.synth_manager.format_cc_config()
-                            self.text_uart.write(f"{config_str}\n")
+                        # Send new config if connected
+                        self.connection_manager.send_config()
                             
             self.last_encoder_scan = current_time
 
