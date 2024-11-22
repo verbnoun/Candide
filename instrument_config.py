@@ -29,10 +29,10 @@ class InstrumentConfig:
                     elif obj['type'] == 'per_key':
                         event = obj.get('event')
                         if event == 'note_on':
-                            whitelist['note_on'].add('note')
+                            whitelist['note_on'].add('note_number')
                             whitelist['note_on'].add('velocity')
                         elif event == 'note_off':
-                            whitelist['note_off'].add('note')
+                            whitelist['note_off'].add('note_number')
                 for value in obj.values():
                     scan_for_midi_endpoints(value)
             elif isinstance(obj, list):
@@ -78,7 +78,7 @@ class Piano(InstrumentConfig):
                         'controls': [
                             {
                                 'type': 'per_key',
-                                'event': 'note',
+                                'event': 'note_number',
                                 'transform': 'midi_to_frequency',
                                 'reference_pitch': 440.0,
                                 'reference_pitch_note': 69,

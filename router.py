@@ -3,7 +3,7 @@ Router Module
 
 Transforms MIDI messages into data streams based on instrument configuration.
 Each route defined in config creates a mapping from MIDI input to module parameter.
-No knowledge of voice implementation - just creates normalized parameter streams.
+No knowledge of voice implementation - just creates normalized parameter streams and sends to voices.py.
 """
 
 import sys
@@ -257,7 +257,7 @@ class Router:
                 self._compile_routes_recursive(value, path)
         
     def process_message(self, message, voice_manager):
-        """Transform MIDI message into parameter stream"""
+        """Transform MIDI message into parameter stream and send to voice manager"""
         msg_type = message.get('type')
         channel = message.get('channel')
         data = message.get('data', {})
@@ -265,27 +265,27 @@ class Router:
         _log(f"Processing {msg_type} message on channel {channel}: {data}")
         
         # Process message based on type
-        result = None
+        streams = None
         if msg_type == 'cc':
-            result = self._process_cc_message(channel, data)
+            streams = self._process_cc_message(channel, data)
         elif msg_type in ['note_on', 'note_off']:
-            result = self._process_note_message(msg_type, channel, data)
+            streams = self._process_note_message(msg_type, channel, data)
         elif msg_type == 'pressure':
-            result = self._process_pressure_message(channel, data)
+            streams = self._process_pressure_message(channel, data)
         else:
             _log(f"[REJECTED] Unsupported message type: {msg_type}")
             
-        if result:
-            if isinstance(result, list):
-                _log(f"[ROUTE] Sending {len(result)} parameter streams to voices")
-                for stream in result:
+        if streams:
+            if isinstance(streams, list):
+                _log(f"[ROUTE] Sending {len(streams)} parameter streams to voices")
+                for stream in streams:
                     _log(f"Parameter stream: {stream}")
+                    voice_manager.process_parameter_stream(stream)
             else:
-                _log(f"Parameter stream: {result}")
+                _log(f"Parameter stream: {streams}")
+                voice_manager.process_parameter_stream(streams)
         else:
             _log(f"[REJECTED] No route found for {msg_type} message")
-            
-        return result
         
     def _process_cc_message(self, channel, data):
         """Process CC message"""
@@ -298,7 +298,7 @@ class Router:
         route = self.route_cache.routes['controls'].get(f'cc.{cc_num}')
         if route:
             value = self._transform_value(data.get('value', 0), route)
-            return self._create_parameter_stream(None, route, value)
+            return self._create_parameter_stream(channel, route, value)
             
         _log(f"[REJECTED] No route found for CC {cc_num}")
         return None
@@ -324,9 +324,16 @@ class Router:
             if (msg_type == 'note_on' or 
                 (msg_type == 'note_off' and control_type == 'note_number')):
                 _log(f"[ROUTE] Processing {msg_type} {control_type}")
+                
+                # Explicitly handle note_number extraction
+                if control_type == 'note_number':
+                    control_value = data.get('note')
+                else:
+                    control_value = data.get(control_type)
+                
                 route = self.route_cache.routes['controls'].get(f'per_key.{control_type}')
-                if route and control_type in data:
-                    value = self._transform_value(data[control_type], route)
+                if route and control_value is not None:
+                    value = self._transform_value(control_value, route)
                     stream = self._create_parameter_stream(channel, route, value)
                     results.append(stream)
                 else:
@@ -375,10 +382,17 @@ class Router:
         
     def _create_parameter_stream(self, channel, route, value):
         """Create parameter stream for voice manager"""
+        # Extract module from path if not explicitly set
+        module = route['module']
+        if module is None:
+            path_parts = route['path'].split('.')
+            if path_parts:
+                module = path_parts[0]
+
         stream = {
             'channel': channel,
             'target': {
-                'module': route['module'],
+                'module': module,
                 'path': route['path'],
                 'type': route['type']
             },
