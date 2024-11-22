@@ -95,10 +95,7 @@ class SynthManager:
                 _log("[ERROR] Invalid config format")
                 return
                 
-            # Update voice manager config
-            self.voice_manager.set_config(config)
-            
-            # Configure router with new config
+            # Configure router with new instrument config
             self.router.compile_routes(config)
                 
             _log(f"Configured instrument: {instrument.name}")
