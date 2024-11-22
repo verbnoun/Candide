@@ -14,12 +14,10 @@ def _log(message, module="ROUTER"):
     if not ROUTER_DEBUG:
         return
         
-    RED = "\033[31m"
-    GREEN = "\033[32m"
-    YELLOW = "\033[33m"
-    BLUE = "\033[34m"
-    LIGHT_BLUE = "\033[94m"
-    GRAY = "\033[90m"
+    RED = "\033[31m"  # Keep red for errors
+    DARK_BLUE = "\033[34m"  # Darkest blue for rejected messages
+    MEDIUM_BLUE = "\033[94m"  # Medium blue for route messages
+    LIGHT_BLUE = "\033[96m"  # Light blue for general messages
     RESET = "\033[0m"
     
     def format_dict(d, indent=0):
@@ -34,18 +32,51 @@ def _log(message, module="ROUTER"):
                 lines.append(f"{spaces}{k}: {v}")
         return lines
     
+    def format_parameter_stream(stream):
+        """Format parameter stream with nice indentation."""
+        lines = []
+        lines.append("Parameter stream:")
+        lines.append(f"  channel: {stream['channel']}")
+        lines.append("  target:")
+        target = stream['target']
+        lines.append(f"    type: {target['type']}")
+        lines.append(f"    path: {target['path']}")
+        lines.append(f"    module: {target['module']}")
+        lines.append(f"  value: {stream['value']}")
+        return "\n".join(lines)
+
+    def format_midi_message(msg_type, channel, data):
+        """Format MIDI message with nice indentation."""
+        lines = []
+        lines.append(f"Processing {msg_type} message:")
+        lines.append(f"  channel: {channel}")
+        lines.append("  data:")
+        for k, v in data.items():
+            lines.append(f"    {k}: {v}")
+        return "\n".join(lines)
+
+    def format_transform_value(value, output_range):
+        """Format value transformation with nice indentation."""
+        lines = []
+        lines.append("Transformed value:")
+        lines.append(f"  result: {value}")
+        lines.append("  output range:")
+        lines.append(f"    min: {output_range['min']}")
+        lines.append(f"    max: {output_range['max']}")
+        return "\n".join(lines)
+    
     if isinstance(message, dict):
         # Format dictionary with simple indentation
         formatted = "\n".join(format_dict(message, 2))
-        print(f"\n{LIGHT_BLUE}[{module}]{RESET}\n{formatted}\n", file=sys.stderr)
+        print(f"\n{LIGHT_BLUE}[{module}]\n{formatted}{RESET}\n", file=sys.stderr)
     else:
         # Format string messages with appropriate colors
         if "[ERROR]" in str(message):
             color = RED
         elif "[REJECTED]" in str(message):
-            color = BLUE
+            color = DARK_BLUE
         elif "[ROUTE]" in str(message):
-            color = GREEN
+            color = MEDIUM_BLUE
         else:
             color = LIGHT_BLUE
             
@@ -55,9 +86,9 @@ def _log(message, module="ROUTER"):
             if len(parts) == 2:
                 try:
                     whitelist_str = parts[1].replace("'", "").replace("{", "").replace("}", "")
-                    print(f"\n{color}[{module}] {parts[0]}:{RESET}")
+                    print(f"\n{color}[{module}] {parts[0]}:", file=sys.stderr)
                     for item in whitelist_str.split(","):
-                        print(f"  {item.strip()}", file=sys.stderr)
+                        print(f"{color}  {item.strip()}{RESET}", file=sys.stderr)
                     print("", file=sys.stderr)
                     return
                 except:
@@ -68,13 +99,48 @@ def _log(message, module="ROUTER"):
             if len(route_parts) == 2:
                 try:
                     route_dict = eval(route_parts[1])
-                    print(f"\n{color}[{module}] Added route: {route_parts[0]} ->{RESET}")
+                    print(f"\n{color}[{module}] Added route: {route_parts[0]} ->", file=sys.stderr)
                     for k, v in route_dict.items():
-                        print(f"  {k}: {v}", file=sys.stderr)
+                        print(f"{color}  {k}: {v}{RESET}", file=sys.stderr)
                     print("", file=sys.stderr)
                     return
                 except:
                     pass
+
+        # Format MIDI message processing
+        if isinstance(message, str) and "Processing" in message and "message on channel" in message:
+            try:
+                parts = message.split("message on channel")
+                msg_type = parts[0].split("Processing ")[1].strip()
+                channel = parts[1].split(":")[0].strip()
+                data = eval(parts[1].split(":", 1)[1].strip())
+                formatted = format_midi_message(msg_type, channel, data)
+                print(f"\n{color}[{module}]\n{color}{formatted}{RESET}\n", file=sys.stderr)
+                return
+            except:
+                pass
+
+        # Format value transformation
+        if isinstance(message, str) and "Transformed value" in message and "using range" in message:
+            try:
+                parts = message.split("using range")
+                value = float(parts[0].split("value")[1].strip())
+                output_range = eval(parts[1].strip())
+                formatted = format_transform_value(value, output_range)
+                print(f"\n{color}[{module}]\n{color}{formatted}{RESET}\n", file=sys.stderr)
+                return
+            except:
+                pass
+                    
+        # Format parameter stream messages
+        if isinstance(message, str) and "Parameter stream:" in message:
+            try:
+                stream_dict = eval(message.split(": ", 1)[1])
+                formatted = format_parameter_stream(stream_dict)
+                print(f"\n{color}[{module}]\n{color}{formatted}{RESET}\n", file=sys.stderr)
+                return
+            except:
+                pass
                     
         # Default formatting for other messages
         print(f"{color}[{module}] {message}{RESET}", file=sys.stderr)
@@ -89,8 +155,10 @@ class RouteCache:
         }
         
     def add_control_route(self, route_info):
-        """Add a continuous control route mapping"""
-        key = f"{route_info.get('source_type')}.{route_info.get('source_event')}"
+        if route_info['source_type'] == 'cc':
+            key = f"cc.{route_info['source_event']}"  # Use CC number as event
+        else:
+            key = f"{route_info['source_type']}.{route_info['source_event']}"
         self.routes['controls'][key] = route_info
         _log(f"Added control route: {key} -> {route_info}")
         
@@ -138,41 +206,54 @@ class Router:
         _log("Route compilation complete")
         
     def _compile_routes_recursive(self, config, current_path=''):
-        """Recursively compile routes from configuration"""
         if not isinstance(config, dict):
             return
         
         for key, value in config.items():
-            # Build full path
             path = f"{current_path}.{key}" if current_path else key
             
-            # Check for sources in current configuration
             if isinstance(value, dict):
-                sources = value.get('sources', [])
-                if not isinstance(sources, list):
-                    sources = [sources]
+                # Handle sources structure
+                sources = value.get('sources', {})
                 
-                for source in sources:
-                    if isinstance(source, dict):
+                # Handle controls array
+                if 'controls' in sources:
+                    for control in sources['controls']:
                         route_info = {
-                            'source_type': source.get('type'),
-                            'source_event': source.get('event'),
+                            'source_type': control.get('type'),
+                            'source_event': control.get('event'),
                             'module': current_path.split('.')[0] if current_path else None,
                             'path': path,
-                            'type': 'control' if source.get('event') else 'trigger',
-                            'midi_range': source.get('midi_range'),
+                            'type': 'control',
+                            'midi_range': control.get('midi_range'),
                             'output_range': value.get('output_range'),
                             'curve': value.get('curve'),
-                            'transform': source.get('transform')
+                            'transform': control.get('transform')
                         }
                         
-                        if route_info['type'] == 'control':
-                            self.route_cache.add_control_route(route_info)
-                        else:
-                            self.route_cache.add_trigger_route(route_info)
-            
-            # Recurse into nested dictionaries
-            if isinstance(value, dict):
+                        # Special handling for CC routes
+                        if control.get('type') == 'cc':
+                            route_info['source_event'] = str(control.get('number'))
+                        
+                        self.route_cache.add_control_route(route_info)
+                
+                # Handle triggers
+                if 'triggers' in sources:
+                    for trigger_name, trigger in sources['triggers'].items():
+                        route_info = {
+                            'source_type': trigger.get('type'),
+                            'source_event': trigger.get('event'),
+                            'module': current_path.split('.')[0] if current_path else None,
+                            'path': path,
+                            'type': 'trigger',
+                            'midi_range': None,
+                            'output_range': value.get('output_range'),
+                            'curve': value.get('curve'),
+                            'transform': None
+                        }
+                        self.route_cache.add_trigger_route(route_info)
+                
+                # Continue recursion
                 self._compile_routes_recursive(value, path)
         
     def process_message(self, message, voice_manager):
@@ -198,9 +279,9 @@ class Router:
             if isinstance(result, list):
                 _log(f"[ROUTE] Sending {len(result)} parameter streams to voices")
                 for stream in result:
-                    _log(f"[ROUTE] Parameter stream: {stream}")
+                    _log(f"Parameter stream: {stream}")
             else:
-                _log(f"[ROUTE] Sending parameter stream to voices: {result}")
+                _log(f"Parameter stream: {result}")
         else:
             _log(f"[REJECTED] No route found for {msg_type} message")
             
@@ -226,8 +307,20 @@ class Router:
         """Process note message"""
         results = []
         
-        # Process note controls
-        for control_type in ['note', 'velocity']:
+        # First process the trigger (note_on/off)
+        trigger_route = self.route_cache.routes['triggers'].get(f'per_key.{msg_type}')
+        if trigger_route:
+            _log(f"[ROUTE] Processing {msg_type} trigger")
+            stream = self._create_parameter_stream(
+                channel, trigger_route, 1 if msg_type == 'note_on' else 0
+            )
+            results.append(stream)
+        else:
+            _log(f"[REJECTED] No trigger route found for {msg_type}")
+
+        # Then process note controls in reverse order (velocity first, then note)
+        control_types = ['velocity', 'note']  # Reversed order
+        for control_type in control_types:
             if (msg_type == 'note_on' or 
                 (msg_type == 'note_off' and control_type == 'note')):
                 _log(f"[ROUTE] Processing {msg_type} {control_type}")
@@ -238,17 +331,6 @@ class Router:
                     results.append(stream)
                 else:
                     _log(f"[REJECTED] No route found for {msg_type} {control_type}")
-        
-        # Process triggers
-        trigger_route = self.route_cache.routes['triggers'].get(f'per_key.{msg_type}')
-        if trigger_route:
-            _log(f"[ROUTE] Processing {msg_type} trigger")
-            stream = self._create_parameter_stream(
-                channel, trigger_route, 1 if msg_type == 'note_on' else 0
-            )
-            results.append(stream)
-        else:
-            _log(f"[REJECTED] No trigger route found for {msg_type}")
             
         return results if results else None
 
@@ -302,5 +384,5 @@ class Router:
             },
             'value': value
         }
-        _log(f"[ROUTE] Created parameter stream: {stream}")
+        _log(f"Parameter stream: {stream}")
         return stream
