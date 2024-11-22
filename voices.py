@@ -100,7 +100,11 @@ class Voice:
                     self.synth_note.amplitude = float(value)
                     _log(f"[PARAM] Amplifier gain = {value}")
                 elif parts[0] == 'envelope':
-                    if len(parts) >= 3:
+                    if update_type == 'trigger' and 'release' in path:
+                        # Handle release trigger
+                        self.release()
+                        _log(f"[TRIGGER] Amplifier release triggered")
+                    elif len(parts) >= 3:
                         stage = parts[1]
                         param = parts[2]
                         param_name = f"{stage}_{'level' if param == 'value' else param}"
@@ -250,21 +254,21 @@ class VoiceManager:
                 self.last_note_number[channel] = note_number
                 _log(f"[NOTE] Stored frequency {frequency} for note {note_number}")
                 
-        # Store other parameters
-        self.pending_params[channel][target['path']] = value
-
-        # Try to create voice if we haven't yet
+        # Store parameter for later if no voice exists yet
         if channel not in self.active_voices:
+            self.pending_params[channel][target['path']] = value
+            _log(f"[STORE] Parameter {target['path']} = {value} for future voice on channel {channel}")
+            # Try to create voice if we have necessary parameters
             self.try_create_voice(channel)
+            return
                 
         # Update existing voice
-        elif channel in self.active_voices:
-            voice = self.active_voices[channel]
-            try:
-                voice.update_parameter(target, value)
-            except Exception as e:
-                _log(f"[FAIL] Voice parameter update failed: {str(e)}")
-                _log(f"[FAIL] Stream details: {stream}")
+        voice = self.active_voices[channel]
+        try:
+            voice.update_parameter(target, value)
+        except Exception as e:
+            _log(f"[FAIL] Voice parameter update failed: {str(e)}")
+            _log(f"[FAIL] Stream details: {stream}")
                 
     def release_voice(self, channel):
         """Release voice"""

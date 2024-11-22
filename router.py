@@ -307,7 +307,7 @@ class Router:
         """Process note message"""
         results = []
         
-        # First process the trigger (note_on/off)
+        # Process the trigger (note_on/off)
         trigger_route = self.route_cache.routes['triggers'].get(f'per_key.{msg_type}')
         if trigger_route:
             _log(f"[ROUTE] Processing {msg_type} trigger")
@@ -318,26 +318,35 @@ class Router:
         else:
             _log(f"[REJECTED] No trigger route found for {msg_type}")
 
-        # Then process note controls in reverse order (velocity first, then note_number)
-        control_types = ['velocity', 'note_number']  # Reversed order
+        # Process note controls
+        control_types = ['note_number', 'velocity']
         for control_type in control_types:
-            if (msg_type == 'note_on' or 
-                (msg_type == 'note_off' and control_type == 'note_number')):
-                _log(f"[ROUTE] Processing {msg_type} {control_type}")
+            # Only process velocity for note_on
+            if control_type == 'velocity' and msg_type != 'note_on':
+                continue
                 
-                # Explicitly handle note_number extraction
-                if control_type == 'note_number':
-                    control_value = data.get('note')
-                else:
-                    control_value = data.get(control_type)
-                
+            # For note_off, only process note_number if there's a specific route for it
+            if msg_type == 'note_off' and control_type == 'note_number':
                 route = self.route_cache.routes['controls'].get(f'per_key.{control_type}')
-                if route and control_value is not None:
-                    value = self._transform_value(control_value, route)
-                    stream = self._create_parameter_stream(channel, route, value)
-                    results.append(stream)
-                else:
-                    _log(f"[REJECTED] No route found for {msg_type} {control_type}")
+                # Check if there's a specific route that handles note_off note_number
+                if not any(r.get('source_event') == 'note_off' for r in route.values() if isinstance(r, dict)):
+                    continue
+                
+            _log(f"[ROUTE] Processing {msg_type} {control_type}")
+            
+            # Explicitly handle note_number extraction
+            if control_type == 'note_number':
+                control_value = data.get('note')
+            else:
+                control_value = data.get(control_type)
+            
+            route = self.route_cache.routes['controls'].get(f'per_key.{control_type}')
+            if route and control_value is not None:
+                value = self._transform_value(control_value, route)
+                stream = self._create_parameter_stream(channel, route, value)
+                results.append(stream)
+            else:
+                _log(f"[REJECTED] No route found for {msg_type} {control_type}")
             
         return results if results else None
 
