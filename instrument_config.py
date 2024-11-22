@@ -80,14 +80,12 @@ class Piano(InstrumentConfig):
             'name': "Piano",
             
             'oscillator': {
-                'triggers': {
-                    'start': {
-                        'sources': [
-                            {
-                                'type': 'per_key',
-                                'event': 'note_on'
-                            }
-                        ]
+                'sources': {
+                    'triggers': {
+                        'start': {
+                            'type': 'per_key',
+                            'event': 'note_on'
+                        }
                     }
                 },
                 'frequency': {
@@ -115,14 +113,12 @@ class Piano(InstrumentConfig):
             },
 
             'filter': {
-                'triggers': {
-                    'start': {
-                        'sources': [
-                            {
-                                'type': 'per_key',
-                                'event': 'note_on'
-                            }
-                        ]
+                'sources': {
+                    'triggers': {
+                        'start': {
+                            'type': 'per_key',
+                            'event': 'note_on'
+                        }
                     }
                 },
                 'type': {
@@ -166,14 +162,12 @@ class Piano(InstrumentConfig):
             'amplifier': {
                 'envelope': {
                     'attack': {
-                        'triggers': {
-                            'start': {
-                                'sources': [
-                                    {
-                                        'type': 'per_key',
-                                        'event': 'note_on'
-                                    }
-                                ]
+                        'sources': {
+                            'triggers': {
+                                'start': {
+                                    'type': 'per_key',
+                                    'event': 'note_on'
+                                }
                             }
                         },
                         'time': {
@@ -242,14 +236,12 @@ class Piano(InstrumentConfig):
                         }
                     },
                     'release': {
-                        'triggers': {
-                            'start': {
-                                'sources': [
-                                    {
-                                        'type': 'per_key',
-                                        'event': 'note_off'
-                                    }
-                                ]
+                        'sources': {
+                            'triggers': {
+                                'start': {
+                                    'type': 'per_key',
+                                    'event': 'note_off'
+                                }
                             }
                         },
                         'time': {
