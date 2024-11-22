@@ -318,11 +318,11 @@ class Router:
         else:
             _log(f"[REJECTED] No trigger route found for {msg_type}")
 
-        # Then process note controls in reverse order (velocity first, then note)
-        control_types = ['velocity', 'note']  # Reversed order
+        # Then process note controls in reverse order (velocity first, then note_number)
+        control_types = ['velocity', 'note_number']  # Reversed order
         for control_type in control_types:
             if (msg_type == 'note_on' or 
-                (msg_type == 'note_off' and control_type == 'note')):
+                (msg_type == 'note_off' and control_type == 'note_number')):
                 _log(f"[ROUTE] Processing {msg_type} {control_type}")
                 route = self.route_cache.routes['controls'].get(f'per_key.{control_type}')
                 if route and control_type in data:
