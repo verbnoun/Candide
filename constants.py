@@ -34,9 +34,9 @@ MAX_BUFFER_FULLNESS = 0.8  # Target maximum buffer fullness
 MIN_BUFFER_FULLNESS = 0.2  # Target minimum buffer fullness
 
 # I2S Audio Output Pins
-I2S_BIT_CLOCK = board.GP0
-I2S_WORD_SELECT = board.GP1
-I2S_DATA = board.GP2
+I2S_BIT_CLOCK = board.GP1
+I2S_WORD_SELECT = board.GP2
+I2S_DATA = board.GP0
 
 # Voice Management
 MAX_VOICES = 12  # Maximum concurrent voices
