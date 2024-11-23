@@ -244,7 +244,7 @@ class Candide:
         if self.output_manager:
             _log("Cleaning up audio...")
             self.output_manager.cleanup()
-        _log("\nCandide goes to sleep... ( ◡_◡)ᶻ 𝗓 𐰁\n", effect='cycle')
+        _log("\nCandide goes to sleep... ( ◡_◡)ᶻ 𝗓 𐰁\n")
 
 def main():
     try:

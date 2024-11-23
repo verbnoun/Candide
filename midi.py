@@ -36,14 +36,14 @@ def _format_log_message(message):
 def _log(message):
     """Conditional logging function"""
     RED = "\033[31m"
-    PALE_YELLOW = "\033[93m"
+    LIGHT_CYAN = "\033[96m"
     RESET = "\033[0m" 
     
     if MIDI_DEBUG:
         if "[ERROR]" in str(message):
             color = RED
         else:
-            color = PALE_YELLOW
+            color = LIGHT_CYAN
         
         if isinstance(message, dict):
             formatted_message = _format_log_message(message)

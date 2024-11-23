@@ -18,33 +18,36 @@ def _log(message, module="VOICES"):
         return
         
     RED = "\033[31m"
-    GREEN = "\033[32m"
-    BLUE = "\033[34m"
-    YELLOW = "\033[33m"
-    MAGENTA = "\033[35m"
+    YELLOW = "\033[33m"  # For rejected messages
+    LIGHT_YELLOW = "\033[93m"  # For standard messages
     RESET = "\033[0m"
-    LIGHT_MAGENTA = "\033[95m"
+    
+    def format_parameter_stream(stream, stage=""):
+        """Format parameter stream with nice indentation."""
+        lines = []
+        lines.append("Parameter stream:")
+        if stage:
+            lines.append(f"  stage: {stage}")
+        lines.append(f"  value: {stream['value']}")
+        lines.append("  target:")
+        target = stream['target']
+        lines.append(f"    type: {target['type']}")
+        lines.append(f"    path: {target['path']}")
+        lines.append(f"    module: {target['module']}")
+        lines.append(f"  channel: {stream['channel']}")
+        return "\n".join(lines)
     
     if isinstance(message, dict):
-        formatted = "\nParameter stream:\n"
-        for k, v in message.items():
-            if isinstance(v, dict):
-                formatted += f"  {k}:\n"
-                for sub_k, sub_v in v.items():
-                    formatted += f"    {sub_k}: {sub_v}\n"
-            else:
-                formatted += f"  {k}: {v}\n"
-        print(f"[{module}]{formatted}", file=sys.stderr)
+        formatted = format_parameter_stream(message, "received")
+        print(f"\n{LIGHT_YELLOW}[{module}]\n{formatted}{RESET}\n", file=sys.stderr)
     else:
         if "[ERROR]" in str(message) or "[FAIL]" in str(message):
             color = RED
         elif "[REJECTED]" in str(message):
-            color = MAGENTA
-        elif "[PARAM]" in str(message):
-            color = LIGHT_MAGENTA
+            color = YELLOW
         else:
-            color = LIGHT_MAGENTA
-        print(f"{color}[{module}] {message}", file=sys.stderr)
+            color = LIGHT_YELLOW
+        print(f"{color}[{module}] {message}{RESET}", file=sys.stderr)
 
 def midi_to_frequency(note, reference_pitch=440.0, reference_note=69):
     """Convert MIDI note number to frequency"""
@@ -221,9 +224,9 @@ class VoiceManager:
         
         # Log the stream in the desired format
         _log({
-            'channel': channel,
+            'value': value,
             'target': target,
-            'value': value
+            'channel': channel
         })
         
         if not target:
@@ -257,7 +260,16 @@ class VoiceManager:
         # Store parameter for later if no voice exists yet
         if channel not in self.active_voices:
             self.pending_params[channel][target['path']] = value
-            _log(f"[STORE] Parameter {target['path']} = {value} for future voice on channel {channel}")
+            _log({
+                'value': value,
+                'target': {
+                    'type': target.get('type', 'control'),
+                    'path': target['path'],
+                    'module': target['path'].split('.')[0]
+                },
+                'channel': channel,
+                'stage': 'stored for future voice'
+            })
             # Try to create voice if we have necessary parameters
             self.try_create_voice(channel)
             return

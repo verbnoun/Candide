@@ -15,9 +15,8 @@ def _log(message, module="ROUTER"):
         return
         
     RED = "\033[31m"  # Keep red for errors
-    DARK_BLUE = "\033[34m"  # Darkest blue for rejected messages
-    MEDIUM_BLUE = "\033[94m"  # Medium blue for route messages
-    LIGHT_BLUE = "\033[96m"  # Light blue for general messages
+    MAGENTA = "\033[35m"  # Only for rejected messages
+    LIGHT_MAGENTA = "\033[95m"  # For all other messages
     RESET = "\033[0m"
     
     def format_dict(d, indent=0):
@@ -32,17 +31,19 @@ def _log(message, module="ROUTER"):
                 lines.append(f"{spaces}{k}: {v}")
         return lines
     
-    def format_parameter_stream(stream):
+    def format_parameter_stream(stream, stage=""):
         """Format parameter stream with nice indentation."""
         lines = []
         lines.append("Parameter stream:")
-        lines.append(f"  channel: {stream['channel']}")
+        if stage:
+            lines.append(f"  stage: {stage}")
+        lines.append(f"  value: {stream['value']}")
         lines.append("  target:")
         target = stream['target']
         lines.append(f"    type: {target['type']}")
         lines.append(f"    path: {target['path']}")
         lines.append(f"    module: {target['module']}")
-        lines.append(f"  value: {stream['value']}")
+        lines.append(f"  channel: {stream['channel']}")
         return "\n".join(lines)
 
     def format_midi_message(msg_type, channel, data):
@@ -66,19 +67,22 @@ def _log(message, module="ROUTER"):
         return "\n".join(lines)
     
     if isinstance(message, dict):
-        # Format dictionary with simple indentation
-        formatted = "\n".join(format_dict(message, 2))
-        print(f"\n{LIGHT_BLUE}[{module}]\n{formatted}{RESET}\n", file=sys.stderr)
+        if 'stage' in message:
+            # This is a parameter stream with stage info
+            formatted = format_parameter_stream(message, message['stage'])
+            print(f"\n[{module}]\n{formatted}\n", file=sys.stderr)
+        else:
+            # Format dictionary with simple indentation
+            formatted = "\n".join(format_dict(message, 2))
+            print(f"\n{LIGHT_MAGENTA}[{module}]\n{formatted}{RESET}\n", file=sys.stderr)
     else:
         # Format string messages with appropriate colors
         if "[ERROR]" in str(message):
             color = RED
         elif "[REJECTED]" in str(message):
-            color = DARK_BLUE
-        elif "[ROUTE]" in str(message):
-            color = MEDIUM_BLUE
+            color = MAGENTA
         else:
-            color = LIGHT_BLUE
+            color = LIGHT_MAGENTA
             
         # Special formatting for whitelist and route messages
         if "whitelist" in str(message):
@@ -115,7 +119,7 @@ def _log(message, module="ROUTER"):
                 channel = parts[1].split(":")[0].strip()
                 data = eval(parts[1].split(":", 1)[1].strip())
                 formatted = format_midi_message(msg_type, channel, data)
-                print(f"\n{color}[{module}]\n{color}{formatted}{RESET}\n", file=sys.stderr)
+                print(f"\n{color}[{module}]\n{formatted}{RESET}\n", file=sys.stderr)
                 return
             except:
                 pass
@@ -127,18 +131,24 @@ def _log(message, module="ROUTER"):
                 value = float(parts[0].split("value")[1].strip())
                 output_range = eval(parts[1].strip())
                 formatted = format_transform_value(value, output_range)
-                print(f"\n{color}[{module}]\n{color}{formatted}{RESET}\n", file=sys.stderr)
+                print(f"\n{color}[{module}]\n{formatted}{RESET}\n", file=sys.stderr)
                 return
             except:
                 pass
                     
         # Format parameter stream messages
-        if isinstance(message, str) and "Parameter stream:" in message:
+        if isinstance(message, str) and "Parameter stream" in message:
             try:
-                stream_dict = eval(message.split(": ", 1)[1])
-                formatted = format_parameter_stream(stream_dict)
-                print(f"\n{color}[{module}]\n{color}{formatted}{RESET}\n", file=sys.stderr)
-                return
+                if ": {" in message:
+                    stream_dict = eval(message.split(": ", 1)[1])
+                    stage = ""
+                    if "created" in message.lower():
+                        stage = "created"
+                    elif "sending" in message.lower():
+                        stage = "sending to voices"
+                    formatted = format_parameter_stream(stream_dict, stage)
+                    print(f"\n{color}[{module}]\n{formatted}{RESET}\n", file=sys.stderr)
+                    return
             except:
                 pass
                     
@@ -262,7 +272,12 @@ class Router:
         channel = message.get('channel')
         data = message.get('data', {})
         
-        _log(f"Processing {msg_type} message on channel {channel}: {data}")
+        # Format MIDI message nicely
+        _log({
+            'type': msg_type,
+            'channel': channel,
+            'data': data
+        })
         
         # Process message based on type
         streams = None
@@ -279,10 +294,22 @@ class Router:
             if isinstance(streams, list):
                 _log(f"[ROUTE] Sending {len(streams)} parameter streams to voices")
                 for stream in streams:
-                    _log(f"Parameter stream: {stream}")
+                    # Use format_parameter_stream for consistent formatting
+                    _log({
+                        'value': stream['value'],
+                        'target': stream['target'],
+                        'channel': stream['channel'],
+                        'stage': 'sending to voices'
+                    })
                     voice_manager.process_parameter_stream(stream)
             else:
-                _log(f"Parameter stream: {streams}")
+                # Use format_parameter_stream for consistent formatting
+                _log({
+                    'value': streams['value'],
+                    'target': streams['target'],
+                    'channel': streams['channel'],
+                    'stage': 'sending to voices'
+                })
                 voice_manager.process_parameter_stream(streams)
         else:
             _log(f"[REJECTED] No route found for {msg_type} message")
@@ -386,7 +413,13 @@ class Router:
         out_max = output_range['max']
         value = out_min + (normalized * (out_max - out_min))
         
-        _log(f"[ROUTE] Transformed value {value} using range {output_range}")
+        _log({
+            'result': value,
+            'output_range': {
+                'min': out_min,
+                'max': out_max
+            }
+        })
         return value
         
     def _create_parameter_stream(self, channel, route, value):
@@ -407,5 +440,16 @@ class Router:
             },
             'value': value
         }
-        _log(f"Parameter stream: {stream}")
+        
+        # Use format_parameter_stream for consistent formatting
+        _log({
+            'value': value,
+            'target': {
+                'module': module,
+                'path': route['path'],
+                'type': route['type']
+            },
+            'channel': channel,
+            'stage': 'created'
+        })
         return stream

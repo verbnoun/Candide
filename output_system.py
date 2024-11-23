@@ -70,26 +70,18 @@ def _log(message):
     Args:
         message (str/dict): Message to log
     """
-    RED = "\033[31m"
-    GREEN = "\033[32m"
-    YELLOW = "\033[33m"
-    BLUE = "\033[34m"
-    MAGENTA = "\033[35m"
-    CYAN = "\033[36m"
-    WHITE = "\033[37m"
-    GRAY = "\033[37m"
-    DARK_GRAY = "\033[90m"
+    RED = "\033[31m"  # For errors
+    GREEN = "\033[32m"  # For rejected messages
+    LIGHT_GREEN = "\033[92m"  # For standard messages
     RESET = "\033[0m" 
     
     if OUTPUT_AUDIO_DEBUG:
-        if "rejected" in str(message):
-            color = DARK_GRAY
-        elif "[ERROR]" in str(message):
+        if "[ERROR]" in str(message):
             color = RED
-        elif "[AUDIO]" in str(message):
-            color = YELLOW
+        elif "[REJECTED]" in str(message) or "rejected" in str(message).lower():
+            color = GREEN
         else:
-            color = YELLOW
+            color = LIGHT_GREEN
 
         # If message is a dictionary, format with custom indentation
         if isinstance(message, dict):
