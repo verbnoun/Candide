@@ -18,8 +18,68 @@ import audiobusio
 import audiomixer
 import time
 import sys
+import synthio
 from constants import *
 from fixed_point_math import FixedPoint
+
+class BootBeep:
+    """Simple boot beep that can run independently"""
+    def __init__(self, bit_clock, word_select, data):
+        _log("Initializing BootBeep")
+        self.bit_clock = bit_clock
+        self.word_select = word_select
+        self.data = data
+        self.audio_out = None
+        
+    def play(self):
+        """Play a gentle boot beep"""
+        try:
+            # Setup I2S
+            _log("BootBeep: Setting up I2S output...")
+            self.audio_out = audiobusio.I2SOut(
+                bit_clock=self.bit_clock,
+                word_select=self.word_select,
+                data=self.data
+            )
+            _log("BootBeep: I2S initialized successfully")
+            
+            # Create synth
+            _log("BootBeep: Creating synthesizer...")
+            synth = synthio.Synthesizer(sample_rate=22050)
+            self.audio_out.play(synth)
+            _log("BootBeep: Synthesizer playing")
+            
+            # Play gentle beep
+            _log("BootBeep: Playing boot sound...")
+            synth.press(81)  # A5 note
+            time.sleep(0.15)  # Duration
+            
+            _log("BootBeep: Note released...")
+            synth.release(81)
+            time.sleep(0.05)  # Let release finish
+            
+            _log("BootBeep: Audio playback completed")
+            
+            # Cleanup
+            _log("BootBeep: Starting cleanup...")
+            synth.deinit()
+            _log("BootBeep: Synthesizer deinitialized")
+            self.audio_out.deinit()
+            _log("BootBeep: I2S deinitialized")
+            self.audio_out = None
+            _log("BootBeep: Cleanup complete")
+            
+        except Exception as e:
+            _log(f"[ERROR] BootBeep failed: {str(e)}")
+            if self.audio_out:
+                _log("BootBeep: Emergency cleanup of I2S...")
+                try:
+                    self.audio_out.deinit()
+                    _log("BootBeep: Emergency cleanup successful")
+                except:
+                    _log("[ERROR] BootBeep: Emergency cleanup failed")
+                self.audio_out = None
+            raise e
 
 def _format_log_message(message):
     """
@@ -109,6 +169,14 @@ class AudioPipeline:
     """Comprehensive audio processing and routing system"""
     def __init__(self, sample_rate=SAMPLE_RATE, channels=2):
         _log("Initializing AudioPipeline")
+        
+        # Play boot beep before anything else
+        boot_beep = BootBeep(I2S_BIT_CLOCK, I2S_WORD_SELECT, I2S_DATA)
+        try:
+            boot_beep.play()
+        except Exception as e:
+            _log(f"[ERROR] Boot beep failed: {str(e)}")
+        
         self.sample_rate = sample_rate
         self.channels = channels
         

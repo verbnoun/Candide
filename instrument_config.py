@@ -88,9 +88,19 @@ class Piano(InstrumentConfig):
                     }
                 },
                 'waveform': {
-                    'type': 'triangle',
-                    'size': 512,
-                    'amplitude': 32767
+                    'value': {
+                        'type': 'triangle',
+                        'size': 512,
+                        'amplitude': 32767
+                    },
+                    'sources': {
+                        'controls': [
+                            {
+                                'type': 'per_key',
+                                'event': 'note_on'
+                            }
+                        ]
+                    }
                 }
             },
 

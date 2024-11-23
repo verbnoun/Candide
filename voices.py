@@ -25,13 +25,13 @@ def _log(message, module="VOICES"):
     def format_parameter_stream(stream, stage=""):
         """Format parameter stream with nice indentation."""
         lines = []
+        lines.append(f"[{module}]")
         lines.append("Parameter stream:")
-        if stage:
-            lines.append(f"  stage: {stage}")
+        lines.append(f"  stage: {stage}")
         lines.append(f"  value: {stream['value']}")
         lines.append("  target:")
         target = stream['target']
-        lines.append(f"    type: {target['type']}")
+        lines.append(f"    type: {target.get('type', 'control')}")
         lines.append(f"    path: {target['path']}")
         lines.append(f"    module: {target['module']}")
         lines.append(f"  channel: {stream['channel']}")
@@ -39,7 +39,7 @@ def _log(message, module="VOICES"):
     
     if isinstance(message, dict):
         formatted = format_parameter_stream(message, "received")
-        print(f"\n{LIGHT_YELLOW}[{module}]\n{formatted}{RESET}\n", file=sys.stderr)
+        print(f"{LIGHT_YELLOW}{formatted}{RESET}\n", file=sys.stderr)
     else:
         if "[ERROR]" in str(message) or "[FAIL]" in str(message):
             color = RED
@@ -64,11 +64,8 @@ class Voice:
         self.creation_time = time.monotonic()
         self.synthesis = synthesis
         
-        # Create synthio note with required frequency
-        self.synth_note = synthio.Note(
-            frequency=frequency,
-            amplitude=1.0  # Default amplitude, will be updated by velocity
-        )
+        # Create basic synthio note with frequency
+        self.synth_note = synthio.Note(frequency=frequency)
         
     def update_parameter(self, target, value):
         """Apply parameter update from router"""
@@ -77,70 +74,84 @@ class Voice:
             path = target['path']
             update_type = target.get('type', 'control')
             
-            _log(f"[PARAM] Updating {module}.{path} = {value} (type: {update_type})")
+            # Log in new format
+            _log({
+                'value': value,
+                'target': {
+                    'type': update_type,
+                    'path': path,
+                    'module': module
+                },
+                'channel': self.channel
+            })
+            
+            # Extract parameter name from path
+            param_parts = path.split('.')
+            param_name = param_parts[-1]
             
             # Oscillator handling
             if module == 'oscillator':
-                if path == 'frequency':
+                if param_name == 'frequency':
                     # Convert MIDI note to frequency if it's a raw note number
                     if isinstance(value, int):
                         frequency = midi_to_frequency(value)
-                        self.synth_note.frequency = frequency
-                        _log(f"[PARAM] Oscillator frequency = {frequency} (from note {value})")
+                        self.synthesis.update_note(self.synth_note, 'frequency', frequency)
                     else:
-                        self.synth_note.frequency = float(value)
-                        _log(f"[PARAM] Oscillator frequency = {value}")
-                elif path == 'bend':
-                    self.synth_note.bend = float(value)
-                    _log(f"[PARAM] Oscillator bend = {value}")
+                        self.synthesis.update_note(self.synth_note, 'frequency', float(value))
+                elif param_name == 'bend':
+                    self.synthesis.update_note(self.synth_note, 'bend', float(value))
+                elif param_name == 'waveform':
+                    # Create waveform using synthesis.waveform_manager
+                    waveform = self.synthesis.waveform_manager.get_waveform(
+                        value['type'], value)
+                    if waveform:
+                        self.synthesis.update_note(self.synth_note, 'waveform', waveform)
                 elif update_type == 'trigger':
-                    _log(f"[TRIGGER] Oscillator {path}")
+                    # Note on trigger - handled by synthio.Synthesizer.press()
+                    pass
             
             # Amplifier handling
             elif module == 'amplifier':
-                parts = path.split('.')
-                if parts[0] == 'gain':
-                    self.synth_note.amplitude = float(value)
-                    _log(f"[PARAM] Amplifier gain = {value}")
-                elif parts[0] == 'envelope':
+                if param_name == 'gain':
+                    self.synthesis.update_note(self.synth_note, 'amplitude', float(value))
+                elif param_parts[0] == 'envelope':
                     if update_type == 'trigger' and 'release' in path:
                         # Handle release trigger
                         self.release()
-                        _log(f"[TRIGGER] Amplifier release triggered")
-                    elif len(parts) >= 3:
-                        stage = parts[1]
-                        param = parts[2]
-                        param_name = f"{stage}_{'level' if param == 'value' else param}"
+                    elif len(param_parts) >= 3:
+                        stage = param_parts[1]
+                        param = param_parts[2]
                         
-                        if hasattr(self.synth_note.envelope, param_name):
-                            setattr(self.synth_note.envelope, param_name, float(value))
-                            _log(f"[PARAM] Envelope {param_name} = {value}")
-                        else:
-                            _log(f"[FAIL] Cannot set envelope parameter: {param_name}")
+                        # Create envelope if needed
+                        if not hasattr(self.synth_note, 'envelope'):
+                            self.synth_note.envelope = synthio.Envelope()
+                        
+                        # Map envelope parameters to synthio names
+                        if stage == 'attack':
+                            if param == 'time':
+                                self.synthesis.update_note(self.synth_note, 'envelope_attack_time', float(value))
+                            elif param == 'value':
+                                self.synthesis.update_note(self.synth_note, 'envelope_attack_level', float(value))
+                        elif stage == 'decay':
+                            if param == 'time':
+                                self.synthesis.update_note(self.synth_note, 'envelope_decay_time', float(value))
+                        elif stage == 'sustain':
+                            if param == 'value':
+                                self.synthesis.update_note(self.synth_note, 'envelope_sustain_level', float(value))
+                        elif stage == 'release':
+                            if param == 'time':
+                                self.synthesis.update_note(self.synth_note, 'envelope_release_time', float(value))
                 elif update_type == 'trigger':
-                    _log(f"[TRIGGER] Amplifier {path}")
+                    pass
             
             # Filter handling
             elif module == 'filter':
-                param = path.split('.')[-1]
-                if param == 'frequency':
-                    current_filter = self.synth_note.filter
-                    Q = getattr(current_filter, 'Q', 0.707)
-                    self.synth_note.filter = self.synthesis.synthio_synth.low_pass_filter(
-                        frequency=float(value),
-                        Q=Q
-                    )
-                    _log(f"[PARAM] Filter frequency = {value}")
-                elif param == 'resonance':
-                    current_filter = self.synth_note.filter
-                    frequency = getattr(current_filter, 'frequency', 20000)
-                    self.synth_note.filter = self.synthesis.synthio_synth.low_pass_filter(
-                        frequency=frequency,
-                        Q=float(value)
-                    )
-                    _log(f"[PARAM] Filter Q = {value}")
+                if param_name == 'frequency':
+                    self.synthesis.update_note(self.synth_note, 'filter_frequency', float(value))
+                elif param_name == 'resonance':
+                    self.synthesis.update_note(self.synth_note, 'filter_resonance', float(value))
                 elif update_type == 'trigger':
-                    _log(f"[TRIGGER] Filter {path}")
+                    pass
                 
         except Exception as e:
             _log(f"[FAIL] Parameter update failed: {str(e)}")
@@ -162,11 +173,13 @@ class VoiceManager:
         self.last_note_number = {}
         self.pending_params = {}  # Store parameters until we can create voice
         self.pending_triggers = set()  # Track channels with pending triggers
+        self.routed_params = {}  # Store latest values for routed parameters
         
         try:
+            # Initialize basic synthesizer
             self.synthio_synth = synthio.Synthesizer(
                 sample_rate=sample_rate,
-                channel_count=2
+                channel_count=2  # Stereo output
             )
             
             if output_manager and hasattr(output_manager, 'attach_synthesizer'):
@@ -192,15 +205,17 @@ class VoiceManager:
                 note_number = params['note_number']
                 frequency = params['frequency']
                 
+                # Create voice with basic frequency
                 voice = Voice(channel, note_number, self.synthesis, frequency)
                 self.active_voices[channel] = voice
+                
+                # Apply any routed parameters that have values
+                for path, value in self.routed_params.items():
+                    voice.update_parameter({'path': path, 'module': path.split('.')[0]}, value)
+                
+                # Press the note after all parameters are set
                 self.synthio_synth.press(voice.synth_note)
                 _log(f"[CREATE] Voice created on channel {channel}, note {note_number}")
-                
-                # Apply any pending parameters
-                for path, val in params.items():
-                    if path not in ['frequency', 'note_number']:
-                        voice.update_parameter({'path': path, 'module': path.split('.')[0]}, val)
                 
                 # Clear pending state
                 self.pending_triggers.discard(channel)
@@ -222,7 +237,7 @@ class VoiceManager:
         target = stream.get('target')
         value = stream.get('value')
         
-        # Log the stream in the desired format
+        # Log the stream in the new format
         _log({
             'value': value,
             'target': target,
@@ -237,6 +252,11 @@ class VoiceManager:
             _log("[FAIL] No channel in parameter stream")
             return
 
+        # Store routed parameter value
+        path = target['path']
+        if target.get('type') == 'control':
+            self.routed_params[path] = value
+            
         # Initialize pending parameters for this channel if needed
         if channel not in self.pending_params:
             self.pending_params[channel] = {}
@@ -255,7 +275,6 @@ class VoiceManager:
                 self.pending_params[channel]['frequency'] = frequency
                 self.pending_params[channel]['note_number'] = note_number
                 self.last_note_number[channel] = note_number
-                _log(f"[NOTE] Stored frequency {frequency} for note {note_number}")
                 
         # Store parameter for later if no voice exists yet
         if channel not in self.active_voices:

@@ -238,7 +238,8 @@ class Router:
                             'midi_range': control.get('midi_range'),
                             'output_range': value.get('output_range'),
                             'curve': value.get('curve'),
-                            'transform': control.get('transform')
+                            'transform': control.get('transform'),
+                            'value': value.get('value')  # Store static value for non-numeric params
                         }
                         
                         # Special handling for CC routes
@@ -374,6 +375,16 @@ class Router:
                 results.append(stream)
             else:
                 _log(f"[REJECTED] No route found for {msg_type} {control_type}")
+                
+        # For note_on, also send any static values like waveform
+        if msg_type == 'note_on':
+            for key, route in self.route_cache.routes['controls'].items():
+                if (route['source_type'] == 'per_key' and 
+                    route['source_event'] == 'note_on' and
+                    route.get('value')):
+                    _log(f"[ROUTE] Processing static value for {route['path']}")
+                    stream = self._create_parameter_stream(channel, route, route['value'])
+                    results.append(stream)
             
         return results if results else None
 
@@ -395,8 +406,7 @@ class Router:
     def _transform_value(self, value, route):
         """Transform value based on route configuration"""
         if not isinstance(value, (int, float)):
-            _log(f"[ERROR] Invalid value type: {type(value)}")
-            return 0
+            return value  # Pass through non-numeric values like waveform config
             
         if not route.get('midi_range') or not route.get('output_range'):
             return value
