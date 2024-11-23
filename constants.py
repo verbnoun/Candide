@@ -29,7 +29,7 @@ ADC_MIN = 1
 
 # Audio Configuration
 SAMPLE_RATE = 44100
-AUDIO_BUFFER_SIZE = 4096  # Reduced for lower latency
+AUDIO_BUFFER_SIZE = 8192  # Reduced for lower latency
 MAX_BUFFER_FULLNESS = 0.8  # Target maximum buffer fullness
 MIN_BUFFER_FULLNESS = 0.2  # Target minimum buffer fullness
 

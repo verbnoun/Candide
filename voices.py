@@ -64,8 +64,28 @@ class Voice:
         self.creation_time = time.monotonic()
         self.synthesis = synthesis
         
-        # Create basic synthio note with frequency
-        self.synth_note = synthio.Note(frequency=frequency)
+        # Store envelope parameters with defaults
+        self.envelope_params = {
+            'attack_time': 0.001,
+            'attack_level': 1.0,
+            'decay_time': 0.001,
+            'sustain_level': 0.0,
+            'release_time': 0.001
+        }
+        
+        # Create basic synthio note with frequency and envelope
+        self.synth_note = synthio.Note(
+            frequency=frequency,
+            envelope=synthio.Envelope(**self.envelope_params)
+        )
+        
+    def update_envelope(self):
+        """Create new envelope with current parameters and set on note"""
+        try:
+            self.synth_note.envelope = synthio.Envelope(**self.envelope_params)
+            _log(f"Updated envelope: {self.envelope_params}")
+        except Exception as e:
+            _log(f"[FAIL] Failed to update envelope: {str(e)}")
         
     def update_parameter(self, target, value):
         """Apply parameter update from router"""
@@ -95,17 +115,17 @@ class Voice:
                     # Convert MIDI note to frequency if it's a raw note number
                     if isinstance(value, int):
                         frequency = midi_to_frequency(value)
-                        self.synthesis.update_note(self.synth_note, 'frequency', frequency)
+                        self.synth_note.frequency = float(frequency)
                     else:
-                        self.synthesis.update_note(self.synth_note, 'frequency', float(value))
+                        self.synth_note.frequency = float(value)
                 elif param_name == 'bend':
-                    self.synthesis.update_note(self.synth_note, 'bend', float(value))
+                    self.synth_note.bend = float(value)
                 elif param_name == 'waveform':
                     # Create waveform using synthesis.waveform_manager
                     waveform = self.synthesis.waveform_manager.get_waveform(
                         value['type'], value)
                     if waveform:
-                        self.synthesis.update_note(self.synth_note, 'waveform', waveform)
+                        self.synth_note.waveform = waveform
                 elif update_type == 'trigger':
                     # Note on trigger - handled by synthio.Synthesizer.press()
                     pass
@@ -113,34 +133,34 @@ class Voice:
             # Amplifier handling
             elif module == 'amplifier':
                 if param_name == 'gain':
-                    self.synthesis.update_note(self.synth_note, 'amplitude', float(value))
+                    self.synth_note.amplitude = float(value)
                 elif param_parts[0] == 'envelope':
-                    if update_type == 'trigger' and 'release' in path:
-                        # Handle release trigger
-                        self.release()
+                    if update_type == 'trigger':
+                        if 'release' in path:
+                            # Handle release trigger
+                            self.release()
                     elif len(param_parts) >= 3:
                         stage = param_parts[1]
                         param = param_parts[2]
                         
-                        # Create envelope if needed
-                        if not hasattr(self.synth_note, 'envelope'):
-                            self.synth_note.envelope = synthio.Envelope()
-                        
-                        # Map envelope parameters to synthio names
+                        # Store envelope parameter
                         if stage == 'attack':
                             if param == 'time':
-                                self.synthesis.update_note(self.synth_note, 'envelope_attack_time', float(value))
+                                self.envelope_params['attack_time'] = max(0.001, float(value))
                             elif param == 'value':
-                                self.synthesis.update_note(self.synth_note, 'envelope_attack_level', float(value))
+                                self.envelope_params['attack_level'] = float(value)
                         elif stage == 'decay':
                             if param == 'time':
-                                self.synthesis.update_note(self.synth_note, 'envelope_decay_time', float(value))
+                                self.envelope_params['decay_time'] = max(0.001, float(value))
                         elif stage == 'sustain':
                             if param == 'value':
-                                self.synthesis.update_note(self.synth_note, 'envelope_sustain_level', float(value))
+                                self.envelope_params['sustain_level'] = float(value)
                         elif stage == 'release':
                             if param == 'time':
-                                self.synthesis.update_note(self.synth_note, 'envelope_release_time', float(value))
+                                self.envelope_params['release_time'] = max(0.001, float(value))
+                        
+                        # Create new envelope with updated parameters
+                        self.update_envelope()
                 elif update_type == 'trigger':
                     pass
             
@@ -169,11 +189,11 @@ class VoiceManager:
     """Manages voice collection with channel and note tracking"""
     def __init__(self, output_manager, sample_rate=SAMPLE_RATE):
         _log("Initializing voice manager")
-        self.active_voices = {}
-        self.last_note_number = {}
+        self.active_voices = {}  # Key is (channel, note_number)
         self.pending_params = {}  # Store parameters until we can create voice
         self.pending_triggers = set()  # Track channels with pending triggers
-        self.routed_params = {}  # Store latest values for routed parameters
+        self.global_params = {}  # Store global CC values that apply to all voices
+        self.per_key_params = {}  # Store per-key CC values
         
         try:
             # Initialize basic synthesizer
@@ -194,7 +214,7 @@ class VoiceManager:
             self.synthio_synth = None
             self.synthesis = None
 
-    def try_create_voice(self, channel):
+    def try_create_voice(self, channel, note_number):
         """Attempt to create a voice if we have all required parameters"""
         if (channel in self.pending_params and
             'frequency' in self.pending_params[channel] and
@@ -202,16 +222,21 @@ class VoiceManager:
             
             try:
                 params = self.pending_params[channel]
-                note_number = params['note_number']
                 frequency = params['frequency']
                 
                 # Create voice with basic frequency
                 voice = Voice(channel, note_number, self.synthesis, frequency)
-                self.active_voices[channel] = voice
+                self.active_voices[(channel, note_number)] = voice
                 
-                # Apply any routed parameters that have values
-                for path, value in self.routed_params.items():
+                # Apply any stored global parameters
+                for path, value in self.global_params.items():
                     voice.update_parameter({'path': path, 'module': path.split('.')[0]}, value)
+                
+                # Apply any stored per-key parameters for this note
+                key = (channel, note_number)
+                if key in self.per_key_params:
+                    for path, value in self.per_key_params[key].items():
+                        voice.update_parameter({'path': path, 'module': path.split('.')[0]}, value)
                 
                 # Press the note after all parameters are set
                 self.synthio_synth.press(voice.synth_note)
@@ -252,11 +277,16 @@ class VoiceManager:
             _log("[FAIL] No channel in parameter stream")
             return
 
-        # Store routed parameter value
         path = target['path']
-        if target.get('type') == 'control':
-            self.routed_params[path] = value
-            
+        source_type = target.get('source_type')
+        
+        # Store global CC values that apply to all voices
+        if source_type == 'cc':
+            self.global_params[path] = value
+            # Apply to all active voices
+            for voice in self.active_voices.values():
+                voice.update_parameter(target, value)
+        
         # Initialize pending parameters for this channel if needed
         if channel not in self.pending_params:
             self.pending_params[channel] = {}
@@ -274,7 +304,10 @@ class VoiceManager:
                 frequency = midi_to_frequency(note_number)
                 self.pending_params[channel]['frequency'] = frequency
                 self.pending_params[channel]['note_number'] = note_number
-                self.last_note_number[channel] = note_number
+                
+                # Try to create voice if we have necessary parameters
+                self.try_create_voice(channel, note_number)
+                return
                 
         # Store parameter for later if no voice exists yet
         if channel not in self.active_voices:
@@ -289,21 +322,46 @@ class VoiceManager:
                 'channel': channel,
                 'stage': 'stored for future voice'
             })
-            # Try to create voice if we have necessary parameters
-            self.try_create_voice(channel)
             return
                 
-        # Update existing voice
-        voice = self.active_voices[channel]
-        try:
-            voice.update_parameter(target, value)
-        except Exception as e:
-            _log(f"[FAIL] Voice parameter update failed: {str(e)}")
-            _log(f"[FAIL] Stream details: {stream}")
+        # Handle release trigger
+        if target.get('type') == 'trigger' and 'release' in target.get('path', ''):
+            # Get note number from value for per_key release
+            if isinstance(value, dict) and 'note' in value:
+                note_number = value['note']
+                key = (channel, note_number)
+                if key in self.active_voices:
+                    voice = self.active_voices[key]
+                    voice.update_parameter(target, 0)  # Send release trigger
+                    self.release_voice(channel, note_number)  # Release the specific note
+                else:
+                    _log(f"[FAIL] No voice found for release: ch {channel}, note {note_number}")
+            else:
+                _log(f"[FAIL] No note number in release trigger: {value}")
+        else:
+            # For other parameters, update voices based on source_type
+            if source_type == 'per_key':
+                # For per_key parameters, only update matching voice
+                if 'note_number' in self.pending_params.get(channel, {}):
+                    note_number = self.pending_params[channel]['note_number']
+                    key = (channel, note_number)
+                    if key in self.active_voices:
+                        voice = self.active_voices[key]
+                        voice.update_parameter(target, value)
+            else:
+                # For other parameters, update all voices on this channel
+                for key, voice in list(self.active_voices.items()):
+                    if key[0] == channel:  # Match channel
+                        try:
+                            voice.update_parameter(target, value)
+                        except Exception as e:
+                            _log(f"[FAIL] Voice parameter update failed: {str(e)}")
+                            _log(f"[FAIL] Stream details: {stream}")
                 
-    def release_voice(self, channel):
+    def release_voice(self, channel, note_number):
         """Release voice"""
-        voice = self.active_voices.get(channel)
+        key = (channel, note_number)
+        voice = self.active_voices.get(key)
         if voice:
             voice.release()
             if voice.synth_note:
@@ -314,12 +372,20 @@ class VoiceManager:
     def cleanup_voices(self):
         """Remove completed voices"""
         current_time = time.monotonic()
-        for channel in list(self.active_voices.keys()):
-            voice = self.active_voices[channel]
-            if not voice.active and (current_time - voice.release_time) > 0.5:
-                _log(f"[CLEANUP] Ch {voice.channel}, Note {voice.note_number}")
-                del self.active_voices[channel]
-                # Also clean up pending state
-                if channel in self.pending_params:
-                    del self.pending_params[channel]
-                self.pending_triggers.discard(channel)
+        for key in list(self.active_voices.keys()):
+            voice = self.active_voices[key]
+            if not voice.active:
+                # Get release time from envelope
+                release_time = voice.envelope_params['release_time']
+                # Add a small buffer to ensure release completes
+                if (current_time - voice.release_time) > release_time:
+                    _log(f"[CLEANUP] Ch {voice.channel}, Note {voice.note_number}")
+                    # Clean up per-key params for this note
+                    if key in self.per_key_params:
+                        del self.per_key_params[key]
+                    # Clean up voice
+                    del self.active_voices[key]
+                    # Clean up pending state
+                    if voice.channel in self.pending_params:
+                        del self.pending_params[voice.channel]
+                    self.pending_triggers.discard(voice.channel)

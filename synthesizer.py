@@ -151,21 +151,6 @@ class Synthesis:
                 except Exception as e:
                     _log(f"[ERROR] Failed to set waveform: {str(e)}")
                     return False
-                
-            # Handle envelope parameters
-            elif param_id.startswith('envelope_'):
-                if not hasattr(note, 'envelope'):
-                    _log("Creating new envelope")
-                    note.envelope = synthio.Envelope()
-                
-                env_param = param_id.split('envelope_')[1]
-                if hasattr(note.envelope, env_param):
-                    setattr(note.envelope, env_param, float(value))
-                    _log(f"Set envelope {env_param}: {value}")
-                    return True
-                else:
-                    _log(f"[ERROR] Invalid envelope parameter: {env_param}")
-                    return False
                     
             # Handle filter parameters
             elif param_id.startswith('filter_'):

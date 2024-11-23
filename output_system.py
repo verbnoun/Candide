@@ -32,7 +32,7 @@ class BootBeep:
         self.audio_out = None
         
     def play(self):
-        """Play a gentle boot beep"""
+        """Play a boot beep"""
         try:
             # Setup I2S
             _log("BootBeep: Setting up I2S output...")
@@ -45,14 +45,14 @@ class BootBeep:
             
             # Create synth
             _log("BootBeep: Creating synthesizer...")
-            synth = synthio.Synthesizer(sample_rate=22050)
+            synth = synthio.Synthesizer(sample_rate=SAMPLE_RATE)
             self.audio_out.play(synth)
             _log("BootBeep: Synthesizer playing")
             
             # Play gentle beep
             _log("BootBeep: Playing boot sound...")
-            synth.press(81)  # A5 note
-            time.sleep(0.15)  # Duration
+            synth.press(64)  # A5 note
+            time.sleep(0.10)  # Duration
             
             _log("BootBeep: Note released...")
             synth.release(81)

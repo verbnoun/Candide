@@ -339,8 +339,13 @@ class Router:
         trigger_route = self.route_cache.routes['triggers'].get(f'per_key.{msg_type}')
         if trigger_route:
             _log(f"[ROUTE] Processing {msg_type} trigger")
+            # For note_off triggers, include the note number since it's per_key
+            if msg_type == 'note_off':
+                value = {'note': data.get('note')}  # Include note number
+            else:
+                value = 1 if msg_type == 'note_on' else 0
             stream = self._create_parameter_stream(
-                channel, trigger_route, 1 if msg_type == 'note_on' else 0
+                channel, trigger_route, value
             )
             results.append(stream)
         else:
@@ -446,7 +451,8 @@ class Router:
             'target': {
                 'module': module,
                 'path': route['path'],
-                'type': route['type']
+                'type': route['type'],
+                'source_type': route['source_type']  # Include source_type for per_key handling
             },
             'value': value
         }
@@ -457,7 +463,8 @@ class Router:
             'target': {
                 'module': module,
                 'path': route['path'],
-                'type': route['type']
+                'type': route['type'],
+                'source_type': route['source_type']
             },
             'channel': channel,
             'stage': 'created'
