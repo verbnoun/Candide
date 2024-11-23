@@ -11,10 +11,11 @@ import board
 DEBUG = True
 HARDWARE_DEBUG = False
 MIDI_DEBUG = True
-ROUTER_DEBUG = True
-VOICES_DEBUG = True
+ROUTER_DEBUG = False
+VOICES_DEBUG = False
+SYNTH_DEBUG = False
 OUTPUT_DEBUG = False
-SYNTH_DEBUG = True
+
 
 
 # ADC (Analog-to-Digital Conversion) Constants

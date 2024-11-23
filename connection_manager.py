@@ -35,12 +35,12 @@ class CCConfigFormatter:
     """Formats CC configuration messages for base station communication"""
     
     @staticmethod
-    def _find_cc_names(config):
+    def _find_cc_controls(config):
         """
-        Recursively search through config to find CC control names.
-        Returns a dictionary mapping CC numbers to their names.
+        Recursively search through config to find CC controls in order of appearance.
+        Returns a list of tuples (cc_number, name) in order of appearance.
         """
-        cc_names = {}
+        cc_controls = []
         
         def scan_for_cc_controls(obj):
             if isinstance(obj, dict):
@@ -49,21 +49,24 @@ class CCConfigFormatter:
                     'number' in obj and 
                     'name' in obj):
                     cc_num = str(obj['number'])
-                    cc_names[cc_num] = obj['name']
+                    cc_name = obj['name']
+                    # Only add if not already present
+                    if not any(cc_num == num for num, _ in cc_controls):
+                        cc_controls.append((cc_num, cc_name))
                 
-                # Recursively scan all dictionary values
+                # Recursively scan all dictionary values in order
                 for value in obj.values():
                     if isinstance(value, (dict, list)):
                         scan_for_cc_controls(value)
             elif isinstance(obj, list):
-                # Recursively scan all list items
+                # Recursively scan all list items in order
                 for item in obj:
                     if isinstance(item, (dict, list)):
                         scan_for_cc_controls(item)
         
         # Start recursive scan from config root
         scan_for_cc_controls(config)
-        return cc_names
+        return cc_controls
     
     @staticmethod
     def format_config(config):
@@ -93,14 +96,16 @@ class CCConfigFormatter:
                 else:
                     cc_numbers.add(str(cc_item))
             
-            # Find all CC names in config
-            cc_names = CCConfigFormatter._find_cc_names(config)
+            # Find all CC controls in order of appearance
+            cc_controls = CCConfigFormatter._find_cc_controls(config)
             
-            # Build CC assignments
+            # Filter controls to only include whitelisted CCs and reverse the order
+            cc_controls = [(num, name) for num, name in cc_controls if num in cc_numbers]
+            cc_controls.reverse()  # Reverse to match desired pot ordering
+            
+            # Build CC assignments in order
             assignments = []
-            for pot_num, cc_num in enumerate(sorted(cc_numbers)):
-                # Use found name or default to CCxx
-                name = cc_names.get(cc_num, f"CC{cc_num}")
+            for pot_num, (cc_num, name) in enumerate(cc_controls):
                 assignments.append(f"{pot_num}={cc_num}:{name}")
             
             # Build final config string
