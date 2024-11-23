@@ -14,7 +14,7 @@ class InstrumentConfig:
     def _generate_midi_whitelist(self):
         """Generate a whitelist of allowed MIDI message types"""
         whitelist = {
-            'cc': set(),
+            'cc': set(),  # Will contain tuples of (cc_num, channel) for global CCs
             'note_on': set(),
             'note_off': set()
         }
@@ -25,8 +25,13 @@ class InstrumentConfig:
                     if obj['type'] == 'cc':
                         cc_num = obj.get('number')
                         if cc_num is not None:
-                            whitelist['cc'].add(cc_num)
+                            # Add (cc_num, 0) for global CCs
+                            whitelist['cc'].add((cc_num, 0))
                     elif obj['type'] == 'per_key':
+                        # Add per-key CC numbers if any
+                        if obj.get('cc_number') is not None:
+                            whitelist['cc'].add(obj['cc_number'])  # No channel restriction
+                        # Handle note events
                         event = obj.get('event')
                         if event == 'note_on':
                             whitelist['note_on'].add('note_number')

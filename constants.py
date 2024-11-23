@@ -8,11 +8,11 @@ for easy maintenance and reference.
 import board
 
 # Debug Flags
-DEBUG = False
+DEBUG = True
 HARDWARE_DEBUG = False
-MIDI_DEBUG = False
-ROUTER_DEBUG = False
-VOICES_DEBUG = False
+MIDI_DEBUG = True
+ROUTER_DEBUG = True
+VOICES_DEBUG = True
 OUTPUT_DEBUG = False
 SYNTH_DEBUG = True
 

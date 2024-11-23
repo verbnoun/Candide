@@ -39,11 +39,11 @@ def _log(message, effect=None):
 
     # Basic ANSI colors that work well on most terminals
     COLORS = [
-        "\033[36m",  # Cyan
-        "\033[34m",  # Blue
-        "\033[35m",  # Magenta
-        "\033[32m",  # Green
-        "\033[33m",  # Yellow
+        "\033[96m",  # Light Cyan
+        "\033[94m",  # Light Blue
+        "\033[95m",  # Light Magenta
+        "\033[92m",  # Light Green
+        "\033[93m",  # Light Yellow
     ]
     RESET = "\033[0m"
     RED = "\033[31m"

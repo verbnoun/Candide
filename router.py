@@ -183,12 +183,23 @@ class RouteCache:
         self.midi_whitelist = whitelist
         _log(f"Set MIDI whitelist: {whitelist}")
 
-    def is_whitelisted(self, msg_type, attribute=None):
+    def is_whitelisted(self, msg_type, attribute=None, channel=None):
         """Check if message type and attribute are whitelisted"""
         if msg_type not in self.midi_whitelist:
             return False
+            
+        if msg_type == 'cc' and attribute is not None:
+            # Check if CC is whitelisted for this channel
+            if (attribute, channel) in self.midi_whitelist['cc']:
+                return True
+            # Check if CC is whitelisted for any channel
+            if attribute in {cc for cc in self.midi_whitelist['cc'] if not isinstance(cc, tuple)}:
+                return True
+            return False
+            
         if attribute is None:
             return True
+            
         return attribute in self.midi_whitelist[msg_type]
 
 class Router:
@@ -208,7 +219,8 @@ class Router:
         self.route_cache = RouteCache()
         
         # Set whitelist from config
-        self.route_cache.set_whitelist(config.get('midi_whitelist', {}))
+        self.midi_whitelist = config.get('midi_whitelist', {})
+        self.route_cache.set_whitelist(self.midi_whitelist)
         
         # Recursively compile routes
         self._compile_routes_recursive(config)
@@ -318,8 +330,10 @@ class Router:
     def _process_cc_message(self, channel, data):
         """Process CC message"""
         cc_num = data.get('number')
-        if not self.route_cache.is_whitelisted('cc', cc_num):
-            _log(f"[REJECTED] CC {cc_num} not in whitelist")
+        
+        # Fast whitelist check first
+        if not self.route_cache.is_whitelisted('cc', cc_num, channel):
+            _log(f"[REJECTED] CC {cc_num} not in whitelist for channel {channel}")
             return None
             
         _log(f"[ROUTE] Processing CC {cc_num}")
