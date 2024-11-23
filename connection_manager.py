@@ -31,6 +31,85 @@ class ConnectionState:
     CONNECTED = "connected"
     RETRY_DELAY = "retry_delay"
 
+class CCConfigFormatter:
+    """Formats CC configuration messages for base station communication"""
+    
+    @staticmethod
+    def _find_cc_names(config):
+        """
+        Recursively search through config to find CC control names.
+        Returns a dictionary mapping CC numbers to their names.
+        """
+        cc_names = {}
+        
+        def scan_for_cc_controls(obj):
+            if isinstance(obj, dict):
+                # Check if this is a control source with CC type
+                if (obj.get('type') == 'cc' and 
+                    'number' in obj and 
+                    'name' in obj):
+                    cc_num = str(obj['number'])
+                    cc_names[cc_num] = obj['name']
+                
+                # Recursively scan all dictionary values
+                for value in obj.values():
+                    if isinstance(value, (dict, list)):
+                        scan_for_cc_controls(value)
+            elif isinstance(obj, list):
+                # Recursively scan all list items
+                for item in obj:
+                    if isinstance(item, (dict, list)):
+                        scan_for_cc_controls(item)
+        
+        # Start recursive scan from config root
+        scan_for_cc_controls(config)
+        return cc_names
+    
+    @staticmethod
+    def format_config(config):
+        """
+        Format CC configuration according to Bart's expected structure:
+        - Starts with "cc:" prefix
+        - Comma-separated assignments in format pot=cc:name
+        - pot is potentiometer number
+        - cc is CC number
+        - name is optional (defaults to CCxx)
+        """
+        if not config or not isinstance(config, dict):
+            return "cc:"
+            
+        try:
+            # Extract CC routes from config
+            whitelist = config.get('midi_whitelist', {})
+            if not whitelist or 'cc' not in whitelist:
+                return "cc:"
+                
+            # Get all CC numbers from whitelist
+            cc_numbers = set()
+            for cc_item in whitelist['cc']:
+                if isinstance(cc_item, tuple):
+                    cc_num, _ = cc_item  # (cc_number, channel)
+                    cc_numbers.add(str(cc_num))
+                else:
+                    cc_numbers.add(str(cc_item))
+            
+            # Find all CC names in config
+            cc_names = CCConfigFormatter._find_cc_names(config)
+            
+            # Build CC assignments
+            assignments = []
+            for pot_num, cc_num in enumerate(sorted(cc_numbers)):
+                # Use found name or default to CCxx
+                name = cc_names.get(cc_num, f"CC{cc_num}")
+                assignments.append(f"{pot_num}={cc_num}:{name}")
+            
+            # Build final config string
+            return "cc:" + ",".join(assignments)
+            
+        except Exception as e:
+            _log(f"[ERROR] Failed to format CC config: {str(e)}")
+            return "cc:"
+
 class CandideConnectionManager:
     """Manages connection state and handshake protocol"""
     
@@ -67,10 +146,10 @@ class CandideConnectionManager:
         return False
 
     def _format_cc_config(self):
-        """Placeholder for CC configuration formatting"""
+        """Format CC configuration using CCConfigFormatter"""
         _log("Formatting CC config...")
-        # Intentionally left empty to cause handshake failure
-        return "cc:"
+        config = self.synth_manager.get_current_config()
+        return CCConfigFormatter.format_config(config)
 
     def update_state(self):
         """Update connection state based on current conditions"""
