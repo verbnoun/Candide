@@ -8,20 +8,14 @@ for easy maintenance and reference.
 import board
 
 # Debug Flags
-DEBUG = True
+DEBUG = False
 HARDWARE_DEBUG = False
-MIDI_DEBUG = True
-MOD_DEBUG = False
-MOD_LFO_DEBUG = False
-MOD_ENV_DEBUG = False
-ROUTER_DEBUG = True
-VOICES_DEBUG = True
-OUTPUT_PERF_DEBUG = True
-OUTPUT_AUDIO_DEBUG = True
-SYNTH_WAVE_DEBUG = False
+MIDI_DEBUG = False
+ROUTER_DEBUG = False
+VOICES_DEBUG = False
+OUTPUT_DEBUG = False
 SYNTH_DEBUG = True
-SYNTH_IO_DEBUG = False
-SYNTH_CO_DEBUG = False
+
 
 # ADC (Analog-to-Digital Conversion) Constants
 ADC_MAX = 65535

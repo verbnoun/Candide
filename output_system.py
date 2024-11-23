@@ -126,7 +126,7 @@ def _format_log_message(message):
 
 def _log(message):
     """
-    Conditional logging function that respects OUTPUT_AUDIO_DEBUG flag.
+    Conditional logging function that respects OUTPUT_DEBUG flag.
     Args:
         message (str/dict): Message to log
     """
@@ -135,7 +135,7 @@ def _log(message):
     LIGHT_GREEN = "\033[92m"  # For standard messages
     RESET = "\033[0m" 
     
-    if OUTPUT_AUDIO_DEBUG:
+    if OUTPUT_DEBUG:
         if "[ERROR]" in str(message):
             color = RED
         elif "[REJECTED]" in str(message) or "rejected" in str(message).lower():
@@ -255,7 +255,7 @@ class AudioPipeline:
                 current_vol = self.mixer.voice[0].level
                 self.mixer.voice[0].level = volume
 
-                if OUTPUT_AUDIO_DEBUG and abs(current_vol - volume) >= 0.1:
+                if OUTPUT_DEBUG and abs(current_vol - volume) >= 0.1:
                     _log(f"Volume changed from {current_vol:.2f} to {volume:.2f}")
 
         except Exception as e:
