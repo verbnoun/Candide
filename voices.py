@@ -89,6 +89,27 @@ class Voice:
             
             # Extract parameter name from path
             param_parts = path.split('.')
+            
+            # Handle timer sources
+            if 'sources' in path and 'timer' in path:
+                # Extract stage and source config
+                stage = param_parts[2] if len(param_parts) > 2 else 'default'
+                source_config = None
+                
+                # Check for timer.end source
+                if 'end' in path:
+                    source_config = {
+                        'end': {
+                            'from': '.'.join(param_parts[:-1])  # Full path minus 'end'
+                        }
+                    }
+                
+                # Convert path to timer parameter name
+                param_id = f"timer_{stage}"
+                self.synthesis.update_note(self.synth_note, param_id, value, source_config)
+                return
+            
+            # Handle other parameters
             param_name = param_parts[-1]
             
             # Oscillator handling
@@ -118,8 +139,8 @@ class Voice:
                             # Handle release trigger
                             self.release()
                     elif len(param_parts) >= 3:
-                        stage = param_parts[1]
-                        param = param_parts[2]
+                        stage = param_parts[2]
+                        param = param_parts[3]
                         # Convert path to synthesis parameter name
                         param_id = f"envelope_{stage}_{param}"
                         self.synthesis.update_note(self.synth_note, param_id, value)
@@ -193,17 +214,20 @@ class VoiceManager:
                         # Convert path to parameter name (e.g. amplifier.envelope.attack.time -> attack_time)
                         parts = path.split('.')
                         if len(parts) >= 4:
-                            param_name = f"{parts[2]}_{parts[3]}"  # e.g. attack_time
+                            if 'sources' in path and 'timer' in path:
+                                continue  # Timer sources handled separately
+                            stage = parts[2]
+                            param = parts[3]
+                            param_name = f"{stage}_{param}"  # e.g. attack_time
                             envelope_params[param_name] = value
                 
                 # Create voice with frequency and envelope params
                 voice = Voice(channel, note_number, self.synthesis, frequency, envelope_params)
                 self.active_voices[(channel, note_number)] = voice
                 
-                # Apply any stored global parameters (except envelope which was handled in creation)
+                # Apply any stored global parameters
                 for path, value in self.global_params.items():
-                    if 'envelope' not in path:  # Skip envelope params since already applied
-                        voice.update_parameter({'path': path, 'module': path.split('.')[0]}, value)
+                    voice.update_parameter({'path': path, 'module': path.split('.')[0]}, value)
                 
                 # Apply any stored per-key parameters for this note
                 key = (channel, note_number)
@@ -256,9 +280,15 @@ class VoiceManager:
         # Store global CC values that apply to all voices
         if source_type == 'cc':
             self.global_params[path] = value
-            # Apply to all active voices
-            for voice in self.active_voices.values():
-                voice.update_parameter(target, value)
+            # Apply to all active voices on this channel
+            for key, voice in list(self.active_voices.items()):
+                if key[0] == channel:  # Match channel
+                    try:
+                        voice.update_parameter(target, value)
+                    except Exception as e:
+                        _log(f"[FAIL] Voice parameter update failed: {str(e)}")
+                        _log(f"[FAIL] Stream details: {stream}")
+            return
         
         # Initialize pending parameters for this channel if needed
         if channel not in self.pending_params:
@@ -297,20 +327,19 @@ class VoiceManager:
             })
             return
                 
-        # Handle release trigger
-        if target.get('type') == 'trigger' and 'release' in target.get('path', ''):
-            # Get note number from value for per_key release
+        # Handle triggers
+        if target.get('type') == 'trigger':
+            # Get note number from value for per_key triggers
             if isinstance(value, dict) and 'note' in value:
                 note_number = value['note']
                 key = (channel, note_number)
                 if key in self.active_voices:
                     voice = self.active_voices[key]
-                    voice.update_parameter(target, 0)  # Send release trigger
-                    self.release_voice(channel, note_number)  # Release the specific note
+                    voice.update_parameter(target, value)  # Let voice handle trigger based on path
                 else:
-                    _log(f"[FAIL] No voice found for release: ch {channel}, note {note_number}")
+                    _log(f"[FAIL] No voice found for trigger: ch {channel}, note {note_number}")
             else:
-                _log(f"[FAIL] No note number in release trigger: {value}")
+                _log(f"[FAIL] No note number in trigger: {value}")
         else:
             # For other parameters, update voices based on source_type
             if source_type == 'per_key':
@@ -321,15 +350,6 @@ class VoiceManager:
                     if key in self.active_voices:
                         voice = self.active_voices[key]
                         voice.update_parameter(target, value)
-            else:
-                # For other parameters, update all voices on this channel
-                for key, voice in list(self.active_voices.items()):
-                    if key[0] == channel:  # Match channel
-                        try:
-                            voice.update_parameter(target, value)
-                        except Exception as e:
-                            _log(f"[FAIL] Voice parameter update failed: {str(e)}")
-                            _log(f"[FAIL] Stream details: {stream}")
                 
     def release_voice(self, channel, note_number):
         """Release voice"""
@@ -343,8 +363,26 @@ class VoiceManager:
         return False
         
     def cleanup_voices(self):
-        """Remove completed voices"""
+        """Remove completed voices and check for sustain timeouts"""
         current_time = time.monotonic()
+        
+        # Check for timed releases
+        elapsed_timers = self.synthesis.check_timers()
+        for timer_name in elapsed_timers:
+            # Timer names are in format: id(note)_timer_stage
+            # Extract note id from timer name
+            try:
+                note_id = int(timer_name.split('_')[0])
+                # Find voice with this note
+                for key, voice in list(self.active_voices.items()):
+                    if id(voice.synth_note) == note_id:
+                        _log(f"[AUTO-RELEASE] Ch {voice.channel}, Note {voice.note_number} (timer elapsed)")
+                        self.release_voice(voice.channel, voice.note_number)
+                        break
+            except Exception as e:
+                _log(f"[ERROR] Failed to process timer: {str(e)}")
+        
+        # Handle cleanup of released voices
         for key in list(self.active_voices.keys()):
             voice = self.active_voices[key]
             if not voice.active:

@@ -181,21 +181,6 @@ class Piano(InstrumentConfig):
                                     }
                                 ]
                             }
-                        },
-                        'value': {
-                            'value': 1.0,
-                            'output_range': {'min': 0.0, 'max': 1.0},
-                            'sources': {
-                                'controls': [
-                                    {
-                                        'type': 'cc',
-                                        'number': 75,
-                                        'name': 'Attack Level',
-                                        'amount': 1.0,
-                                        'midi_range': {'min': 0, 'max': 127}
-                                    }
-                                ]
-                            }
                         }
                     },
                     'decay': {
@@ -216,6 +201,25 @@ class Piano(InstrumentConfig):
                         }
                     },
                     'sustain': {
+                        'sources': {
+                            'timer': {
+                                'time': {
+                                    'value': 0.2,
+                                    'output_range': {'min': 0.001, 'max': 3.0},
+                                    'sources': {
+                                        'controls': [
+                                            {
+                                                'type': 'cc',
+                                                'number': 85,
+                                                'name': 'Sustain Time',
+                                                'amount': 1.0,
+                                                'midi_range': {'min': 0, 'max': 127}
+                                            }
+                                        ]
+                                    }
+                                }
+                            }
+                        },
                         'value': {
                             'value': 0.8,
                             'output_range': {'min': 0.0, 'max': 1.0},
@@ -224,7 +228,7 @@ class Piano(InstrumentConfig):
                                     {
                                         'type': 'cc',
                                         'number': 70,
-                                        'name': 'Sustain',
+                                        'name': 'Sustain Level',
                                         'amount': 1.0,
                                         'midi_range': {'min': 0, 'max': 127}
                                     }
@@ -234,10 +238,9 @@ class Piano(InstrumentConfig):
                     },
                     'release': {
                         'sources': {
-                            'triggers': {
-                                'start': {
-                                    'type': 'per_key',
-                                    'event': 'note_off'
+                            'timer': {
+                                'end': {
+                                    'from': 'amplifier.envelope.sustain.sources.timer'
                                 }
                             }
                         },

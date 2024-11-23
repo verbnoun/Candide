@@ -11,9 +11,9 @@ import board
 DEBUG = True
 HARDWARE_DEBUG = False
 MIDI_DEBUG = True
-ROUTER_DEBUG = False
-VOICES_DEBUG = False
-SYNTH_DEBUG = False
+ROUTER_DEBUG = True
+VOICES_DEBUG = True
+SYNTH_DEBUG = True
 OUTPUT_DEBUG = False
 
 

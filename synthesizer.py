@@ -7,6 +7,7 @@ Provides calculations needed by voice modules to control synthesis.
 import sys
 import array
 import math
+import time
 import synthio
 from constants import SYNTH_DEBUG
 
@@ -21,6 +22,144 @@ def _log(message, module="SYNTH"):
     
     color = RED if "[ERROR]" in str(message) else GREEN
     print(f"{color}[{module}] {message}{RESET}", file=sys.stderr)
+
+class Timer:
+    """Modular timer for synthesis timing needs"""
+    def __init__(self, name, initial_time=None):
+        self.name = name
+        self.time_value = initial_time
+        self.start_time = None
+        self.active = False
+        self.end_callbacks = []  # Callbacks to run when timer ends
+        _log(f"Timer created: {name}")
+        
+    def start(self):
+        """Start or restart timer"""
+        if self.time_value is None:
+            _log(f"[ERROR] Timer {self.name} has no duration set")
+            return False
+            
+        self.start_time = time.monotonic()
+        self.active = True
+        _log(f"Timer {self.name} started: duration={self.time_value}")
+        return True
+        
+    def update_time(self, new_time):
+        """Update timer duration
+        
+        If timer is running, adjusts the start time to maintain relative progress
+        """
+        if not self.active:
+            self.time_value = new_time
+            _log(f"Timer {self.name} duration updated: {new_time}")
+            return
+            
+        # Calculate progress through current duration
+        elapsed = time.monotonic() - self.start_time
+        if elapsed < self.time_value:
+            # Still running, adjust start time to maintain relative progress
+            progress = elapsed / self.time_value
+            self.time_value = new_time
+            self.start_time = time.monotonic() - (progress * new_time)
+        else:
+            # Original duration elapsed, start fresh
+            self.time_value = new_time
+            self.start()
+        _log(f"Timer {self.name} duration updated: {new_time}")
+        
+    def check(self):
+        """Check if timer has elapsed
+        
+        Returns:
+            bool: True if timer is active and has elapsed, False otherwise
+        """
+        if not self.active:
+            return False
+            
+        if time.monotonic() - self.start_time >= self.time_value:
+            self.active = False
+            # Run end callbacks
+            for callback in self.end_callbacks:
+                callback(self.name)
+            _log(f"Timer {self.name} elapsed")
+            return True
+            
+        return False
+        
+    def stop(self):
+        """Stop timer"""
+        self.active = False
+        self.start_time = None
+        _log(f"Timer {self.name} stopped")
+        
+    def is_active(self):
+        """Check if timer is currently running"""
+        return self.active
+        
+    def add_end_callback(self, callback):
+        """Add callback to run when timer ends
+        
+        Args:
+            callback: Function to call with timer name when timer ends
+        """
+        self.end_callbacks.append(callback)
+
+class TimerManager:
+    """Manages collection of timers for synthesis"""
+    def __init__(self):
+        self.timers = {}
+        _log("Timer manager initialized")
+        
+    def create_timer(self, name, initial_time=None):
+        """Create a new timer
+        
+        Args:
+            name: Unique identifier for timer
+            initial_time: Optional initial duration
+            
+        Returns:
+            Timer: The created timer
+        """
+        timer = Timer(name, initial_time)
+        self.timers[name] = timer
+        return timer
+        
+    def get_timer(self, name):
+        """Get existing timer or create new one"""
+        return self.timers.get(name)
+        
+    def update_timer(self, name, time_value):
+        """Update timer duration, creating if needed"""
+        timer = self.timers.get(name)
+        if timer:
+            timer.update_time(time_value)
+        else:
+            timer = self.create_timer(name, time_value)
+        return timer
+        
+    def check_timers(self):
+        """Check all timers and return elapsed ones
+        
+        Returns:
+            list: Names of timers that have elapsed
+        """
+        elapsed = []
+        for name, timer in self.timers.items():
+            if timer.check():
+                elapsed.append(name)
+        return elapsed
+        
+    def stop_timer(self, name):
+        """Stop a specific timer"""
+        timer = self.timers.get(name)
+        if timer:
+            timer.stop()
+            
+    def cleanup(self):
+        """Stop all timers"""
+        for timer in self.timers.values():
+            timer.stop()
+        self.timers.clear()
 
 class WaveformManager:
     """Creates and manages waveforms for synthesis"""
@@ -84,6 +223,7 @@ class Synthesis:
     """Core synthesis parameter processing"""
     def __init__(self, synthio_synth=None):
         self.waveform_manager = WaveformManager()
+        self.timer_manager = TimerManager()
         self.synthio_synth = synthio_synth
         _log("Synthesis engine initialized")
             
@@ -244,9 +384,33 @@ class Synthesis:
                     _log(f"Updated filter resonance: {value}")
                     return True
                     
+            # Handle timer updates
+            elif param_id.startswith('timer_'):
+                stage = param_id.split('timer_')[1]
+                timer_name = f"{id(note)}_{param_id}"
+                self.timer_manager.update_timer(timer_name, float(value))
+                _log(f"Updated timer {timer_name}: {value}")
+                return True
+                    
             _log(f"[ERROR] Unhandled parameter: {param_id}")
             return False
             
         except Exception as e:
             _log(f"[ERROR] Failed to update {param_id}: {str(e)}")
             return False
+            
+    def check_timers(self):
+        """Check all timers and return elapsed ones
+        
+        Returns:
+            list: Names of timers that have elapsed
+        """
+        return self.timer_manager.check_timers()
+        
+    def cleanup_note(self, note):
+        """Clean up timers for a note"""
+        note_id = id(note)
+        # Stop any timers associated with this note
+        for timer_name in list(self.timer_manager.timers.keys()):
+            if timer_name.startswith(f"{note_id}_"):
+                self.timer_manager.stop_timer(timer_name)
