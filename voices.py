@@ -55,7 +55,7 @@ def midi_to_frequency(note, reference_pitch=440.0, reference_note=69):
 
 class Voice:
     """Manages a single voice instance for a specific channel and note"""
-    def __init__(self, channel, note_number, synthesis, frequency):
+    def __init__(self, channel, note_number, synthesis, frequency, envelope_params=None):
         _log(f"[CREATE] Voice ch {channel}, note {note_number}, freq {frequency}")
         
         self.channel = channel
@@ -64,28 +64,10 @@ class Voice:
         self.creation_time = time.monotonic()
         self.synthesis = synthesis
         
-        # Store envelope parameters with defaults
-        self.envelope_params = {
-            'attack_time': 0.001,
-            'attack_level': 1.0,
-            'decay_time': 0.001,
-            'sustain_level': 0.0,
-            'release_time': 0.001
-        }
-        
-        # Create basic synthio note with frequency and envelope
-        self.synth_note = synthio.Note(
-            frequency=frequency,
-            envelope=synthio.Envelope(**self.envelope_params)
-        )
-        
-    def update_envelope(self):
-        """Create new envelope with current parameters and set on note"""
-        try:
-            self.synth_note.envelope = synthio.Envelope(**self.envelope_params)
-            _log(f"Updated envelope: {self.envelope_params}")
-        except Exception as e:
-            _log(f"[FAIL] Failed to update envelope: {str(e)}")
+        # Create note through synthesis layer with envelope params
+        self.synth_note = self.synthesis.create_note(frequency, envelope_params)
+        if not self.synth_note:
+            raise Exception("Failed to create note")
         
     def update_parameter(self, target, value):
         """Apply parameter update from router"""
@@ -115,17 +97,13 @@ class Voice:
                     # Convert MIDI note to frequency if it's a raw note number
                     if isinstance(value, int):
                         frequency = midi_to_frequency(value)
-                        self.synth_note.frequency = float(frequency)
+                        self.synthesis.update_note(self.synth_note, 'frequency', frequency)
                     else:
-                        self.synth_note.frequency = float(value)
+                        self.synthesis.update_note(self.synth_note, 'frequency', value)
                 elif param_name == 'bend':
-                    self.synth_note.bend = float(value)
+                    self.synthesis.update_note(self.synth_note, 'bend', value)
                 elif param_name == 'waveform':
-                    # Create waveform using synthesis.waveform_manager
-                    waveform = self.synthesis.waveform_manager.get_waveform(
-                        value['type'], value)
-                    if waveform:
-                        self.synth_note.waveform = waveform
+                    self.synthesis.update_note(self.synth_note, 'waveform', value)
                 elif update_type == 'trigger':
                     # Note on trigger - handled by synthio.Synthesizer.press()
                     pass
@@ -133,7 +111,7 @@ class Voice:
             # Amplifier handling
             elif module == 'amplifier':
                 if param_name == 'gain':
-                    self.synth_note.amplitude = float(value)
+                    self.synthesis.update_note(self.synth_note, 'amplitude', value)
                 elif param_parts[0] == 'envelope':
                     if update_type == 'trigger':
                         if 'release' in path:
@@ -142,34 +120,18 @@ class Voice:
                     elif len(param_parts) >= 3:
                         stage = param_parts[1]
                         param = param_parts[2]
-                        
-                        # Store envelope parameter
-                        if stage == 'attack':
-                            if param == 'time':
-                                self.envelope_params['attack_time'] = max(0.001, float(value))
-                            elif param == 'value':
-                                self.envelope_params['attack_level'] = float(value)
-                        elif stage == 'decay':
-                            if param == 'time':
-                                self.envelope_params['decay_time'] = max(0.001, float(value))
-                        elif stage == 'sustain':
-                            if param == 'value':
-                                self.envelope_params['sustain_level'] = float(value)
-                        elif stage == 'release':
-                            if param == 'time':
-                                self.envelope_params['release_time'] = max(0.001, float(value))
-                        
-                        # Create new envelope with updated parameters
-                        self.update_envelope()
+                        # Convert path to synthesis parameter name
+                        param_id = f"envelope_{stage}_{param}"
+                        self.synthesis.update_note(self.synth_note, param_id, value)
                 elif update_type == 'trigger':
                     pass
             
             # Filter handling
             elif module == 'filter':
                 if param_name == 'frequency':
-                    self.synthesis.update_note(self.synth_note, 'filter_frequency', float(value))
+                    self.synthesis.update_note(self.synth_note, 'filter_frequency', value)
                 elif param_name == 'resonance':
-                    self.synthesis.update_note(self.synth_note, 'filter_resonance', float(value))
+                    self.synthesis.update_note(self.synth_note, 'filter_resonance', value)
                 elif update_type == 'trigger':
                     pass
                 
@@ -224,13 +186,24 @@ class VoiceManager:
                 params = self.pending_params[channel]
                 frequency = params['frequency']
                 
-                # Create voice with basic frequency
-                voice = Voice(channel, note_number, self.synthesis, frequency)
+                # Extract envelope parameters from global params
+                envelope_params = {}
+                for path, value in self.global_params.items():
+                    if 'envelope' in path:
+                        # Convert path to parameter name (e.g. amplifier.envelope.attack.time -> attack_time)
+                        parts = path.split('.')
+                        if len(parts) >= 4:
+                            param_name = f"{parts[2]}_{parts[3]}"  # e.g. attack_time
+                            envelope_params[param_name] = value
+                
+                # Create voice with frequency and envelope params
+                voice = Voice(channel, note_number, self.synthesis, frequency, envelope_params)
                 self.active_voices[(channel, note_number)] = voice
                 
-                # Apply any stored global parameters
+                # Apply any stored global parameters (except envelope which was handled in creation)
                 for path, value in self.global_params.items():
-                    voice.update_parameter({'path': path, 'module': path.split('.')[0]}, value)
+                    if 'envelope' not in path:  # Skip envelope params since already applied
+                        voice.update_parameter({'path': path, 'module': path.split('.')[0]}, value)
                 
                 # Apply any stored per-key parameters for this note
                 key = (channel, note_number)
@@ -376,7 +349,7 @@ class VoiceManager:
             voice = self.active_voices[key]
             if not voice.active:
                 # Get release time from envelope
-                release_time = voice.envelope_params['release_time']
+                release_time = voice.synth_note.envelope.release_time
                 # Add a small buffer to ensure release completes
                 if (current_time - voice.release_time) > release_time:
                     _log(f"[CLEANUP] Ch {voice.channel}, Note {voice.note_number}")

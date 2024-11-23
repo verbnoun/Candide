@@ -87,6 +87,41 @@ class Synthesis:
         self.synthio_synth = synthio_synth
         _log("Synthesis engine initialized")
             
+    def create_note(self, frequency, envelope_params=None):
+        """Create a synthio note with the given frequency and envelope parameters
+        
+        Args:
+            frequency: Base frequency in Hz
+            envelope_params: Dictionary of envelope parameters
+            
+        Returns:
+            synthio.Note: The created note
+        """
+        try:
+            # Create envelope if parameters provided
+            envelope = None
+            if envelope_params:
+                envelope = synthio.Envelope(
+                    attack_time=max(0.001, float(envelope_params.get('attack_time', 0.001))),
+                    attack_level=float(envelope_params.get('attack_level', 1.0)),
+                    decay_time=max(0.001, float(envelope_params.get('decay_time', 0.001))),
+                    sustain_level=float(envelope_params.get('sustain_level', 0.0)),
+                    release_time=max(0.001, float(envelope_params.get('release_time', 0.001)))
+                )
+                _log(f"Created envelope with params: {envelope_params}")
+            
+            # Create note with envelope
+            note = synthio.Note(
+                frequency=float(frequency),
+                envelope=envelope
+            )
+            _log(f"Created note with frequency {frequency}")
+            return note
+            
+        except Exception as e:
+            _log(f"[ERROR] Failed to create note: {str(e)}")
+            return None
+
     def update_note(self, note, param_id, value):
         """Update synthio note parameter
         
@@ -150,6 +185,37 @@ class Synthesis:
                     return False
                 except Exception as e:
                     _log(f"[ERROR] Failed to set waveform: {str(e)}")
+                    return False
+                    
+            # Handle envelope parameters
+            elif param_id.startswith('envelope_'):
+                try:
+                    # Get current envelope parameters
+                    current_envelope = note.envelope
+                    if not current_envelope:
+                        _log("[ERROR] Note has no envelope")
+                        return False
+                        
+                    # Get current parameter values
+                    params = {
+                        'attack_time': current_envelope.attack_time,
+                        'attack_level': current_envelope.attack_level,
+                        'decay_time': current_envelope.decay_time,
+                        'sustain_level': current_envelope.sustain_level,
+                        'release_time': current_envelope.release_time
+                    }
+                    
+                    # Update specific parameter
+                    param_name = param_id.split('envelope_')[1]
+                    params[param_name] = max(0.001, float(value)) if 'time' in param_name else float(value)
+                    
+                    # Create new envelope with updated parameters
+                    note.envelope = synthio.Envelope(**params)
+                    _log(f"Updated envelope {param_name}: {value}")
+                    return True
+                    
+                except Exception as e:
+                    _log(f"[ERROR] Failed to update envelope: {str(e)}")
                     return False
                     
             # Handle filter parameters
