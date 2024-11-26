@@ -29,15 +29,6 @@ def _log(message, module="ROUTER"):
             lines.append(f"    {k}: {v}")
         return "\n".join(lines)
 
-    def format_value_transform(original, normalized, range_str):
-        """Format value transformation with nice indentation."""
-        lines = []
-        lines.append("Value transformation:")
-        lines.append(f"  original: {original}")
-        lines.append(f"  normalized: {normalized}")
-        lines.append(f"  range: {range_str}")
-        return "\n".join(lines)
-
     # Handle different message types
     if isinstance(message, dict):
         formatted = format_midi_message(
@@ -80,7 +71,7 @@ class Router:
             else:
                 normalized = value
                 
-            _log(format_value_transform(value, normalized, range_str))
+            _log(f"Normalized value {value} to {normalized} (range: {range_str})")
             return normalized
             
         except ValueError:
