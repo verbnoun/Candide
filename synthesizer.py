@@ -1,13 +1,12 @@
 """
-Synthesis Module
+synthesizer.py - Synthesis Value Calculations
 
-Handles parameter manipulation and waveform generation for synthio notes.
-Provides calculations needed by voice modules to control synthesis.
+Provides value manipulation and calculations for voices.py.
+Handles wave creation, envelope generation, filter calculations, etc.
+All methods are stateless calculation tools.
 """
 import sys
-import array
-import math
-import time
+import ulab.numpy as np
 import synthio
 from constants import SYNTH_DEBUG
 
@@ -20,437 +19,253 @@ def _log(message, module="SYNTH"):
     RED = "\033[31m"    # Red for errors
     RESET = "\033[0m"
     
-    color = RED if "[ERROR]" in str(message) else GREEN
-    print(f"{color}[{module}] {message}{RESET}", file=sys.stderr)
+    def format_wave_creation(wave_type, size, volume):
+        """Format wave creation details."""
+        lines = []
+        lines.append(f"[{module}]")
+        lines.append("Wave creation:")
+        lines.append(f"  type: {wave_type}")
+        lines.append(f"  size: {size}")
+        lines.append(f"  volume: {volume}")
+        return "\n".join(lines)
+    
+    def format_filter_calc(frequency, resonance, filter_type="lowpass"):
+        """Format filter calculation details."""
+        lines = []
+        lines.append(f"[{module}]")
+        lines.append("Filter calculation:")
+        lines.append(f"  type: {filter_type}")
+        lines.append(f"  frequency: {frequency}")
+        lines.append(f"  resonance: {resonance}")
+        return "\n".join(lines)
+    
+    def format_envelope_calc(params, env_type):
+        """Format envelope calculation details."""
+        lines = []
+        lines.append(f"[{module}]")
+        lines.append(f"Envelope calculation ({env_type}):")
+        for param, value in params.items():
+            lines.append(f"  {param}: {value}")
+        return "\n".join(lines)
 
-class Timer:
-    """Modular timer for synthesis timing needs"""
-    def __init__(self, name, initial_time=None):
-        self.name = name
-        self.time_value = initial_time
-        self.start_time = None
-        self.active = False
-        self.end_callbacks = []  # Callbacks to run when timer ends
-        _log(f"Timer created: {name}")
-        
-    def start(self):
-        """Start or restart timer"""
-        if self.time_value is None:
-            _log(f"[ERROR] Timer {self.name} has no duration set")
-            return False
-            
-        self.start_time = time.monotonic()
-        self.active = True
-        _log(f"Timer {self.name} started: duration={self.time_value}")
-        return True
-        
-    def update_time(self, new_time):
-        """Update timer duration
-        
-        If timer is running, adjusts the start time to maintain relative progress
-        """
-        if new_time is None:
-            _log(f"[ERROR] Timer {self.name} received None duration")
-            return
-            
-        if not self.active:
-            self.time_value = new_time
-            _log(f"Timer {self.name} duration updated: {new_time}")
-            return
-            
-        # Calculate progress through current duration
-        elapsed = time.monotonic() - self.start_time
-        if elapsed < self.time_value:
-            # Still running, adjust start time to maintain relative progress
-            progress = elapsed / self.time_value
-            self.time_value = new_time
-            self.start_time = time.monotonic() - (progress * new_time)
+    if isinstance(message, dict):
+        if 'wave' in str(message):
+            formatted = format_wave_creation(
+                message.get('type', 'unknown'),
+                message.get('size', 0),
+                message.get('volume', 0)
+            )
+        elif 'filter' in str(message):
+            formatted = format_filter_calc(
+                message.get('frequency', 0),
+                message.get('resonance', 0),
+                message.get('type', 'lowpass')
+            )
+        elif 'envelope' in str(message):
+            formatted = format_envelope_calc(
+                message.get('params', {}),
+                message.get('type', 'unknown')
+            )
         else:
-            # Original duration elapsed, start fresh
-            self.time_value = new_time
-            self.start()
-        _log(f"Timer {self.name} duration updated: {new_time}")
-        
-    def check(self):
-        """Check if timer has elapsed
-        
-        Returns:
-            bool: True if timer is active and has elapsed, False otherwise
-        """
-        if not self.active:
-            return False
-            
-        if time.monotonic() - self.start_time >= self.time_value:
-            self.active = False
-            # Run end callbacks
-            for callback in self.end_callbacks:
-                callback(self.name)
-            _log(f"Timer {self.name} elapsed")
-            return True
-            
-        return False
-        
-    def stop(self):
-        """Stop timer"""
-        self.active = False
-        self.start_time = None
-        _log(f"Timer {self.name} stopped")
-        
-    def is_active(self):
-        """Check if timer is currently running"""
-        return self.active
-        
-    def add_end_callback(self, callback):
-        """Add callback to run when timer ends
-        
-        Args:
-            callback: Function to call with timer name when timer ends
-        """
-        self.end_callbacks.append(callback)
+            formatted = f"[{module}] {message}"
+        print(f"{GREEN}{formatted}{RESET}\n", file=sys.stderr)
+    else:
+        color = RED if "[ERROR]" in str(message) else GREEN
+        print(f"{color}[{module}] {message}{RESET}", file=sys.stderr)
 
-class TimerManager:
-    """Manages collection of timers for synthesis"""
+class Synthesizer:
+    """Synthesis calculation tools and value manipulation"""
+    
     def __init__(self):
-        self.timers = {}
-        self.timer_callbacks = {}  # Map timer names to their callbacks
-        _log("Timer manager initialized")
+        self.SAMPLE_SIZE = 512
+        self.SAMPLE_VOLUME = 32000  # Max 32767
+        _log("Synthesizer initialized")
         
-    def create_timer(self, name, initial_time=None):
-        """Create a new timer
+    # Wave Generation
+    def create_wave(self, wave_type):
+        """Generate waveform buffer of specified type"""
+        _log({
+            'wave': True,
+            'type': wave_type,
+            'size': self.SAMPLE_SIZE,
+            'volume': self.SAMPLE_VOLUME
+        })
         
-        Args:
-            name: Unique identifier for timer
-            initial_time: Optional initial duration
-            
-        Returns:
-            Timer: The created timer
-        """
-        timer = Timer(name, initial_time)
-        self.timers[name] = timer
-        return timer
-        
-    def get_timer(self, name):
-        """Get existing timer or create new one"""
-        return self.timers.get(name)
-        
-    def update_timer(self, name, time_value):
-        """Update timer duration, creating if needed
-        
-        Args:
-            name: Timer identifier
-            time_value: New duration
-        """
-        timer = self.timers.get(name)
-        if timer:
-            timer.update_time(time_value)
-            if not timer.is_active():
-                timer.start()
-        else:
-            timer = self.create_timer(name, time_value)
-            # Add any registered callbacks
-            if name in self.timer_callbacks:
-                timer.add_end_callback(self.timer_callbacks[name])
-            timer.start()
-        return timer
-        
-    def register_callback(self, timer_name, callback):
-        """Register a callback for a timer
-        
-        Args:
-            timer_name: Name of timer to register callback for
-            callback: Function to call when timer ends
-        """
-        self.timer_callbacks[timer_name] = callback
-        # If timer already exists, add callback
-        timer = self.timers.get(timer_name)
-        if timer:
-            timer.add_end_callback(callback)
-        
-    def check_timers(self):
-        """Check all timers and return elapsed ones
-        
-        Returns:
-            list: Names of timers that have elapsed
-        """
-        elapsed = []
-        for name, timer in self.timers.items():
-            if timer.check():
-                elapsed.append(name)
-        return elapsed
-        
-    def stop_timer(self, name):
-        """Stop a specific timer"""
-        timer = self.timers.get(name)
-        if timer:
-            timer.stop()
-            
-    def cleanup(self):
-        """Stop all timers"""
-        for timer in self.timers.values():
-            timer.stop()
-        self.timers.clear()
-        self.timer_callbacks.clear()
-
-class WaveformManager:
-    """Creates and manages waveforms for synthesis"""
-    def __init__(self):
-        self.waveforms = {}
-        _log("WaveformManager initialized")
-        
-    def create_triangle_wave(self, config):
-        """Create triangle waveform from configuration"""
         try:
-            size = int(config['size'])  # Ensure size is an integer
-            amplitude = int(config['amplitude'])  # Ensure amplitude is an integer
-            
-            # Use double quotes for typecode in CircuitPython
-            samples = array.array("h", [0] * size)
-            half = size // 2
-            
-            # Generate triangle wave with explicit integer conversion
-            for i in range(size):
-                if i < half:
-                    value = (i / half) * 2 - 1
-                else:
-                    value = 1 - ((i - half) / half) * 2
-                # Ensure integer conversion for array values
-                samples[i] = int(round(value * amplitude))
-                    
-            _log(f"Created triangle wave: size={size}, amplitude={amplitude}")
-            return samples
-            
+            if wave_type == 'sine':
+                return np.array(
+                    np.sin(np.linspace(0, 2*np.pi, self.SAMPLE_SIZE, endpoint=False)) 
+                    * self.SAMPLE_VOLUME, 
+                    dtype=np.int16
+                )
+            elif wave_type == 'square':
+                return np.array(
+                    [self.SAMPLE_VOLUME] * (self.SAMPLE_SIZE//2) + 
+                    [-self.SAMPLE_VOLUME] * (self.SAMPLE_SIZE//2), 
+                    dtype=np.int16
+                )
+            elif wave_type == 'saw':
+                return np.linspace(
+                    self.SAMPLE_VOLUME, 
+                    -self.SAMPLE_VOLUME, 
+                    num=self.SAMPLE_SIZE, 
+                    dtype=np.int16
+                )
+            elif wave_type == 'triangle':
+                return np.concatenate([
+                    np.linspace(-self.SAMPLE_VOLUME, self.SAMPLE_VOLUME, self.SAMPLE_SIZE//2, dtype=np.int16),
+                    np.linspace(self.SAMPLE_VOLUME, -self.SAMPLE_VOLUME, self.SAMPLE_SIZE//2, dtype=np.int16)
+                ])
+            else:
+                _log(f"[ERROR] Unknown wave type: {wave_type}")
+                return None
         except Exception as e:
-            _log(f"[ERROR] Failed to create waveform: {str(e)}")
+            _log(f"[ERROR] Wave creation failed: {str(e)}")
             return None
             
-    def get_waveform(self, wave_type, config=None):
-        """Get or create waveform by type"""
+    # LFO Creation
+    def create_lfo(self, rate, scale, offset=0, wave_type='sine'):
+        """Create an LFO with specified parameters"""
+        _log(f"Creating LFO: rate={rate}, scale={scale}, offset={offset}, type={wave_type}")
         try:
-            if not config:
-                _log("[ERROR] No configuration provided for waveform")
+            waveform = self.create_wave(wave_type)
+            if waveform is None:
+                _log("[ERROR] Failed to create LFO waveform")
                 return None
                 
-            cache_key = f"{wave_type}_{config.get('size', 0)}"
-            
-            if cache_key in self.waveforms:
-                _log(f"Retrieved cached waveform: {cache_key}")
-                return self.waveforms[cache_key]
-                
-            if wave_type == 'triangle':
-                waveform = self.create_triangle_wave(config)
-                if waveform:
-                    self.waveforms[cache_key] = waveform
-                    _log(f"Created and cached triangle waveform: size={config['size']}")
-                    return waveform
-                    
-            _log(f"[ERROR] Failed to get/create waveform: {wave_type}")
-            return None
-        except Exception as e:
-            _log(f"[ERROR] Failed in get_waveform: {str(e)}")
-            return None
-
-class Synthesis:
-    """Core synthesis parameter processing"""
-    def __init__(self, synthio_synth=None):
-        self.waveform_manager = WaveformManager()
-        self.timer_manager = TimerManager()
-        self.synthio_synth = synthio_synth
-        _log("Synthesis engine initialized")
-            
-    def create_note(self, frequency, envelope_params=None):
-        """Create a synthio note with the given frequency and envelope parameters
-        
-        Args:
-            frequency: Base frequency in Hz
-            envelope_params: Dictionary of envelope parameters
-            
-        Returns:
-            synthio.Note: The created note
-        """
-        try:
-            # Create envelope if parameters provided
-            envelope = None
-            if envelope_params:
-                envelope = synthio.Envelope(
-                    attack_time=max(0.001, float(envelope_params.get('attack_time', 0.001))),
-                    attack_level=float(envelope_params.get('attack_level', 1.0)),
-                    decay_time=max(0.001, float(envelope_params.get('decay_time', 0.001))),
-                    sustain_level=float(envelope_params.get('sustain_level', 0.0)),
-                    release_time=max(0.001, float(envelope_params.get('release_time', 0.001)))
-                )
-                _log(f"Created envelope with params: {envelope_params}")
-            
-            # Create note with envelope
-            note = synthio.Note(
-                frequency=float(frequency),
-                envelope=envelope
+            return synthio.LFO(
+                waveform=waveform,
+                rate=rate, 
+                scale=scale, 
+                offset=offset
             )
-            _log(f"Created note with frequency {frequency}")
-            return note
-            
         except Exception as e:
-            _log(f"[ERROR] Failed to create note: {str(e)}")
+            _log(f"[ERROR] LFO creation failed: {str(e)}")
             return None
-
-    def register_timer_callback(self, note, timer_id, callback):
-        """Register a callback for a note's timer
-        
-        Args:
-            note: The note object
-            timer_id: Timer identifier (e.g. timer_sustain)
-            callback: Function to call when timer ends
-        """
-        timer_name = f"{id(note)}_{timer_id}"
-        self.timer_manager.register_callback(timer_name, callback)
-        _log(f"Registered callback for timer {timer_name}")
-
-    def update_note(self, note, param_id, value):
-        """Update synthio note parameter
-        
-        Args:
-            note: synthio.Note instance
-            param_id: Parameter identifier (frequency, amplitude, etc)
-            value: New parameter value
             
-        Returns:
-            bool: True if parameter was updated successfully
-        """
-        if not note:
-            _log("[ERROR] No note provided for update")
-            return False
+    # Filter Calculations
+    def calculate_filter(self, frequency, resonance):
+        """Create a filter with the given parameters"""
+        if resonance is None:
+            resonance = 0.7
+            
+        # Handle frequency bounds
+        frequency = max(20, min(20000, frequency))
+        
+        filter_type = 'highpass' if frequency < 100 else 'lowpass'
+        
+        _log({
+            'filter': True,
+            'type': filter_type,
+            'frequency': frequency,
+            'resonance': resonance
+        })
+        
+        try:
+            # Create appropriate filter type based on frequency range
+            if frequency < 100:  # High pass for very low frequencies
+                return synthio.high_pass_filter(frequency, resonance)
+            else:  # Low pass for most frequencies
+                return synthio.low_pass_filter(frequency, resonance)
+        except Exception as e:
+            _log(f"[ERROR] Filter creation failed: {str(e)}")
+            return None
+            
+    def calculate_filter_lfo(self, base_freq, resonance, lfo):
+        """Calculate filter with LFO modulation"""
+        # Ensure base frequency exists
+        if base_freq is None:
+            base_freq = 1000
+            _log("Using default base frequency: 1000Hz")
             
         try:
-            _log(f"Updating note parameter: {param_id}={value}")
-            
-            # Handle timer parameters
-            if param_id.startswith('timer_'):
-                timer_name = f"{id(note)}_{param_id}"
-                self.timer_manager.update_timer(timer_name, value)
-                return True
-            
-            # Handle basic parameters
-            if param_id == 'frequency':
-                note.frequency = float(value)
-                _log(f"Set frequency: {value}")
-                return True
-                
-            elif param_id == 'amplitude':
-                note.amplitude = float(value)
-                _log(f"Set amplitude: {value}")
-                return True
-                
-            elif param_id == 'bend':
-                note.bend = float(value)
-                _log(f"Set bend: {value}")
-                return True
-                
-            elif param_id == 'waveform':
-                try:
-                    # If value is already a waveform array, use it directly
-                    if isinstance(value, array.array):
-                        note.waveform = value
-                        _log("Set waveform from array")
-                        return True
-                        
-                    # Otherwise, expect a configuration dictionary
-                    if not isinstance(value, dict):
-                        _log("[ERROR] Expected waveform configuration dictionary")
-                        return False
-                        
-                    wave_type = value.get('type')
-                    if not wave_type:
-                        _log("[ERROR] No waveform type specified")
-                        return False
-                        
-                    # Create waveform using waveform_manager
-                    waveform = self.waveform_manager.get_waveform(wave_type, value)
-                    if waveform and isinstance(waveform, array.array):
-                        note.waveform = waveform
-                        _log(f"Set waveform: type={wave_type}")
-                        return True
-                        
-                    _log("[ERROR] Invalid waveform generated")
-                    return False
-                except Exception as e:
-                    _log(f"[ERROR] Failed to set waveform: {str(e)}")
-                    return False
-                    
-            # Handle envelope parameters
-            elif param_id.startswith('envelope_'):
-                try:
-                    # Get current envelope parameters
-                    current_envelope = note.envelope
-                    if not current_envelope:
-                        _log("[ERROR] Note has no envelope")
-                        return False
-                        
-                    # Get current parameter values
-                    params = {
-                        'attack_time': current_envelope.attack_time,
-                        'attack_level': current_envelope.attack_level,
-                        'decay_time': current_envelope.decay_time,
-                        'sustain_level': current_envelope.sustain_level,
-                        'release_time': current_envelope.release_time
-                    }
-                    
-                    # Update specific parameter
-                    param_name = param_id.split('envelope_')[1]
-                    params[param_name] = max(0.001, float(value)) if 'time' in param_name else float(value)
-                    
-                    # Create new envelope with updated parameters
-                    note.envelope = synthio.Envelope(**params)
-                    _log(f"Updated envelope {param_name}: {value}")
-                    return True
-                    
-                except Exception as e:
-                    _log(f"[ERROR] Failed to update envelope: {str(e)}")
-                    return False
-                    
-            # Handle filter parameters
-            elif param_id.startswith('filter_'):
-                if not self.synthio_synth:
-                    _log("[ERROR] No synthesizer available for filter creation")
-                    return False
-                    
-                current_filter = getattr(note, 'filter', None)
-                current_freq = getattr(current_filter, 'frequency', 20000)
-                current_q = getattr(current_filter, 'Q', 0.707)
-                
-                if param_id == 'filter_frequency':
-                    note.filter = self.synthio_synth.low_pass_filter(
-                        frequency=float(value),
-                        Q=current_q
-                    )
-                    _log(f"Updated filter frequency: {value}")
-                    return True
-                    
-                elif param_id == 'filter_resonance':
-                    note.filter = self.synthio_synth.low_pass_filter(
-                        frequency=current_freq,
-                        Q=float(value)
-                    )
-                    _log(f"Updated filter resonance: {value}")
-                    return True
-                    
-            _log(f"[ERROR] Unhandled parameter: {param_id}")
-            return False
-            
+            # Create filter using LFO for frequency modulation    
+            return self.calculate_filter(base_freq * lfo.value, resonance)
         except Exception as e:
-            _log(f"[ERROR] Failed to update {param_id}: {str(e)}")
-            return False
+            _log(f"[ERROR] Filter LFO calculation failed: {str(e)}")
+            return None
             
-    def check_timers(self):
-        """Check all timers and return elapsed ones
-        
-        Returns:
-            list: Names of timers that have elapsed
+    # Envelope Calculations
+    def calculate_envelope(self, params, env_type):
         """
-        return self.timer_manager.check_timers()
+        Create envelope from parameters.
+        env_type: 'frequency', 'amplitude', 'filter', 'ring'
+        """
+        prefix = f"{env_type}_"
         
-    def cleanup_note(self, note):
-        """Clean up timers for a note"""
-        note_id = id(note)
-        # Stop any timers associated with this note
-        for timer_name in list(self.timer_manager.timers.keys()):
-            if timer_name.startswith(f"{note_id}_"):
-                self.timer_manager.stop_timer(timer_name)
+        envelope_params = {
+            'attack_time': 0.1,    # Default values
+            'decay_time': 0.05,
+            'sustain_level': 0.8,
+            'release_time': 0.2,
+            'attack_level': 1.0
+        }
+        
+        # Update with any provided params
+        for param, default in envelope_params.items():
+            key = prefix + param
+            if key in params:
+                envelope_params[param] = params[key]
+                
+        _log({
+            'envelope': True,
+            'type': env_type,
+            'params': envelope_params
+        })
+        
+        try:
+            return synthio.Envelope(
+                attack_time=envelope_params['attack_time'],
+                decay_time=envelope_params['decay_time'],
+                sustain_level=envelope_params['sustain_level'],
+                release_time=envelope_params['release_time'],
+                attack_level=envelope_params['attack_level']
+            )
+        except Exception as e:
+            _log(f"[ERROR] Envelope creation failed: {str(e)}")
+            return None
+            
+    def calculate_filter_envelope(self, params):
+        """Calculate filter parameters modulated by envelope"""
+        freq = params.get('filter_frequency', 1000)
+        res = params.get('filter_resonance', 0.7)
+        
+        _log(f"Calculating filter envelope: freq={freq}, res={res}")
+        
+        try:
+            env = self.calculate_envelope(params, 'filter')
+            return self.calculate_filter(freq, res)
+        except Exception as e:
+            _log(f"[ERROR] Filter envelope calculation failed: {str(e)}")
+            return None
+
+    # Amplitude Calculations
+    def calculate_pressure_amplitude(self, pressure, current_amp):
+        """Calculate amplitude based on pressure value"""
+        _log(f"Calculating pressure amplitude: pressure={pressure}, current={current_amp}")
+        return max(0.0, min(1.0, current_amp * pressure))
+        
+    def calculate_expression(self, expression, current_amp):
+        """Calculate amplitude based on expression value"""
+        _log(f"Calculating expression amplitude: expression={expression}, current={current_amp}")
+        return max(0.0, min(1.0, current_amp * expression))
+
+    # Timbre Calculations    
+    def calculate_timbre(self, cc74_value):
+        """Calculate ring modulation frequency from CC74 value"""
+        # Map CC74 0-1 to frequency range 100Hz-8000Hz
+        freq = 100 + (cc74_value * 7900)
+        _log(f"Calculating timbre frequency: cc74={cc74_value}, freq={freq}")
+        return freq
+
+    # Value Combination/Scaling
+    def combine_values(self, val1, val2, mode='multiply'):
+        """Combine two normalized values"""
+        _log(f"Combining values: {val1} {mode} {val2}")
+        if mode == 'multiply':
+            return val1 * val2
+        elif mode == 'add':
+            return min(1.0, max(0.0, val1 + val2))
+        elif mode == 'max':
+            return max(val1, val2)
+        return val1  # Default to first value
