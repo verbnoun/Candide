@@ -63,6 +63,8 @@ class Voice:
         self.active = True
         self.creation_time = time.monotonic()
         self.synthesis = synthesis
+        self.router = None
+        self.sustain_timer_elapsed = False
         
         # Create note through synthesis layer with envelope params
         self.synth_note = self.synthesis.create_note(frequency, envelope_params)
@@ -75,94 +77,100 @@ class Voice:
             module = target.get('module')
             path = target['path']
             update_type = target.get('type', 'control')
+            source_type = target.get('source_type')
             
-            # Log in new format
             _log({
                 'value': value,
                 'target': {
                     'type': update_type,
                     'path': path,
-                    'module': module
+                    'module': module,
+                    'source_type': source_type
                 },
                 'channel': self.channel
             })
             
-            # Extract parameter name from path
-            param_parts = path.split('.')
-            
-            # Handle timer sources
+            # Handle timer sources 
             if 'sources' in path and 'timer' in path:
-                # Extract stage and source config
-                stage = param_parts[2] if len(param_parts) > 2 else 'default'
-                source_config = None
-                
-                # Check for timer.end source
-                if 'end' in path:
-                    source_config = {
-                        'end': {
-                            'from': '.'.join(param_parts[:-1])  # Full path minus 'end'
-                        }
-                    }
-                
-                # Convert path to timer parameter name
+                stage = None
+                # Extract envelope stage from path
+                path_parts = path.split('.')
+                for i, part in enumerate(path_parts):
+                    if part == 'envelope' and i + 1 < len(path_parts):
+                        stage = path_parts[i + 1]
+                        break
+                        
+                if not stage:
+                    _log(f"[FAIL] Could not extract stage from timer path: {path}")
+                    return
+                    
                 param_id = f"timer_{stage}"
-                self.synthesis.update_note(self.synth_note, param_id, value, source_config)
+                
+                # Register callback to send timer.end trigger through route when timer ends
+                def timer_end_callback(timer_name):
+                    if stage == 'sustain':
+                        self.sustain_timer_elapsed = True
+                        # Create timer end trigger based on routes 
+                        end_trigger = {
+                            'type': 'trigger',
+                            'source_type': 'timer',
+                            'source_event': 'end',
+                            'module': 'amplifier', 
+                            'path': 'amplifier.envelope.release'
+                        }
+                        # Send trigger to self through normal parameter handling
+                        self.update_parameter(end_trigger, 1)
+                
+                self.synthesis.register_timer_callback(self.synth_note, param_id, timer_end_callback)
+                self.synthesis.update_note(self.synth_note, param_id, value)
                 return
             
+            # Handle triggers
+            if update_type == 'trigger':
+                if source_type == 'timer' and 'release' in path:  
+                    self.start_release()
+                return
+                
             # Handle other parameters
-            param_name = param_parts[-1]
+            param_name = path.split('.')[-1]
             
-            # Oscillator handling
+            # Oscillator parameters
             if module == 'oscillator':
                 if param_name == 'frequency':
-                    # Convert MIDI note to frequency if it's a raw note number
                     if isinstance(value, int):
                         frequency = midi_to_frequency(value)
                         self.synthesis.update_note(self.synth_note, 'frequency', frequency)
                     else:
                         self.synthesis.update_note(self.synth_note, 'frequency', value)
-                elif param_name == 'bend':
-                    self.synthesis.update_note(self.synth_note, 'bend', value)
                 elif param_name == 'waveform':
                     self.synthesis.update_note(self.synth_note, 'waveform', value)
-                elif update_type == 'trigger':
-                    # Note on trigger - handled by synthio.Synthesizer.press()
-                    pass
-            
-            # Amplifier handling
+                    
+            # Amplifier parameters  
             elif module == 'amplifier':
                 if param_name == 'gain':
                     self.synthesis.update_note(self.synth_note, 'amplitude', value)
-                elif param_parts[0] == 'envelope':
-                    if update_type == 'trigger':
-                        if 'release' in path:
-                            # Handle release trigger
-                            self.release()
-                    elif len(param_parts) >= 3:
-                        stage = param_parts[2]
-                        param = param_parts[3]
-                        # Convert path to synthesis parameter name
+                elif path.startswith('amplifier.envelope'):
+                    parts = path.split('.')
+                    if len(parts) >= 3:
+                        stage = parts[2]  # attack, decay, sustain, release
+                        param = param_name  # time, level
                         param_id = f"envelope_{stage}_{param}"
                         self.synthesis.update_note(self.synth_note, param_id, value)
-                elif update_type == 'trigger':
-                    pass
-            
-            # Filter handling
-            elif module == 'filter':
+                        
+            # Filter parameters
+            elif module == 'filter':  
                 if param_name == 'frequency':
                     self.synthesis.update_note(self.synth_note, 'filter_frequency', value)
                 elif param_name == 'resonance':
                     self.synthesis.update_note(self.synth_note, 'filter_resonance', value)
-                elif update_type == 'trigger':
-                    pass
-                
+                    
         except Exception as e:
             _log(f"[FAIL] Parameter update failed: {str(e)}")
             _log(f"[FAIL] Target details: {target}")
             _log(f"[FAIL] Value: {value}")
         
-    def release(self):
-        """Start voice release phase"""
+    def start_release(self):
+        """Start release phase by setting tracking variables"""
         if self.active:
             self.active = False
             self.release_time = time.monotonic()
@@ -211,14 +219,13 @@ class VoiceManager:
                 envelope_params = {}
                 for path, value in self.global_params.items():
                     if 'envelope' in path:
-                        # Convert path to parameter name (e.g. amplifier.envelope.attack.time -> attack_time)
                         parts = path.split('.')
                         if len(parts) >= 4:
                             if 'sources' in path and 'timer' in path:
-                                continue  # Timer sources handled separately
+                                continue
                             stage = parts[2]
                             param = parts[3]
-                            param_name = f"{stage}_{param}"  # e.g. attack_time
+                            param_name = f"{stage}_{param}"
                             envelope_params[param_name] = value
                 
                 # Create voice with frequency and envelope params
@@ -229,17 +236,15 @@ class VoiceManager:
                 for path, value in self.global_params.items():
                     voice.update_parameter({'path': path, 'module': path.split('.')[0]}, value)
                 
-                # Apply any stored per-key parameters for this note
-                key = (channel, note_number)
+                # Apply any stored per-key parameters
+                key = (channel, note_number) 
                 if key in self.per_key_params:
                     for path, value in self.per_key_params[key].items():
                         voice.update_parameter({'path': path, 'module': path.split('.')[0]}, value)
                 
-                # Press the note after all parameters are set
                 self.synthio_synth.press(voice.synth_note)
                 _log(f"[CREATE] Voice created on channel {channel}, note {note_number}")
                 
-                # Clear pending state
                 self.pending_triggers.discard(channel)
                 return True
                 
@@ -259,38 +264,31 @@ class VoiceManager:
         target = stream.get('target')
         value = stream.get('value')
         
-        # Log the stream in the new format
         _log({
             'value': value,
             'target': target,
             'channel': channel
         })
         
-        if not target:
-            _log("[FAIL] No target in parameter stream")
+        if not target or channel is None:
+            _log("[FAIL] Missing target or channel in stream")
             return
-        
-        if channel is None:
-            _log("[FAIL] No channel in parameter stream")
-            return
-
+            
         path = target['path']
         source_type = target.get('source_type')
         
-        # Store global CC values that apply to all voices
+        # Store and apply global CC parameters
         if source_type == 'cc':
             self.global_params[path] = value
-            # Apply to all active voices on this channel
             for key, voice in list(self.active_voices.items()):
-                if key[0] == channel:  # Match channel
+                if key[0] == channel:
                     try:
                         voice.update_parameter(target, value)
                     except Exception as e:
                         _log(f"[FAIL] Voice parameter update failed: {str(e)}")
-                        _log(f"[FAIL] Stream details: {stream}")
             return
         
-        # Initialize pending parameters for this channel if needed
+        # Initialize pending parameters
         if channel not in self.pending_params:
             self.pending_params[channel] = {}
             
@@ -307,12 +305,10 @@ class VoiceManager:
                 frequency = midi_to_frequency(note_number)
                 self.pending_params[channel]['frequency'] = frequency
                 self.pending_params[channel]['note_number'] = note_number
-                
-                # Try to create voice if we have necessary parameters
                 self.try_create_voice(channel, note_number)
                 return
                 
-        # Store parameter for later if no voice exists yet
+        # Store parameters for pending voices
         if channel not in self.active_voices:
             self.pending_params[channel][target['path']] = value
             _log({
@@ -326,42 +322,16 @@ class VoiceManager:
                 'stage': 'stored for future voice'
             })
             return
-                
-        # Handle triggers
-        if target.get('type') == 'trigger':
-            # Get note number from value for per_key triggers
-            if isinstance(value, dict) and 'note' in value:
-                note_number = value['note']
+            
+        # Handle per-key parameters
+        if source_type == 'per_key':
+            if 'note_number' in self.pending_params.get(channel, {}):
+                note_number = self.pending_params[channel]['note_number']
                 key = (channel, note_number)
                 if key in self.active_voices:
                     voice = self.active_voices[key]
-                    voice.update_parameter(target, value)  # Let voice handle trigger based on path
-                else:
-                    _log(f"[FAIL] No voice found for trigger: ch {channel}, note {note_number}")
-            else:
-                _log(f"[FAIL] No note number in trigger: {value}")
-        else:
-            # For other parameters, update voices based on source_type
-            if source_type == 'per_key':
-                # For per_key parameters, only update matching voice
-                if 'note_number' in self.pending_params.get(channel, {}):
-                    note_number = self.pending_params[channel]['note_number']
-                    key = (channel, note_number)
-                    if key in self.active_voices:
-                        voice = self.active_voices[key]
-                        voice.update_parameter(target, value)
-                
-    def release_voice(self, channel, note_number):
-        """Release voice"""
-        key = (channel, note_number)
-        voice = self.active_voices.get(key)
-        if voice:
-            voice.release()
-            if voice.synth_note:
-                self.synthio_synth.release(voice.synth_note)
-            return True
-        return False
-        
+                    voice.update_parameter(target, value)
+                    
     def cleanup_voices(self):
         """Remove completed voices and check for sustain timeouts"""
         current_time = time.monotonic()
@@ -369,34 +339,26 @@ class VoiceManager:
         # Check for timed releases
         elapsed_timers = self.synthesis.check_timers()
         for timer_name in elapsed_timers:
-            # Timer names are in format: id(note)_timer_stage
-            # Extract note id from timer name
             try:
                 note_id = int(timer_name.split('_')[0])
-                # Find voice with this note
                 for key, voice in list(self.active_voices.items()):
                     if id(voice.synth_note) == note_id:
                         _log(f"[AUTO-RELEASE] Ch {voice.channel}, Note {voice.note_number} (timer elapsed)")
-                        self.release_voice(voice.channel, voice.note_number)
+                        # Timer callback will create and send release trigger
                         break
             except Exception as e:
                 _log(f"[ERROR] Failed to process timer: {str(e)}")
-        
-        # Handle cleanup of released voices
+                
+        # Clean up released voices after release phase completes
         for key in list(self.active_voices.keys()):
             voice = self.active_voices[key]
             if not voice.active:
-                # Get release time from envelope
                 release_time = voice.synth_note.envelope.release_time
-                # Add a small buffer to ensure release completes
                 if (current_time - voice.release_time) > release_time:
                     _log(f"[CLEANUP] Ch {voice.channel}, Note {voice.note_number}")
-                    # Clean up per-key params for this note
                     if key in self.per_key_params:
                         del self.per_key_params[key]
-                    # Clean up voice
                     del self.active_voices[key]
-                    # Clean up pending state
                     if voice.channel in self.pending_params:
                         del self.pending_params[voice.channel]
                     self.pending_triggers.discard(voice.channel)

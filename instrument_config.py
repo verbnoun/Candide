@@ -181,6 +181,10 @@ class Piano(InstrumentConfig):
                                     }
                                 ]
                             }
+                        },
+                        'level': {
+                            'value': 1.0,
+                            'output_range': {'min': 0.0, 'max': 1.0}
                         }
                     },
                     'decay': {
@@ -220,14 +224,14 @@ class Piano(InstrumentConfig):
                                 }
                             }
                         },
-                        'value': {
+                        'level': {  # For synthio envelope sustain level
                             'value': 0.8,
                             'output_range': {'min': 0.0, 'max': 1.0},
                             'sources': {
                                 'controls': [
                                     {
                                         'type': 'cc',
-                                        'number': 70,
+                                        'number': 70,  # Separate CC for sustain level
                                         'name': 'Sustain Level',
                                         'amount': 1.0,
                                         'midi_range': {'min': 0, 'max': 127}

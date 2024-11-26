@@ -231,6 +231,30 @@ class Router:
         if not isinstance(config, dict):
             return
         
+        def normalize_path(path):
+            """Normalize paths to ensure consistent comparison"""
+            # Handle timer path variants
+            if 'timer.time' in path:
+                if 'envelope.sources.timer.time' in path:
+                    return path.replace('envelope.sources.timer.time', 'envelope.sustain.sources.timer.time')
+                if 'envelope.sustain.sources.timer.time' in path:
+                    return path
+            return path
+        
+        def route_exists(route_info):
+            """Check if route already exists using normalized paths"""
+            source_type = route_info['source_type']
+            source_event = route_info['source_event']
+            normalized_path = normalize_path(route_info['path'])
+            route_key = f"{source_type}.{source_event}"
+            
+            if route_key in self.route_cache.routes['controls']:
+                existing_route = self.route_cache.routes['controls'][route_key]
+                existing_path = normalize_path(existing_route['path'])
+                if existing_path == normalized_path:
+                    return True
+            return False
+        
         for key, value in config.items():
             path = f"{current_path}.{key}" if current_path else key
             
@@ -238,29 +262,94 @@ class Router:
                 # Handle sources structure
                 sources = value.get('sources', {})
                 
-                # Handle controls array
+                # Special handling for sustain section that has both value and level
+                if current_path.endswith('envelope.sustain'):
+                    if key == 'value' or key == 'level':
+                        if 'sources' in value and 'controls' in value['sources']:
+                            for control in value['sources']['controls']:
+                                route_info = {
+                                    'source_type': control.get('type'),
+                                    'source_event': control.get('event'),
+                                    'module': 'amplifier',
+                                    'path': normalize_path(f"{current_path}.{key}"),
+                                    'type': 'control',
+                                    'midi_range': control.get('midi_range'),
+                                    'output_range': value.get('output_range'),
+                                    'curve': value.get('curve'),
+                                    'transform': control.get('transform'),
+                                    'value': value.get('value')
+                                }
+                                
+                                if control.get('type') == 'cc':
+                                    route_info['source_event'] = str(control.get('number'))
+                                
+                                if not route_exists(route_info):
+                                    self.route_cache.add_control_route(route_info)
+                
+                # Handle timer structure
+                if 'timer' in sources:
+                    timer_info = sources['timer']
+                    
+                    # Add timer time control route if it exists
+                    if 'time' in timer_info and 'controls' in timer_info['time'].get('sources', {}):
+                        for control in timer_info['time']['sources']['controls']:
+                            route_info = {
+                                'source_type': control.get('type'),
+                                'source_event': control.get('event'),
+                                'module': 'amplifier',
+                                'path': normalize_path(f"{current_path}.sources.timer.time"),
+                                'type': 'control',
+                                'midi_range': control.get('midi_range'),
+                                'output_range': timer_info['time'].get('output_range'),
+                                'curve': timer_info['time'].get('curve'),
+                                'transform': control.get('transform'),
+                                'value': timer_info['time'].get('value')
+                            }
+                            
+                            if control.get('type') == 'cc':
+                                route_info['source_event'] = str(control.get('number'))
+                            
+                            if not route_exists(route_info):
+                                self.route_cache.add_control_route(route_info)
+                    
+                    # Add timer end trigger route if configured
+                    if 'end' in timer_info:
+                        route_info = {
+                            'source_type': 'timer',
+                            'source_event': 'end',
+                            'module': 'amplifier',
+                            'path': 'amplifier.envelope.release',
+                            'type': 'trigger',
+                            'midi_range': None,
+                            'output_range': None,
+                            'curve': None,
+                            'transform': None
+                        }
+                        self.route_cache.add_trigger_route(route_info)
+                
+                # Handle regular controls
                 if 'controls' in sources:
                     for control in sources['controls']:
                         route_info = {
                             'source_type': control.get('type'),
                             'source_event': control.get('event'),
                             'module': current_path.split('.')[0] if current_path else None,
-                            'path': path,
+                            'path': normalize_path(path),
                             'type': 'control',
                             'midi_range': control.get('midi_range'),
                             'output_range': value.get('output_range'),
                             'curve': value.get('curve'),
                             'transform': control.get('transform'),
-                            'value': value.get('value')  # Store static value for non-numeric params
+                            'value': value.get('value')
                         }
                         
-                        # Special handling for CC routes
                         if control.get('type') == 'cc':
                             route_info['source_event'] = str(control.get('number'))
                         
-                        self.route_cache.add_control_route(route_info)
+                        if not route_exists(route_info):
+                            self.route_cache.add_control_route(route_info)
                 
-                # Handle triggers
+                # Handle regular triggers
                 if 'triggers' in sources:
                     for trigger_name, trigger in sources['triggers'].items():
                         route_info = {

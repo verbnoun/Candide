@@ -49,6 +49,10 @@ class Timer:
         
         If timer is running, adjusts the start time to maintain relative progress
         """
+        if new_time is None:
+            _log(f"[ERROR] Timer {self.name} received None duration")
+            return
+            
         if not self.active:
             self.time_value = new_time
             _log(f"Timer {self.name} duration updated: {new_time}")
@@ -108,6 +112,7 @@ class TimerManager:
     """Manages collection of timers for synthesis"""
     def __init__(self):
         self.timers = {}
+        self.timer_callbacks = {}  # Map timer names to their callbacks
         _log("Timer manager initialized")
         
     def create_timer(self, name, initial_time=None):
@@ -129,13 +134,37 @@ class TimerManager:
         return self.timers.get(name)
         
     def update_timer(self, name, time_value):
-        """Update timer duration, creating if needed"""
+        """Update timer duration, creating if needed
+        
+        Args:
+            name: Timer identifier
+            time_value: New duration
+        """
         timer = self.timers.get(name)
         if timer:
             timer.update_time(time_value)
+            if not timer.is_active():
+                timer.start()
         else:
             timer = self.create_timer(name, time_value)
+            # Add any registered callbacks
+            if name in self.timer_callbacks:
+                timer.add_end_callback(self.timer_callbacks[name])
+            timer.start()
         return timer
+        
+    def register_callback(self, timer_name, callback):
+        """Register a callback for a timer
+        
+        Args:
+            timer_name: Name of timer to register callback for
+            callback: Function to call when timer ends
+        """
+        self.timer_callbacks[timer_name] = callback
+        # If timer already exists, add callback
+        timer = self.timers.get(timer_name)
+        if timer:
+            timer.add_end_callback(callback)
         
     def check_timers(self):
         """Check all timers and return elapsed ones
@@ -160,6 +189,7 @@ class TimerManager:
         for timer in self.timers.values():
             timer.stop()
         self.timers.clear()
+        self.timer_callbacks.clear()
 
 class WaveformManager:
     """Creates and manages waveforms for synthesis"""
@@ -262,13 +292,25 @@ class Synthesis:
             _log(f"[ERROR] Failed to create note: {str(e)}")
             return None
 
+    def register_timer_callback(self, note, timer_id, callback):
+        """Register a callback for a note's timer
+        
+        Args:
+            note: The note object
+            timer_id: Timer identifier (e.g. timer_sustain)
+            callback: Function to call when timer ends
+        """
+        timer_name = f"{id(note)}_{timer_id}"
+        self.timer_manager.register_callback(timer_name, callback)
+        _log(f"Registered callback for timer {timer_name}")
+
     def update_note(self, note, param_id, value):
         """Update synthio note parameter
         
         Args:
             note: synthio.Note instance
             param_id: Parameter identifier (frequency, amplitude, etc)
-            value: New parameter value (pre-normalized by router)
+            value: New parameter value
             
         Returns:
             bool: True if parameter was updated successfully
@@ -279,6 +321,12 @@ class Synthesis:
             
         try:
             _log(f"Updating note parameter: {param_id}={value}")
+            
+            # Handle timer parameters
+            if param_id.startswith('timer_'):
+                timer_name = f"{id(note)}_{param_id}"
+                self.timer_manager.update_timer(timer_name, value)
+                return True
             
             # Handle basic parameters
             if param_id == 'frequency':
@@ -383,14 +431,6 @@ class Synthesis:
                     )
                     _log(f"Updated filter resonance: {value}")
                     return True
-                    
-            # Handle timer updates
-            elif param_id.startswith('timer_'):
-                stage = param_id.split('timer_')[1]
-                timer_name = f"{id(note)}_{param_id}"
-                self.timer_manager.update_timer(timer_name, float(value))
-                _log(f"Updated timer {timer_name}: {value}")
-                return True
                     
             _log(f"[ERROR] Unhandled parameter: {param_id}")
             return False
