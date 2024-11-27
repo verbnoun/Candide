@@ -3,8 +3,7 @@ router.py - MIDI to Route Transformation
 
 Transforms MIDI messages into routes using config paths.
 Maintains path schema integrity when creating routes.
-Includes message culling, continuous signal filtering, and ring buffer.
-Pure transformation with minimal state for filtering.
+Includes message culling, continuous signal filtering, and fast lookup tables.
 """
 
 import sys
@@ -19,7 +18,7 @@ PITCH_BEND_THRESHOLD = 64    # For 14-bit values (0-16383)
 PRESSURE_THRESHOLD = 2       # For 7-bit values (0-127)
 TIMBRE_THRESHOLD = 2        # For 7-bit values (0-127)
 
-def _log(message, module="ROUTER"):
+def _log(message):
     """Conditional logging function that respects ROUTER_DEBUG flag."""
     if not ROUTER_DEBUG:
         return
@@ -45,7 +44,7 @@ def _log(message, module="ROUTER"):
             message.get('channel', 'unknown'),
             message.get('data', {})
         )
-        print(f"\n{LIGHT_MAGENTA}[{module}]\n{formatted}{RESET}\n", file=sys.stderr)
+        print(f"\n{LIGHT_MAGENTA}[ROUTER]\n{formatted}{RESET}\n", file=sys.stderr)
     elif isinstance(message, str):
         if "[ERROR]" in message:
             color = RED
@@ -53,29 +52,9 @@ def _log(message, module="ROUTER"):
             color = MAGENTA
         else:
             color = LIGHT_MAGENTA
-        print(f"{color}[{module}] {message}{RESET}", file=sys.stderr)
+        print(f"{color}[ROUTER] {message}{RESET}", file=sys.stderr)
     else:
-        print(f"{LIGHT_MAGENTA}[{module}] {message}{RESET}", file=sys.stderr)
-
-class RingBuffer:
-    """Simple ring buffer implementation for CircuitPython"""
-    def __init__(self, size):
-        self.data = []  # Use a regular list instead of deque
-        self.size = size
-        
-    def append(self, item):
-        if len(self.data) >= self.size:
-            self.data.pop(0)  # Remove oldest item if at capacity
-        self.data.append(item)
-        
-    def popleft(self):
-        if not self.data:
-            return None
-        return self.data.pop(0)  # Remove and return first item
-        
-    def __len__(self):
-        return len(self.data)
-
+        print(f"{LIGHT_MAGENTA}[ROUTER] {message}{RESET}", file=sys.stderr)
 
 class Router:
     def __init__(self, paths):
@@ -85,13 +64,13 @@ class Router:
         # Split paths and filter out empty lines
         self.paths = [p.strip() for p in paths.strip().split('\n') if p.strip()]
 
+        _log("Initializing lookup tables ...")
+        # Initialize lookup tables for fast access
+        self.accepted_messages = self._build_accepted_messages_lookup()
+
         _log("Initializing ring buffer ...")
         # Initialize ring buffer for pre-normalized messages
-        self.message_buffer = RingBuffer(BUFFER_SIZE)
-
-        _log("Building lookup of accepted message types")
-        # Build lookup of accepted message types from paths
-        self.accepted_messages = self._build_message_lookup()
+        self.message_buffer = deque(maxlen=BUFFER_SIZE)
 
         _log("Initializing state tracking...")
         # State tracking for continuous signal filtering
@@ -99,37 +78,37 @@ class Router:
         
         _log(f"Initialized router with {len(self.paths)} paths")
 
-    def _build_message_lookup(self):
+    def _build_accepted_messages_lookup(self):
         accepted = {
             'note_on': set(),    
             'note_off': False,   
             'pitch_bend': False, 
             'pressure': False,   
-            'cc': set()         
+            'cc': set()
         }
-        
+
         for path in self.paths:
             parts = path.split('/')
-            # Check both possible CC positions
-            for part in parts[-2:]:  # Last two elements
-                if part.startswith('cc'):
-                    try:
-                        cc_num = int(part[2:])
-                        accepted['cc'].add(cc_num)
-                        _log(f"Added CC: {cc_num}")
-                    except ValueError:
-                        _log(f"Bad CC: {part}")
-                    
-            # Regular source checks
-            source = parts[-1]
-            if source in ['velocity', 'note_number', 'note_on']:
-                accepted['note_on'].add(source)
-            elif source == 'note_off':
+            
+            # Build accepted message types lookup
+            signal_chain = parts[0]
+            param = parts[-1]
+            if signal_chain == 'oscillator':
+                if param in ['velocity', 'note_number', 'note_on']:
+                    accepted['note_on'].add(param)
+            elif param == 'note_off':
                 accepted['note_off'] = True
-            elif source == 'pitch_bend':
+            elif param == 'pitch_bend':
                 accepted['pitch_bend'] = True
-            elif source == 'channel_pressure':
+            elif param == 'channel_pressure':
                 accepted['pressure'] = True
+            elif param.startswith('cc'):
+                try:
+                    cc_num = int(param[2:])
+                    accepted['cc'].add(cc_num)
+                    _log(f"Added CC: {cc_num}")
+                except ValueError:
+                    _log(f"Bad CC: {param}")
 
         _log(f"CC numbers: {accepted['cc']}")
         return accepted
@@ -237,7 +216,11 @@ class Router:
             route_parts.extend(parts[2:-2])
         
         # Use provided normalized value
-        route_parts.append(str(value))
+        if value is not None:
+            route_parts.append(str(value))
+        else:
+            _log(f"[ERROR] No value provided for path: {path}")
+            return None
         
         route = '/'.join(route_parts)
         _log(f"Created route: {route}")
