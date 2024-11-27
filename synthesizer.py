@@ -8,7 +8,7 @@ All methods are stateless calculation tools.
 import sys
 import ulab.numpy as np
 import synthio
-from constants import SYNTH_DEBUG
+from constants import SYNTH_DEBUG, SAMPLE_RATE, AUDIO_CHANNEL_COUNT
 
 def _log(message, module="SYNTH"):
     """Enhanced logging for synthesis operations"""
@@ -77,10 +77,16 @@ class Synthesizer:
     """Synthesis calculation tools and value manipulation"""
     
     def __init__(self):
+        _log("Initializing Synthesizer class...")
+        _log("Setting up sample parameters...")
         self.SAMPLE_SIZE = 512
         self.SAMPLE_VOLUME = 32000  # Max 32767
-        self.synth = synthio.Synthesizer(sample_rate=11025)  # Create synthio instance
-        _log("Synthesizer initialized")
+        
+        _log("Creating synthio.Synthesizer instance...")
+        _log(f"Using SAMPLE_RATE={SAMPLE_RATE}, AUDIO_CHANNEL_COUNT={AUDIO_CHANNEL_COUNT}")
+        # Use keyword arguments as required by synthio.Synthesizer
+        self.synth = synthio.Synthesizer(sample_rate=SAMPLE_RATE, channel_count=AUDIO_CHANNEL_COUNT)
+        _log("Synthesizer initialization complete")
         
     # Wave Generation
     def create_wave(self, wave_type):
@@ -138,12 +144,8 @@ class Synthesizer:
                 _log("[ERROR] Failed to create LFO waveform")
                 return None
                 
-            return synthio.LFO(
-                waveform=waveform,
-                rate=rate, 
-                scale=scale, 
-                offset=offset
-            )
+            # Use positional args for LFO creation
+            return synthio.LFO(waveform, rate, scale, offset)
         except Exception as e:
             _log(f"[ERROR] LFO creation failed: {str(e)}")
             return None
@@ -219,12 +221,13 @@ class Synthesizer:
         })
         
         try:
+            # Use positional args for envelope creation
             return synthio.Envelope(
-                attack_time=envelope_params['attack_time'],
-                decay_time=envelope_params['decay_time'],
-                sustain_level=envelope_params['sustain_level'],
-                release_time=envelope_params['release_time'],
-                attack_level=envelope_params['attack_level']
+                envelope_params['attack_time'],
+                envelope_params['decay_time'],
+                envelope_params['release_time'],
+                envelope_params['attack_level'],
+                envelope_params['sustain_level']
             )
         except Exception as e:
             _log(f"[ERROR] Envelope creation failed: {str(e)}")

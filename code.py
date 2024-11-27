@@ -22,7 +22,7 @@ import busio
 from hardware import HardwareManager
 from config import CASIO_PATHS, ORGAN_PATHS, MPE_PATHS, SIGNAL_CHAIN_ORDER
 from midi import MidiLogic
-from voices import VoiceManager, BootBeep
+from voices import VoiceManager
 from router import Router
 from connection_manager import CandideConnectionManager
 from constants import *
@@ -223,7 +223,7 @@ class AudioSystem:
                 data=I2S_DATA
             )
 
-            # Initialize mixer
+            # Initialize mixer with keyword args
             _log("Initializing audio mixer...")
             self.mixer = audiomixer.Mixer(
                 sample_rate=SAMPLE_RATE,
@@ -231,7 +231,7 @@ class AudioSystem:
                 channel_count=AUDIO_CHANNEL_COUNT
             )
 
-            # Connect components
+            # Connect components - voice manager's synth -> mixer -> audio out
             self.audio_out.play(self.mixer)
             self.mixer.voice[0].play(self.voice_manager.get_synth())
 
@@ -239,6 +239,7 @@ class AudioSystem:
 
         except Exception as e:
             _log(f"[ERROR] Audio setup failed: {str(e)}")
+            self.cleanup()  # Ensure cleanup on error
             raise
 
     def set_volume(self, normalized_volume):
@@ -256,41 +257,45 @@ class AudioSystem:
         try:
             if self.mixer:
                 self.mixer.voice[0].level = 0
-                time.sleep(0.01)
+                time.sleep(0.01)  # Brief pause to let audio settle
             if self.audio_out:
                 self.audio_out.stop()
                 self.audio_out.deinit()
         except Exception as e:
             _log(f"[ERROR] Audio cleanup failed: {str(e)}")
 
-class SynthManager:
+class RouterManager:  # Renamed from SynthManager to clarify purpose
     """Manages instrument configuration and routing"""
     def __init__(self, voice_manager):
-        _log("Synth Manager init ...")
+        _log("Router Manager init ...")  # Updated log message
         self.voice_manager = voice_manager
         self.router = None
         self.current_instrument = 'casio'
-        self._setup_synth()
+        self._setup_router()
 
-    def _setup_synth(self):
-        _log("Setting up synth ...")
-        self.router = Router(CASIO_PATHS)  # Start with basic piano
-        _log("Synth setup complete")
+    def _setup_router(self):
+        _log("Setting up router ...")
+        # Pass CASIO_PATHS as a positional argument
+        self.router = Router(CASIO_PATHS)  # Fixed - using positional arg
+        _log("Router setup complete")
 
     def set_instrument(self, instrument_name):
         """Switch to new instrument"""
         _log(f"Switching to instrument: {instrument_name}")
         try:
+            paths = None
             if instrument_name == 'casio':
-                self.router = Router(CASIO_PATHS)
+                paths = CASIO_PATHS
             elif instrument_name == 'organ':
-                self.router = Router(ORGAN_PATHS)
+                paths = ORGAN_PATHS
             elif instrument_name == 'mpe':
-                self.router = Router(MPE_PATHS)
+                paths = MPE_PATHS
             else:
                 _log(f"[ERROR] Unknown instrument: {instrument_name}")
                 return
-                
+            
+            # Create new Router with paths as positional argument    
+            self.router = Router(paths)  # Fixed - using positional arg
             self.current_instrument = instrument_name
             _log(f"Switched to {instrument_name}")
             
@@ -311,44 +316,48 @@ class Candide:
     def __init__(self):
         _log("\nWakeup Candide!\n", effect='cycle')
         
-        # Play boot beep before anything else
-        try:
-            boot_beep = BootBeep()
-            boot_beep.play()
-        except Exception as e:
-            _log(f"[ERROR] Boot beep failed: {str(e)}")
-        
-        # Initialize voice manager first since it owns synthio
-        self.voice_manager = VoiceManager()
-        
-        # Initialize audio system with voice manager
-        self.audio_system = AudioSystem(self.voice_manager)
+        # Initialize hardware manager (includes boot beep)
+        _log("Initializing hardware manager...")
         self.hardware_manager = HardwareManager()
-        
-        # Initialize synth manager with voice manager
-        self.synth_manager = SynthManager(self.voice_manager)
-        
+
         # Create single shared UART transport
+        _log("Creating UART transport...")
         self.transport = TransportFactory.create_uart_transport(
             tx_pin=UART_TX,
             rx_pin=UART_RX,
             baudrate=UART_BAUDRATE,
             timeout=UART_TIMEOUT
         )
-        
+
         # Create text protocol using shared transport
+        _log("Creating text protocol...")
         self.text_uart = TransportFactory.create_text_protocol(self.transport)
+
+        # Initialize voice manager first since it owns synthio
+        _log("Initializing voice manager...")
+        self.voice_manager = VoiceManager()
+
+        # Initialize audio system with voice manager
+        _log("Initializing audio system...")
+        self.audio_system = AudioSystem(self.voice_manager)
         
+        # Initialize router manager with voice manager
+        _log("Initializing router manager...")
+        self.router_manager = RouterManager(self.voice_manager)
+
+        # Initialize connection manager
+        _log("Initializing connection manager...")
         self.connection_manager = CandideConnectionManager(
             self.text_uart,
-            self.synth_manager,
+            self.router_manager,  # Needed for getting instrument config
             self.transport
         )
-        
-        # Initialize MIDI with shared transport and router
+
+        # Initialize MIDI after connection manager
+        _log("Initializing MIDI system...")
         self.midi = MidiLogic(
             uart=self.transport,
-            router=self.synth_manager.router,
+            router=self.router_manager.router,
             connection_manager=self.connection_manager,
             voice_manager=self.voice_manager
         )
@@ -357,6 +366,7 @@ class Candide:
         self.last_volume_scan = 0
 
         try:
+            _log("Setting initial volume...")
             initial_volume = self.hardware_manager.get_initial_volume()
             _log(f"Initial volume: {initial_volume:.3f}")
             self.audio_system.set_volume(initial_volume)
@@ -382,11 +392,11 @@ class Candide:
                     _log(f"Encoder events: {events}")
                     if event_type == 'instrument_change':
                         instruments = ['casio', 'organ', 'mpe']
-                        current_idx = instruments.index(self.synth_manager.current_instrument)
+                        current_idx = instruments.index(self.router_manager.current_instrument)  # Updated reference
                         new_idx = (current_idx + direction) % len(instruments)
                         new_instrument = instruments[new_idx]
                         _log(f"Switching to instrument: {new_instrument}")
-                        self.synth_manager.set_instrument(new_instrument)
+                        self.router_manager.set_instrument(new_instrument)  # Updated reference
                         # Send new config if connected
                         self.connection_manager.send_config()
                             

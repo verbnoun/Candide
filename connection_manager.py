@@ -34,17 +34,30 @@ class ConnectionState:
 class CandideConnectionManager:
     """Manages connection state and handshake protocol"""
     
-    def __init__(self, text_uart, synth_manager, transport_manager):
+    def __init__(self, text_uart, router_manager, transport_manager):
+        """Initialize connection manager.
+        
+        Args:
+            text_uart: Text protocol for communication
+            router_manager: Router manager for instrument routing 
+            transport_manager: Transport manager for MIDI
+        """
+        if text_uart is None or router_manager is None or transport_manager is None:
+            raise ValueError("Required arguments cannot be None")
+        
+        _log("Setting uart, router_manager, transport")
         self.uart = text_uart
-        self.synth_manager = synth_manager
+        self.router_manager = router_manager  # Updated from synth_manager
         self.transport = transport_manager
         
         # Initialize detection pin
+        _log("Initializing detection pin ...")
         self.detect_pin = digitalio.DigitalInOut(DETECT_PIN)
         self.detect_pin.direction = digitalio.Direction.INPUT
         self.detect_pin.pull = digitalio.Pull.DOWN
         
-        # Initialize state variables
+        # Initialize state variables 
+        _log("Initializing state variables ...")
         self.state = ConnectionState.STANDALONE
         self.last_hello_time = 0
         self.last_heartbeat_time = 0

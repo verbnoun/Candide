@@ -53,7 +53,19 @@ def _log(message):
 
 class MidiLogic:
     """Handles MIDI message parsing and routing"""
-    def __init__(self, uart, router, connection_manager, voice_manager):
+    def __init__(self, *, uart=None, router=None, connection_manager=None, voice_manager=None):
+        """
+        Initialize MIDI Logic with keyword-only arguments
+        
+        Args:
+            uart: Transport instance for MIDI communication
+            router: Router for processing MIDI messages
+            connection_manager: Connection manager for handshake and state
+            voice_manager: Voice manager for synthesizer control
+        """
+        if uart is None or router is None or connection_manager is None or voice_manager is None:
+            raise ValueError("All arguments (uart, router, connection_manager, voice_manager) are required")
+        
         _log("Initializing MIDI Logic")
         self.uart = uart  # Now expects a transport instance
         self.router = router

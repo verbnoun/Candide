@@ -8,9 +8,8 @@ Handles all possible routes based on config path structure.
 import time
 import sys
 import synthio
-import audiobusio
 from synthesizer import Synthesizer
-from constants import VOICES_DEBUG, SAMPLE_RATE, AUDIO_CHANNEL_COUNT, I2S_BIT_CLOCK, I2S_WORD_SELECT, I2S_DATA
+from constants import VOICES_DEBUG, SAMPLE_RATE, AUDIO_CHANNEL_COUNT
 
 def _log(message, module="VOICES"):
     """Strategic logging for voice state changes"""
@@ -88,11 +87,8 @@ class Voice:
         # Convert MIDI note number to frequency using synthesizer
         frequency = self.synth_tools.note_to_frequency(note_number)
         
-        # Create basic note - other parameters will be set by routes
-        self.note = synthio.Note(
-            frequency=frequency,
-            amplitude=0.0  # Start silent until routes configure
-        )
+        # Create basic note with frequency keyword arg
+        self.note = synthio.Note(frequency=frequency)
 
         # Apply any pre-note channel state
         if 'pitch_bend' in self.channel_state:
@@ -302,18 +298,25 @@ class VoiceManager:
     Routes parameter updates to appropriate voices.
     """
     def __init__(self):
+        _log("Starting VoiceManager initialization...")
+        _log("Creating voice collection...")
         self.voices = {}  # identifier -> Voice mapping
+        
+        _log("Creating synthesis tools instance (synthesizer.py Synthesizer)...")
         self.synth_tools = Synthesizer()  # Calculation tools
-        self.synth = synthio.Synthesizer(
-            sample_rate=SAMPLE_RATE,
-            channel_count=AUDIO_CHANNEL_COUNT
-        )
+        
+        _log("Creating main synthio.Synthesizer instance...")
+        _log(f"Parameters: SAMPLE_RATE={SAMPLE_RATE}, AUDIO_CHANNEL_COUNT={AUDIO_CHANNEL_COUNT}")
+        # Create synth with keyword args
+        self.synth = synthio.Synthesizer(sample_rate=SAMPLE_RATE, channel_count=AUDIO_CHANNEL_COUNT)
         self.max_voices = self.synth.max_polyphony
+        _log(f"Synthesizer created with max_polyphony={self.max_voices}")
         
         # Track pre-note MPE state per channel
+        _log("Initializing channel state tracking...")
         self.channel_state = {}  # channel -> {param: value}
         
-        _log("Voice manager initialized")
+        _log("VoiceManager initialization complete")
 
     def get_synth(self):
         """Get the synthesizer instance for audio system"""
@@ -383,62 +386,3 @@ class VoiceManager:
         if self.synth:
             self.synth.deinit()
             _log("Synthesizer cleaned up")
-
-class BootBeep:
-    """Simple boot beep that can run independently"""
-    def __init__(self, bit_clock=I2S_BIT_CLOCK, word_select=I2S_WORD_SELECT, data=I2S_DATA):
-        _log("Initializing BootBeep", "BOOTBEEP")
-        self.bit_clock = bit_clock
-        self.word_select = word_select
-        self.data = data
-        self.audio_out = None
-        
-    def play(self):
-        """Play a boot beep"""
-        try:
-            # Setup I2S
-            _log("Setting up I2S output...", "BOOTBEEP")
-            self.audio_out = audiobusio.I2SOut(
-                bit_clock=self.bit_clock,
-                word_select=self.word_select,
-                data=self.data
-            )
-            _log("I2S initialized successfully", "BOOTBEEP")
-            
-            # Create synth
-            _log("Creating synthesizer...", "BOOTBEEP")
-            synth = synthio.Synthesizer(sample_rate=SAMPLE_RATE)
-            self.audio_out.play(synth)
-            _log("Synthesizer playing", "BOOTBEEP")
-            
-            # Play gentle beep
-            _log("Playing boot sound...", "BOOTBEEP")
-            synth.press(64)  # A5 note
-            time.sleep(0.10)  # Duration
-            
-            _log("Note released...", "BOOTBEEP")
-            synth.release(81)
-            time.sleep(0.05)  # Let release finish
-            
-            _log("Audio playback completed", "BOOTBEEP")
-            
-            # Cleanup
-            _log("Starting cleanup...", "BOOTBEEP")
-            synth.deinit()
-            _log("Synthesizer deinitialized", "BOOTBEEP")
-            self.audio_out.deinit()
-            _log("I2S deinitialized", "BOOTBEEP")
-            self.audio_out = None
-            _log("Cleanup complete", "BOOTBEEP")
-            
-        except Exception as e:
-            _log(f"[ERROR] BootBeep failed: {str(e)}", "BOOTBEEP")
-            if self.audio_out:
-                _log("Emergency cleanup of I2S...", "BOOTBEEP")
-                try:
-                    self.audio_out.deinit()
-                    _log("Emergency cleanup successful", "BOOTBEEP")
-                except:
-                    _log("[ERROR] Emergency cleanup failed", "BOOTBEEP")
-                self.audio_out = None
-            raise e

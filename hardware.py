@@ -11,18 +11,53 @@ Key Responsibilities:
 - Provide normalized hardware input processing
 - Support hardware-level configuration and constants
 - Enable precise input reading and filtering
-
-Primary Classes:
-- HardwareComponent: Base class for hardware components
-- VolumeManager: Manages volume potentiometer
-- EncoderManager: Manages instrument selection encoder
-- HardwareManager: Coordinates hardware components
+- Test audio output hardware on boot
 """
 
 import board
 import analogio
 import rotaryio
+import time
+import synthio
+import audiobusio
 from constants import *
+
+class BootBeep:
+    """Simple audio hardware test that runs independently"""
+    def play(self):
+        audio_out = None
+        try:
+            # Use same pins as main audio system
+            _log("BootBeep: Deinitializing any existing I2S...")
+            audiobusio.I2SOut(I2S_BIT_CLOCK, I2S_WORD_SELECT, I2S_DATA).deinit()
+            
+            _log("BootBeep: Creating I2S output...")
+            audio_out = audiobusio.I2SOut(I2S_BIT_CLOCK, I2S_WORD_SELECT, I2S_DATA)
+            
+            _log("BootBeep: Creating synthesizer...")
+            _log(f"BootBeep: Parameters: SAMPLE_RATE={SAMPLE_RATE}, AUDIO_CHANNEL_COUNT={AUDIO_CHANNEL_COUNT}")
+            synth = synthio.Synthesizer(sample_rate=SAMPLE_RATE, channel_count=AUDIO_CHANNEL_COUNT)
+            
+            _log("BootBeep: Playing synthesizer...")
+            audio_out.play(synth)
+            
+            _log("BootBeep: Pressing note...")
+            synth.press(64)
+            time.sleep(0.1)
+            
+            _log("BootBeep: Releasing note...")
+            synth.release(64)
+            time.sleep(0.05)
+            
+            _log("BootBeep: Cleaning up...")
+            synth.deinit()
+            audio_out.deinit()  # Important: free up I2S pins
+            print("[BOOTBEEP] beep")
+            
+        except Exception as e:
+            print(f"[BOOTBEEP] error: {str(e)}")
+            if audio_out:
+                audio_out.deinit()  # Ensure pins are freed even on error
 
 class HardwareComponent:
     """Base class for hardware components"""
@@ -113,6 +148,12 @@ class EncoderManager(HardwareComponent):
 class HardwareManager:
     """Coordinates hardware component interactions"""
     def __init__(self):
+        _log("Starting HardwareManager initialization...")
+        
+        # Test audio hardware first
+        _log("Running BootBeep test...")
+        BootBeep().play()
+        
         self.volume = None
         self.encoder = None
         self._initialize_components()
@@ -120,8 +161,13 @@ class HardwareManager:
     def _initialize_components(self):
         """Initialize all hardware components"""
         try:
+            _log("Initializing volume manager...")
             self.volume = VolumeManager(VOLUME_POT)
+            
+            _log("Initializing encoder manager...")
             self.encoder = EncoderManager(INSTRUMENT_ENC_CLK, INSTRUMENT_ENC_DT)
+            
+            _log("Hardware components initialized successfully")
         except Exception as e:
             print(f"[ERROR] Hardware initialization failed: {str(e)}")
             self.cleanup()
@@ -154,3 +200,9 @@ class HardwareManager:
         if self.volume:
             self.volume.cleanup()
             self.volume = None
+
+def _log(message):
+    """Hardware-specific logging"""
+    if not HARDWARE_DEBUG:
+        return
+    print(f"[HARDWARE] {message}")
