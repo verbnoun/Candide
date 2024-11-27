@@ -75,8 +75,8 @@ class Router:
             return normalized
             
         except ValueError:
-            _log(f"[ERROR] Invalid range format: {range_str}")
-            return value
+            # Not a range string, might be a waveform type or other value
+            return range_str
 
     def create_route_from_path(self, path, channel, value, note=None):
         """Create route from path, replacing scope with target and range/source with value"""
@@ -103,10 +103,18 @@ class Router:
         if len(parts) > 4:
             route_parts.extend(parts[2:-2])
             
-        route_parts.append(str(value))  # normalized value
+        # Special handling for waveform
+        if parts[2] == 'waveform':
+            route_parts.append(parts[2])  # Add 'waveform'
+            route_parts.append(parts[3])  # Add waveform type
+        else:
+            # Use provided value or path default if present
+            if value is None and len(parts) > 5:
+                value = parts[5]
+            route_parts.append(str(value))
         
         route = '/'.join(route_parts)
-        _log(f"Created route: {route}")  # Simplified logging
+        _log(f"Created route: {route}")
         return route
 
     def process_message(self, message, voice_manager):
@@ -142,6 +150,12 @@ class Router:
                     if route:
                         routes.append(route)
                         
+                # Note_on triggered paths
+                elif source == 'note_on':
+                    route = self.create_route_from_path(path, channel, None, note_name)
+                    if route:
+                        routes.append(route)
+                        
                 # Initial expression states
                 elif source == 'pitch_bend':
                     value = self.normalize_value(message['data']['initial_pitch_bend'], range_str)
@@ -165,8 +179,10 @@ class Router:
             note_name = f"C{message['data']['note']}"  # TODO: proper note name conversion
             # Create release route maintaining path structure
             for path in self.paths:
-                if 'release' in path:
-                    route = self.create_route_from_path(path, channel, 1, note_name)
+                parts = path.split('/')
+                source = parts[-1]
+                if source == 'note_off':
+                    route = self.create_route_from_path(path, channel, None, note_name)
                     if route:
                         routes.append(route)
 

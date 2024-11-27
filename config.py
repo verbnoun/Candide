@@ -6,22 +6,27 @@ Each set of paths defines a complete instrument specification.
 Paths are authoritative - no defaults or validation needed.
 """
 
-# Basic toy piano configuration
+# Basic toy piano configuration with minimum needed paths for synthio
 CASIO_PATHS = '''
-oscillator/per_key/frequency/20-20000/note_number/440
-oscillator/per_key/waveform/na/na/square
-amplifier/per_key/gain/0-1/velocity/1
-amplifier/per_key/envelope/attack_time/0.001-5/na/0.01
-amplifier/per_key/envelope/release_time/0.001-5/na/0.1
-amplifier/per_key/envelope/sustain_level/0-1/na/0.8
+oscillator/per_key/frequency/20-20000/note_number
+oscillator/per_key/waveform/square/note_on
+amplifier/per_key/gain/0-1/velocity
+amplifier/per_key/envelope/attack_time/0.001-5/cc73/0.01
+amplifier/per_key/envelope/decay_time/0.001-5/cc75/0.05
+amplifier/per_key/envelope/attack_level/0-1/cc72/1.0
+amplifier/per_key/envelope/sustain_level/0-1/cc70/0.8
+amplifier/per_key/envelope/attack/trigger/note_on
+amplifier/per_key/envelope/release/trigger/note_off
 '''
 
 # Pressure-sensitive organ configuration 
 ORGAN_PATHS = '''
 oscillator/per_key/frequency/20-20000/note_number/440
-oscillator/per_key/waveform/na/cc70/sine
+oscillator/per_key/trigger/na/note_on
+oscillator/per_key/waveform/sine/note_on
 oscillator/ring/per_key/frequency/20-20000/na/880
-oscillator/ring/per_key/waveform/na/na/sine
+oscillator/ring/per_key/trigger/na/note_on
+oscillator/ring/per_key/waveform/sine/note_on
 
 filter/per_key/frequency/20-20000/cc74/1000
 filter/per_key/resonance/0.1-2.0/cc71/0.7
@@ -38,14 +43,16 @@ amplifier/per_key/envelope/release_time/0.001-5/cc72/0.2
 # Full MPE configuration
 MPE_PATHS = '''
 oscillator/per_key/frequency/20-20000/note_number/440
+oscillator/per_key/trigger/na/note_on
 oscillator/per_key/bend/-48-48/pitch_bend/0
 oscillator/global/bend/-2-2/pitch_bend/0
-oscillator/per_key/waveform/na/cc70/sine
+oscillator/per_key/waveform/sine/note_on
 oscillator/per_key/envelope/frequency/attack_time/0.001-5/cc73/0.1
 oscillator/per_key/envelope/frequency/attack_level/0-1/velocity/1
 
 oscillator/ring/per_key/frequency/20-20000/cc74/440
-oscillator/ring/per_key/waveform/na/cc75/sine
+oscillator/ring/per_key/trigger/na/note_on
+oscillator/ring/per_key/waveform/sine/note_on
 oscillator/ring/per_key/bend/-48-48/pitch_bend/0
 oscillator/ring/per_key/envelope/frequency/attack_time/0.001-5/cc76/0.1
 

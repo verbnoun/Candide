@@ -79,6 +79,7 @@ class Synthesizer:
     def __init__(self):
         self.SAMPLE_SIZE = 512
         self.SAMPLE_VOLUME = 32000  # Max 32767
+        self.synth = synthio.Synthesizer(sample_rate=11025)  # Create synthio instance
         _log("Synthesizer initialized")
         
     # Wave Generation
@@ -122,6 +123,10 @@ class Synthesizer:
         except Exception as e:
             _log(f"[ERROR] Wave creation failed: {str(e)}")
             return None
+
+    def note_to_frequency(self, note_number):
+        """Convert MIDI note number to frequency using synthio"""
+        return synthio.midi_to_hz(note_number)
             
     # LFO Creation
     def create_lfo(self, rate, scale, offset=0, wave_type='sine'):
@@ -164,9 +169,9 @@ class Synthesizer:
         try:
             # Create appropriate filter type based on frequency range
             if frequency < 100:  # High pass for very low frequencies
-                return synthio.high_pass_filter(frequency, resonance)
+                return self.synth.high_pass_filter(frequency, resonance)
             else:  # Low pass for most frequencies
-                return synthio.low_pass_filter(frequency, resonance)
+                return self.synth.low_pass_filter(frequency, resonance)
         except Exception as e:
             _log(f"[ERROR] Filter creation failed: {str(e)}")
             return None
