@@ -35,21 +35,22 @@ def _format_log_message(message):
 
 def _log(message):
     """Conditional logging function"""
+    if not MIDI_DEBUG:
+        return
+        
     RED = "\033[31m"
     LIGHT_CYAN = "\033[96m"
-    RESET = "\033[0m" 
+    RESET = "\033[0m"
     
-    if MIDI_DEBUG:
+    if isinstance(message, dict):
+        formatted_message = _format_log_message(message)
+        print(f"{LIGHT_CYAN}{formatted_message}{RESET}", file=sys.stderr)
+    else:
         if "[ERROR]" in str(message):
             color = RED
         else:
             color = LIGHT_CYAN
-        
-        if isinstance(message, dict):
-            formatted_message = _format_log_message(message)
-            print(f"{color}{formatted_message}{RESET}", file=sys.stderr)
-        else:
-            print(f"{color}[MIDI  ] {message}{RESET}", file=sys.stderr)
+        print(f"{color}[MIDI  ] {message}{RESET}", file=sys.stderr)
 
 class MidiLogic:
     """Handles MIDI message parsing and routing"""
@@ -67,7 +68,7 @@ class MidiLogic:
             raise ValueError("All arguments (uart, router, connection_manager, voice_manager) are required")
         
         _log("Initializing MIDI Logic")
-        self.uart = uart  # Now expects a transport instance
+        self.uart = uart
         self.router = router
         self.connection_manager = connection_manager
         self.voice_manager = voice_manager
@@ -83,6 +84,10 @@ class MidiLogic:
             }
             
         # Track partial message state
+        self.reset_partial_message()
+
+    def reset_partial_message(self):
+        """Reset partial message tracking to initial state"""
         self.partial_message = {
             'status': None,
             'bytes_received': [],
@@ -109,6 +114,16 @@ class MidiLogic:
         
         return "\n".join(lines)
 
+    def flush_uart_buffer(self):
+        """Clear all pending data from UART buffer"""
+        _log(f"Flushing UART buffer - bytes waiting: {self.uart.in_waiting}")
+        try:
+            while self.uart.in_waiting:
+                self.uart.read(1)
+            _log("UART buffer flushed")
+        except Exception as e:
+            _log(f"[ERROR] Failed to flush UART: {str(e)}")
+
     def check_for_messages(self):
         """Check for and parse MIDI messages"""
         try:
@@ -123,6 +138,7 @@ class MidiLogic:
                     if status & 0x80:  # Is this a status byte?
                         channel = status & 0x0F
                         msg_type = status & 0xF0
+                        _log(f"Status byte: 0x{status:02X}, channel: {channel}, msg_type: 0x{msg_type:02X}")
 
                         # Determine expected number of data bytes based on message type
                         if msg_type in [MidiMessageType.NOTE_ON, MidiMessageType.NOTE_OFF, MidiMessageType.CONTROL_CHANGE]:
@@ -143,113 +159,120 @@ class MidiLogic:
                             'bytes_received': [],
                             'expected_bytes': expected_bytes
                         }
+                        _log(f"New partial message state: {self.partial_message}")
 
                 # Read data bytes for the current message
                 while len(self.partial_message['bytes_received']) < self.partial_message['expected_bytes']:
                     data_byte = self.uart.read(1)
                     if data_byte is None:
-                        # Not enough bytes yet, wait for next iteration
+                        _log("Incomplete data bytes - waiting for more")
                         return
                     self.partial_message['bytes_received'].append(data_byte[0])
+                    _log(f"Data bytes received: {self.partial_message['bytes_received']}")
 
                 # Process the complete message
-                status = self.partial_message['status']
-                channel = self.partial_message['channel']
-                msg_type = self.partial_message['msg_type']
-                data_bytes = self.partial_message['bytes_received']
-                event = None
-
-                if msg_type == MidiMessageType.NOTE_ON:
-                    event = {
-                        'type': 'note_on',
-                        'channel': channel,
-                        'data': {
-                            'note': data_bytes[0],
-                            'velocity': data_bytes[1],
-                            # Include current MPE state
-                            'initial_pitch_bend': self.channel_state[channel]['pitch_bend'],
-                            'initial_pressure': self.channel_state[channel]['pressure'],
-                            'initial_timbre': self.channel_state[channel]['cc74']
-                        }
-                    }
-                    _log(f"Received from Controller: Note On")
-                    _log(event)
-                    self.channel_state[channel]['in_mpe_setup'] = False
-
-                elif msg_type == MidiMessageType.NOTE_OFF:
-                    event = {
-                        'type': 'note_off',
-                        'channel': channel,
-                        'data': {
-                            'note': data_bytes[0],
-                            'velocity': data_bytes[1]
-                        }
-                    }
-                    _log(f"Received from Controller: Note Off")
-                    _log(event)
-
-                elif msg_type == MidiMessageType.CONTROL_CHANGE:
-                    # Track CC74 (timbre) state
-                    if data_bytes[0] == 74:
-                        self.channel_state[channel]['cc74'] = data_bytes[1]
+                try:
+                    status = self.partial_message['status']
+                    channel = self.partial_message['channel']
+                    msg_type = self.partial_message['msg_type']
+                    data_bytes = self.partial_message['bytes_received']
+                    _log(f"Complete message assembled - status: 0x{status:02X}, data: {data_bytes}")
                     
-                    event = {
-                        'type': 'cc',
-                        'channel': channel,
-                        'data': {
-                            'number': data_bytes[0],
-                            'value': data_bytes[1]
+                    event = None
+
+                    if msg_type == MidiMessageType.NOTE_ON:
+                        event = {
+                            'type': 'note_on',
+                            'channel': channel,
+                            'data': {
+                                'note': data_bytes[0],
+                                'velocity': data_bytes[1],
+                                'initial_pitch_bend': self.channel_state[channel]['pitch_bend'],
+                                'initial_pressure': self.channel_state[channel]['pressure'],
+                                'initial_timbre': self.channel_state[channel]['cc74']
+                            }
                         }
-                    }
-                    _log(f"Received from Controller: CC")
-                    _log(event)
+                        _log(f"Received from Controller: Note On")
+                        _log(event)
+                        self.channel_state[channel]['in_mpe_setup'] = False
 
-                elif msg_type == MidiMessageType.CHANNEL_PRESSURE:
-                    # Track pressure state
-                    self.channel_state[channel]['pressure'] = data_bytes[0]
-                    event = {
-                        'type': 'pressure',
-                        'channel': channel,
-                        'data': {
-                            'value': data_bytes[0]
+                    elif msg_type == MidiMessageType.NOTE_OFF:
+                        event = {
+                            'type': 'note_off',
+                            'channel': channel,
+                            'data': {
+                                'note': data_bytes[0],
+                                'velocity': data_bytes[1]
+                            }
                         }
-                    }
-                    _log(f"Received from Controller: Channel Pressure")
-                    _log(event)
+                        _log(f"Received from Controller: Note Off")
+                        _log(event)
 
-                elif msg_type == MidiMessageType.PITCH_BEND:
-                    bend_value = (data_bytes[1] << 7) | data_bytes[0]
-                    # Track pitch bend state
-                    self.channel_state[channel]['pitch_bend'] = bend_value
-                    event = {
-                        'type': 'pitch_bend',
-                        'channel': channel,
-                        'data': {
-                            'value': bend_value
+                    elif msg_type == MidiMessageType.CONTROL_CHANGE:
+                        if data_bytes[0] == 74:  # CC74 (timbre)
+                            self.channel_state[channel]['cc74'] = data_bytes[1]
+                        
+                        event = {
+                            'type': 'cc',
+                            'channel': channel,
+                            'data': {
+                                'number': data_bytes[0],
+                                'value': data_bytes[1]
+                            }
                         }
-                    }
-                    _log(f"Received from Controller: Pitch Bend")
-                    _log(event)
+                        _log(f"Received from Controller: CC")
+                        _log(event)
 
-                # Route message to both connection manager and router
-                if event:
-                    # Always send to connection manager for handshake detection
-                    self.connection_manager.handle_midi_message(event)
-                    
-                    # Send to router if connection manager is in connected state
-                    if self.connection_manager.is_connected():
-                        self.router.process_message(event, self.voice_manager)
+                    elif msg_type == MidiMessageType.CHANNEL_PRESSURE:
+                        self.channel_state[channel]['pressure'] = data_bytes[0]
+                        event = {
+                            'type': 'pressure',
+                            'channel': channel,
+                            'data': {
+                                'value': data_bytes[0]
+                            }
+                        }
+                        _log(f"Received from Controller: Channel Pressure")
+                        _log(event)
 
-                # Reset partial message tracking
-                self.partial_message = {
-                    'status': None,
-                    'bytes_received': [],
-                    'expected_bytes': 0
-                }
+                    elif msg_type == MidiMessageType.PITCH_BEND:
+                        bend_value = (data_bytes[1] << 7) | data_bytes[0]
+                        self.channel_state[channel]['pitch_bend'] = bend_value
+                        event = {
+                            'type': 'pitch_bend',
+                            'channel': channel,
+                            'data': {
+                                'value': bend_value
+                            }
+                        }
+                        _log(f"Received from Controller: Pitch Bend")
+                        _log(event)
+
+                    # Route message if we created an event
+                    if event:
+                        self.connection_manager.handle_midi_message(event)
+                        if self.connection_manager.is_connected():
+                            self.router.process_message(event, self.voice_manager)
+
+                except Exception as e:
+                    _log(f"[ERROR] Error processing message: {str(e)}")
+                    self.flush_uart_buffer()
+                    self.reset_partial_message()
+                    return
+
+                # Reset partial message tracking and log
+                self.reset_partial_message()
+                _log("Partial message cleared")
 
         except Exception as e:
             _log(f"[ERROR] Error reading UART: {str(e)}")
+            _log(f"Error occurred with partial message state: {self.partial_message}")
+            _log(f"UART in_waiting after error: {self.uart.in_waiting}")
+            # Clean up on error
+            self.flush_uart_buffer()
+            self.reset_partial_message()
 
     def cleanup(self):
         """Clean shutdown"""
         _log("Cleaning up MIDI system...")
+        self.flush_uart_buffer()

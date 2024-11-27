@@ -57,9 +57,6 @@ def _log(message, module="ROUTER"):
     else:
         print(f"{LIGHT_MAGENTA}[{module}] {message}{RESET}", file=sys.stderr)
 
-# Ring buffer size - adjust based on expected message rate and processing time
-BUFFER_SIZE = 64  # Conservative size for Pico
-
 class RingBuffer:
     """Simple ring buffer implementation for CircuitPython"""
     def __init__(self, size):
@@ -151,7 +148,10 @@ class Router:
             return not self.accepted_messages['pressure']
         elif msg_type == 'cc':
             cc_num = message['data']['number']
-            return cc_num not in self.accepted_messages['cc']
+            culled = cc_num not in self.accepted_messages['cc']
+            if culled:
+                _log(f"[REJECTED] Culled CC {cc_num} - not in accepted list: {self.accepted_messages['cc']}")
+            return culled
                 
         return True  # Cull unknown message types
 
@@ -214,23 +214,20 @@ class Router:
             # Not a range string, might be a waveform type or other value
             return range_str
 
-    def create_route_from_path(self, path, channel, value, note=None):
-        """Create route from path, replacing scope with target and range/source with value"""
+    def create_route(self, path, channel, value, range_str):
+        """Create route from path and normalized value"""
         parts = path.split('/')
         
         if len(parts) < 4:  # Ensure minimum path structure
             _log(f"[ERROR] Invalid path structure: {path}")
             return None
-            
+        
         # Handle global vs per_key scope
         if parts[1] == 'global':
             target = 'global'
         else:
-            if note is None:  # Non-note messages still need a note target
-                _log("[REJECTED] Missing note for per-key route")
-                return None
-            target = f"{note}.{channel}"
-            
+            target = f"{parts[0]}.{channel}"
+        
         # Build route parts safely
         route_parts = [parts[0]]  # signal chain
         route_parts.append(target)  # target (replaces scope)
@@ -238,16 +235,9 @@ class Router:
         # Add middle parts (if any exist)
         if len(parts) > 4:
             route_parts.extend(parts[2:-2])
-            
-        # Special handling for waveform
-        if parts[2] == 'waveform':
-            route_parts.append(parts[2])  # Add 'waveform'
-            route_parts.append(parts[3])  # Add waveform type
-        else:
-            # Use provided value or path default if present
-            if value is None and len(parts) > 5:
-                value = parts[5]
-            route_parts.append(str(value))
+        
+        # Use provided normalized value
+        route_parts.append(str(value))
         
         route = '/'.join(route_parts)
         _log(f"Created route: {route}")
@@ -295,36 +285,36 @@ class Router:
                 
                 if source == 'note_number':
                     value = self.normalize_value(note_num, range_str)
-                    route = self.create_route_from_path(path, channel, value, note_name)
+                    route = self.create_route(path, channel, value, range_str)
                     if route:
                         routes.append(route)
                         
                 elif source == 'velocity':
                     value = self.normalize_value(velocity, range_str)
-                    route = self.create_route_from_path(path, channel, value, note_name)
+                    route = self.create_route(path, channel, value, range_str)
                     if route:
                         routes.append(route)
                         
                 elif source == 'note_on':
-                    route = self.create_route_from_path(path, channel, None, note_name)
+                    route = self.create_route(path, channel, None, None)
                     if route:
                         routes.append(route)
                         
                 elif source == 'pitch_bend':
                     value = self.normalize_value(message['data']['initial_pitch_bend'], range_str)
-                    route = self.create_route_from_path(path, channel, value, note_name)
+                    route = self.create_route(path, channel, value, range_str)
                     if route:
                         routes.append(route)
                         
                 elif source == 'channel_pressure':
                     value = self.normalize_value(message['data']['initial_pressure'], range_str)
-                    route = self.create_route_from_path(path, channel, value, note_name)
+                    route = self.create_route(path, channel, value, range_str)
                     if route:
                         routes.append(route)
                         
                 elif source == 'cc74':
                     value = self.normalize_value(message['data']['initial_timbre'], range_str)
-                    route = self.create_route_from_path(path, channel, value, note_name)
+                    route = self.create_route(path, channel, value, range_str)
                     if route:
                         routes.append(route)
 
@@ -334,7 +324,7 @@ class Router:
                 parts = path.split('/')
                 source = parts[-1]
                 if source == 'note_off':
-                    route = self.create_route_from_path(path, channel, None, note_name)
+                    route = self.create_route(path, channel, None, None)
                     if route:
                         routes.append(route)
 
@@ -345,7 +335,7 @@ class Router:
                     parts = path.split('/')
                     range_str = parts[-2]
                     value = self.normalize_value(value, range_str)
-                    route = self.create_route_from_path(path, channel, value)
+                    route = self.create_route(path, channel, value, range_str)
                     if route:
                         routes.append(route)
 
@@ -356,7 +346,7 @@ class Router:
                     parts = path.split('/')
                     range_str = parts[-2]
                     value = self.normalize_value(value, range_str)
-                    route = self.create_route_from_path(path, channel, value)
+                    route = self.create_route(path, channel, value, range_str)
                     if route:
                         routes.append(route)
 
@@ -364,13 +354,18 @@ class Router:
             cc_num = message['data']['number']
             value = message['data']['value']
             for path in self.paths:
-                if f'cc{cc_num}' in path.split('/')[-1]:
-                    parts = path.split('/')
-                    range_str = parts[-2]
-                    value = self.normalize_value(value, range_str)
-                    route = self.create_route_from_path(path, channel, value)
-                    if route:
-                        routes.append(route)
+                parts = path.split('/')
+                # Check last two elements for CC match
+                cc_found = False
+                for part in parts[-2:]:
+                    if f'cc{cc_num}' in part:
+                        cc_found = True
+                        range_str = parts[-2]  # Range is always second to last
+                        normalized_value = self.normalize_value(value, range_str)
+                        route = self.create_route(path, channel, normalized_value, range_str)
+                        if route:
+                            routes.append(route)
+                        break
 
         # Log route generation results
         if routes:
