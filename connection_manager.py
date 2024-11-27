@@ -47,7 +47,7 @@ class CandideConnectionManager:
         
         _log("Setting uart, router_manager, transport")
         self.uart = text_uart
-        self.router_manager = router_manager  # Updated from synth_manager
+        self.router_manager = router_manager
         self.transport = transport_manager
         
         # Initialize detection pin
@@ -69,13 +69,50 @@ class CandideConnectionManager:
 
     def send_config(self):
         """Send current instrument config to base station"""
-        if self.state == ConnectionState.CONNECTED:
-            try:
-                # Simple placeholder config
-                self.uart.write("cc:\n")
+        try:
+            paths = self.router_manager.get_current_config()
+            if not paths:
+                return False
+
+            # Parse paths for CC numbers and names
+            cc_configs = []
+            seen_ccs = set()
+            
+            # Process each path
+            for line in paths.strip().split('\n'):
+                if not line:
+                    continue
+                    
+                parts = line.split('/')
+                # Find the CC number and corresponding parameter name
+                for i, part in enumerate(parts):
+                    if part.startswith('cc') and len(part) > 2:
+                        try:
+                            cc_num = int(part[2:])
+                            if cc_num not in seen_ccs:
+                                # Get parameter name from previous part in path
+                                param_name = parts[i-2]  
+                                cc_configs.append((cc_num, param_name))
+                                seen_ccs.add(cc_num)
+                                if len(cc_configs) >= 14:  # Limit to 14 pots
+                                    break
+                        except ValueError:
+                            continue
+                if len(cc_configs) >= 14:
+                    break
+
+            # Generate config string
+            if cc_configs:
+                config_parts = []
+                for pot_num, (cc_num, param_name) in enumerate(cc_configs):
+                    config_parts.append(f"{pot_num}={cc_num}:{param_name}")
+                config_string = "cc:" + ",".join(config_parts) + "\n"
+                _log(f"Sending config: {config_string.strip()}")  # Log the config being sent
+                self.uart.write(config_string)
                 return True
-            except Exception as e:
-                _log(f"[ERROR] Failed to send config: {str(e)}")
+                
+        except Exception as e:
+            _log(f"[ERROR] Failed to send config: {str(e)}")
         return False
 
     def update_state(self):
@@ -133,8 +170,7 @@ class CandideConnectionManager:
                     _log("Handshake CC received - sending config")
                     self.state = ConnectionState.HANDSHAKING
                     self.handshake_start_time = time.monotonic()
-                    # Send simple placeholder config
-                    self.uart.write("cc:\n")
+                    self.send_config()
                     self.state = ConnectionState.CONNECTED
                     _log("Connection established")
                     

@@ -92,7 +92,7 @@ class Router:
         # Initialize ring buffer for pre-normalized messages
         self.message_buffer = RingBuffer(BUFFER_SIZE)
 
-        _log("Building loopup of accepted message types")
+        _log("Building lookup of accepted message types")
         # Build lookup of accepted message types from paths
         self.accepted_messages = self._build_message_lookup()
 
@@ -103,19 +103,28 @@ class Router:
         _log(f"Initialized router with {len(self.paths)} paths")
 
     def _build_message_lookup(self):
-        """Build lookup of accepted message types from paths"""
         accepted = {
-            'note_on': set(),      # Will contain note sources (velocity, note_number)
-            'note_off': False,     # Simple flag
-            'pitch_bend': False,   # Simple flag
-            'pressure': False,     # Simple flag
-            'cc': set()           # Will contain CC numbers
+            'note_on': set(),    
+            'note_off': False,   
+            'pitch_bend': False, 
+            'pressure': False,   
+            'cc': set()         
         }
         
         for path in self.paths:
             parts = path.split('/')
+            # Check both possible CC positions
+            for part in parts[-2:]:  # Last two elements
+                if part.startswith('cc'):
+                    try:
+                        cc_num = int(part[2:])
+                        accepted['cc'].add(cc_num)
+                        _log(f"Added CC: {cc_num}")
+                    except ValueError:
+                        _log(f"Bad CC: {part}")
+                    
+            # Regular source checks
             source = parts[-1]
-            
             if source in ['velocity', 'note_number', 'note_on']:
                 accepted['note_on'].add(source)
             elif source == 'note_off':
@@ -124,13 +133,8 @@ class Router:
                 accepted['pitch_bend'] = True
             elif source == 'channel_pressure':
                 accepted['pressure'] = True
-            elif source.startswith('cc'):
-                try:
-                    cc_num = int(source[2:])
-                    accepted['cc'].add(cc_num)
-                except ValueError:
-                    _log(f"[ERROR] Invalid CC number in path: {source}")
-                    
+
+        _log(f"CC numbers: {accepted['cc']}")
         return accepted
 
     def _should_cull_message(self, message):
@@ -251,23 +255,19 @@ class Router:
 
     def process_message(self, message, voice_manager):
         """Transform MIDI message into routes using path schema"""
-        # Fast path: Validation and filtering
+        # Fast path: Validation and filtering 
         if self._should_cull_message(message):
             _log(f"[REJECTED] Culled message type: {message['type']}")
-            return
+            return  # Message should stop here but isn't
             
         if self._should_filter_continuous(message):
             _log(f"[REJECTED] Filtered continuous signal: {message['type']}")
             return
-            
-        # Add to buffer if passes fast checks
-        if len(self.message_buffer) < BUFFER_SIZE:
-            self.message_buffer.append((message, voice_manager))
-            _log(f"Message queued. Buffer size: {len(self.message_buffer)}/{BUFFER_SIZE}")
-        else:
-            _log("[REJECTED] Buffer full, dropping message")
-            return
-            
+                
+        # Only buffer if it passes ALL checks
+        self.message_buffer.append((message, voice_manager))
+        _log(f"Message queued. Buffer size: {len(self.message_buffer)}/{BUFFER_SIZE}")
+                
         # Process a message from the buffer
         self._process_from_buffer()
 
