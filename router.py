@@ -90,16 +90,18 @@ class Router:
         
     def _build_routing_tables(self, paths):
         """Build lookup tables from config paths"""
+        # Initialize only required tables
+        self.route_info = {
+            'note_on': {},
+            'note_off': None
+        }
+
         for path in paths.strip().split('\n'):
-            if not path.strip():
-                continue
-                
-            parts = path.split('/')
-            if len(parts) < 4:
+            if not path.strip() or len(path.split('/')) < 4:
                 continue
                 
             # Work backwards through parts
-            parts_iter = reversed(parts)
+            parts_iter = reversed(path.split('/'))
             
             # Check last value for default
             last = next(parts_iter)
@@ -115,21 +117,17 @@ class Router:
             has_trigger = 'trigger' in range_str
                 
             # Build template from remaining parts
-            # Include the range part if it's a parameter value (like 'square')
             template_parts = []
             if not range_str.replace('.', '').replace('-', '').isdigit() and not has_trigger:
                 template_parts.append(range_str)
             
-            # Add remaining parts
-            for part in reversed(list(parts_iter)):
-                template_parts.append(part)
-                
+            template_parts.extend(reversed(list(parts_iter)))
             route_template = '/'.join(template_parts)
             
             # Sort into appropriate lookup table
             if source == 'note_number':
                 self.route_info['note_on']['note_number'] = {
-                    'template': f"{route_template}/frequency",
+                    'template': route_template,
                     'range': 'na'
                 }
             elif source == 'velocity':
@@ -138,37 +136,40 @@ class Router:
                     'range': range_str
                 }
             elif source == 'note_on':
-                # Check if this is a trigger path
-                if has_trigger:
-                    key = 'trigger'
-                    template_range = 'na'
-                else:
-                    key = 'waveform'
-                    template_range = 'na'
-                    route_template = f"{route_template}/{range_str}"  # Include waveform type in template
+                key = 'trigger' if has_trigger else 'waveform'
+                if not has_trigger:
+                    route_template = f"{route_template}/{range_str}"
                     
                 self.route_info['note_on'][key] = {
                     'template': route_template,
-                    'range': template_range
+                    'range': 'na'
                 }
             elif source == 'note_off':
                 if has_trigger:
                     self.route_info['note_off'] = {
-                        'template': route_template,
-                        'range': 'na'
+                        'trigger': {
+                            'template': route_template,
+                            'range': 'na'
+                        }
                     }
             elif source == 'pitch_bend':
+                if 'pitch_bend' not in self.route_info:
+                    self.route_info['pitch_bend'] = {}
                 self.route_info['pitch_bend'] = {
                     'template': route_template,
                     'range': range_str
                 }
             elif source == 'channel_pressure':
+                if 'pressure' not in self.route_info:
+                    self.route_info['pressure'] = {}
                 self.route_info['pressure'] = {
                     'template': route_template,
                     'range': range_str
                 }
             elif source.startswith('cc'):
                 try:
+                    if 'cc' not in self.route_info:
+                        self.route_info['cc'] = {}
                     cc_num = int(source[2:])
                     self.route_info['cc'][cc_num] = {
                         'template': route_template,
@@ -265,22 +266,20 @@ class Router:
         """Create route from template and value
         
         For per_key routes, includes channel.note in identifier if note available
+        Template already contains full path including signal chain and scope
         """
-        parts = [template.split('/')[0]]  # Start with signal chain
-        parts.append(parts[0])  # Add signal chain again for voice identifier
+        parts = template.split('/')
         
-        template_parts = template.split('/')
-        if 'per_key' in template_parts:
-            parts.append('per_key')
-            # Include note number in identifier if available
+        if 'per_key' in parts:
+            # For per_key routes, inject identifier after per_key
             identifier = f"{channel}.{note}" if note is not None else str(channel)
-            parts.append(identifier)
-            # Add remaining parts excluding signal chain, per_key, and global
-            parts.extend([p for p in template_parts[1:] if p not in ('per_key', 'global')])
-        else:  # global scope
-            parts.append('global')
-            # Add remaining parts excluding signal chain, per_key, and global
-            parts.extend([p for p in template_parts[1:] if p not in ('per_key', 'global')])
+            new_parts = []
+            for part in parts:
+                new_parts.append(part)
+                if part == 'per_key':
+                    new_parts.append(identifier)
+            parts = new_parts
+        # Removed global injection since it's already in template
         
         # Add the value
         parts.append(str(value))
