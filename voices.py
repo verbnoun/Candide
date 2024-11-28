@@ -43,6 +43,40 @@ def _log(message, module="VOICES"):
             color = LIGHT_YELLOW
         print(f"{color}[{module}] {message}{RESET}", file=sys.stderr)
 
+class VoiceBeep:
+    """Simple audio test that runs as part of VoiceManager initialization"""
+
+    # Static note parameters for the beep
+    BEEP_FREQUENCY = 440
+    BEEP_AMPLITUDE = 0.5
+
+    def play(self, synth):
+        try:
+            # Create a simple synthio note with static parameters
+            note = synthio.Note(
+                frequency=self.BEEP_FREQUENCY,
+                amplitude=self.BEEP_AMPLITUDE
+            )
+
+            _log("VoiceBeep: pressing NOTE ...")
+            synth.press(note)
+            time.sleep(0.5)
+
+            _log("VoiceBeep: releasing NOTE ...")
+            synth.release(note)
+            time.sleep(0.5)
+
+            _log("VoiecBeep: PRESSING 64 ...")
+            synth.press(64)
+            time.sleep(0.5)
+            
+            _log("VoiceBeep: Releasing 64 ...")
+            synth.release(64)
+            time.sleep(0.5)
+
+        except Exception as e:
+            _log(f"[VoiceBeep] error: {str(e)}")
+
 class Voice:
     """Represents a single voice containing a synthio note"""
     def __init__(self, channel, note_number, synth_tools):
@@ -100,21 +134,37 @@ class Voice:
             return None
 
     def create_note(self):
-        """Create note with current parameters"""
         try:
             # Prepare note parameters
             note_params = {
-                'frequency': self.params.get('frequency'),
-                'amplitude': self.params.get('amplitude', 1.0),
-                'bend': self.params.get('bend', 0.0),
-                'ring_frequency': self.params.get('ring_frequency', 0.0)
+                'frequency': self.params['frequency'],
+                'amplitude': self.params['amplitude'],
+                'bend': self.params['bend'],
+                'ring_frequency': self.params['ring_frequency']
             }
-            
+            _log({
+                'type': 'note_creation',
+                'identifier': self.identifier,
+                'frequency': note_params['frequency'],
+                'amplitude': note_params['amplitude'],
+                'bend': note_params['bend'],
+                'ring_frequency': note_params['ring_frequency']
+            })
+
             # Create and add envelope if we have envelope parameters
             envelope = self.assemble_envelope()
             if envelope:
                 note_params['envelope'] = envelope
-                
+                _log({
+                    'type': 'envelope_creation',
+                    'identifier': self.identifier,
+                    'attack_time': envelope.attack_time,
+                    'decay_time': envelope.decay_time,
+                    'release_time': envelope.release_time,
+                    'attack_level': envelope.attack_level,
+                    'sustain_level': envelope.sustain_level
+                })
+
             # Create note with clean parameter set
             self.note = synthio.Note(**note_params)
             self.active = True
@@ -168,6 +218,10 @@ class VoiceManager:
             sample_rate=SAMPLE_RATE,
             channel_count=AUDIO_CHANNEL_COUNT
         )
+        
+        # Create the VoiceBeep instance and play the test tone
+        self.voice_beep = VoiceBeep()
+        self.voice_beep.play(self.synth)
         
         _log("VoiceManager initialization complete")
 
@@ -275,42 +329,71 @@ class VoiceManager:
                 self.apply_parameter(voice, signal_chain, param_path, value)
 
     def handle_per_key_route(self, signal_chain, param_path, value, channel, note):
-        """Handle per-key parameter routes"""
         _log(f"Processing per-key route: {signal_chain}/{param_path}")
-        
+
         # Store channel-specific parameters if we have a channel
         if channel is not None and note is None:
             self.store_channel_param(channel, param_path, value)
-        
+            _log(f"Stored channel parameter: ch={channel}, param_path={param_path}, value={value}")
+
         # If we have both channel and note
         if channel is not None and note is not None:
             identifier = f"{channel}.{note}"
-            
-            # Create new voice if needed
-            if identifier not in self.voices and signal_chain == 'frequency':
+
+            # Create new voice if needed and all required params are present
+            if identifier not in self.voices and signal_chain == 'frequency' and \
+            'frequency' in self.channel_params.get(channel, {}):
+                _log(f"Creating new voice: identifier={identifier}")
                 voice = Voice(channel, note, self.synth_tools)
                 self.voices[identifier] = voice
                 self.apply_stored_params(voice)
-            
+                self.press_note(voice)  # Press the note
+
             # Update existing voice
             if identifier in self.voices:
                 voice = self.voices[identifier]
                 self.apply_parameter(voice, signal_chain, param_path, value)
+                if voice.is_ready_for_note():
+                    _log("Voice ready, pressing ...")
+                    self.press_note(voice)  # Press the note
+
+    def press_note(self, voice):
+        """Press a note in the synthesizer"""
+        try:
+            self.synth.press(voice.note)
+            _log(f"Pressed note: {voice.identifier}")
+        except Exception as e:
+            _log(f"[ERROR] Failed to press note: {str(e)}")
 
     def apply_parameter(self, voice, signal_chain, param_path, value):
         """Apply parameter update to voice based on signal chain"""
         if signal_chain == 'frequency':
             # Use synth_tools to calculate frequency from MIDI note number
             freq = self.synth_tools.note_to_frequency(value)
+            _log({
+                'type': 'frequency_update',
+                'identifier': voice.identifier,
+                'new_frequency': freq
+            })
             voice.update_param('frequency', freq)
             
         elif signal_chain == 'amplifier':
             if 'envelope' in param_path:
                 self.handle_envelope_update(voice, param_path, value)
             elif 'gain' in param_path:
+                _log({
+                    'type': 'amplitude_update',
+                    'identifier': voice.identifier,
+                    'new_amplitude': value
+                })
                 voice.update_param('amplitude', value)
             elif 'pressure' in param_path:
                 amplitude = self.synth_tools.calculate_pressure_amplitude(value, voice.params['amplitude'])
+                _log({
+                    'type': 'amplitude_update',
+                    'identifier': voice.identifier,
+                    'new_amplitude': amplitude
+                })
                 voice.update_param('amplitude', amplitude)
                 
         elif signal_chain == 'filter':
@@ -319,12 +402,24 @@ class VoiceManager:
                 param = filter_parts[-1]
                 if param == 'frequency':
                     new_filter = self.synth_tools.calculate_filter(value, None)
+                    _log({
+                        'type': 'filter_update',
+                        'identifier': voice.identifier,
+                        'new_filter_frequency': value,
+                        'new_filter_resonance': new_filter.resonance
+                    })
+                    voice.update_param('filter', new_filter)
                 elif param == 'resonance':
                     current_freq = 1000  # Default if not set
                     if voice.params['filter']:
                         current_freq = voice.params['filter'].frequency
                     new_filter = self.synth_tools.calculate_filter(current_freq, value)
-                if new_filter:
+                    _log({
+                        'type': 'filter_update',
+                        'identifier': voice.identifier,
+                        'new_filter_frequency': current_freq,
+                        'new_filter_resonance': value
+                    })
                     voice.update_param('filter', new_filter)
 
     def handle_envelope_update(self, voice, param_path, value):
