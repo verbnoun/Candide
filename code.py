@@ -237,6 +237,16 @@ class AudioSystem:
             # Connect components - voice manager's synth -> mixer -> audio out
             self.audio_out.play(self.mixer)
             self.mixer.voice[0].play(self.voice_manager.get_synth())
+            
+            # Set initial low volume for test
+            original_volume = self.mixer.voice[0].level
+            self.mixer.voice[0].level = 0.1
+            
+            # Test audio path
+            self.voice_manager.test_audio_hardware()
+            
+            # Restore volume
+            self.mixer.voice[0].level = original_volume
 
             _log("Audio system initialized successfully")
 

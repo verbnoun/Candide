@@ -191,6 +191,22 @@ class VoiceManager:
         """Get synthesizer instance for audio system"""
         return self.synth
 
+    def test_audio_hardware(self):
+        """Test basic synthesizer audio output"""
+        try:
+            _log("Testing synthesizer audio output...")
+            
+            # Basic beep using raw synth
+            self.synth.press(64)  # Middle C
+            time.sleep(0.1)
+            self.synth.release(64)
+            time.sleep(0.05)
+            
+            _log("Synthesizer audio test complete")
+            
+        except Exception as e:
+            _log(f"[ERROR] Synthesizer audio test failed: {str(e)}")
+            
     def extract_identifier(self, param_path):
         """Extract channel and note from parameter path if present"""
         parts = param_path.split('/')

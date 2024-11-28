@@ -32,26 +32,6 @@ I2S_BIT_CLOCK = board.GP1
 I2S_WORD_SELECT = board.GP2
 I2S_DATA = board.GP0
 
-# Voice Management
-# MAX_VOICES = 12  # Maximum concurrent voices
-# VOICE_TIMEOUT_MS = 2000  # Currently unused
-# VOICE_STEAL_THRESHOLD = 0.9  # Currently unused
-# DEFAULT_MPE_PITCH_BEND_RANGE = 48  # Currently unused
-# DEFAULT_PRESSURE_SENSITIVITY = 0.7  # Currently unused
-
-# Volume Control
-# VOLUME_MIN_CHANGE = 0.01  # Currently unused
-# VOLUME_UPDATE_INTERVAL = 10  # Currently unused
-
-# Modulation Configuration
-# LFO_UPDATE_RATE = 100  # Currently unused
-# MAX_MODULATION_SOURCES = 8  # Currently unused
-# MAX_MODULATION_TARGETS = 8  # Currently unused
-
-# Waveform Generation
-# WAVE_TABLE_SIZE = 512  # Currently unused
-# MAX_AMPLITUDE = 32767  # Currently unused
-# MIN_AMPLITUDE = -32768  # Currently unused
 
 # Hardware Constants
 INSTRUMENT_ENC_CLK = board.GP20
@@ -91,107 +71,6 @@ RETRY_INTERVAL = 0.25  # in seconds
 ERROR_RECOVERY_DELAY = 0.5  # in seconds
 BUFFER_CLEAR_TIMEOUT = 0.1  # in seconds
 MAX_RETRIES = 3
-
-# Fixed Point Math Constants (Currently unused)
-# FIXED_POINT_SCALE = 1 << 16
-# FIXED_POINT_MAX_VALUE = (1 << 31) - 1
-# FIXED_POINT_MIN_VALUE = -(1 << 31)
-# FIXED_POINT_ONE = 1 << 16
-# FIXED_POINT_HALF = 1 << 15
-# FIXED_POINT_ZERO = 0
-# MIDI_SCALE = 1.0 / 127
-# PITCH_BEND_SCALE = 8
-# PITCH_BEND_CENTER = 8192 << 16
-
-# Modulation Source Types (Currently unused)
-# class ModSource:
-#     NONE = 0
-#     PRESSURE = 1
-#     PITCH_BEND = 2
-#     TIMBRE = 3
-#     LFO1 = 4
-#     VELOCITY = 5
-#     NOTE = 6
-#     GATE = 7
-#     CC = 8
-
-# Modulation Destination Types (Currently unused)
-# class ModTarget:
-#     NONE = 0
-#     FILTER_CUTOFF = 1
-#     FILTER_RESONANCE = 2
-#     OSC_PITCH = 3
-#     AMPLITUDE = 4
-#     RING_FREQUENCY = 5
-#     ENVELOPE_LEVEL = 6
-#     FREQUENCY = 7
-#     WAVEFORM = 8
-
-# Modulation Source Types (Alias for backwards compatibility) (Currently unused)
-# ModulationSource = ModSource
-# ModulationDestination = ModTarget
-
-# Modulation Source Types (Currently unused)
-# class ModulationSourceType:
-#     NONE = 0
-#     PRESSURE = 1
-#     PITCH_BEND = 2
-#     TIMBRE = 3
-#     LFO1 = 4
-#     VELOCITY = 5
-#     NOTE = 6
-#     GATE = 7
-
-# Modulation Destination Types (Currently unused)
-# class ModulationDestinationType:
-#     NONE = 0
-#     FILTER_CUTOFF = 1
-#     FILTER_RESONANCE = 2
-#     OSC_PITCH = 3
-#     AMPLITUDE = 4
-#     RING_FREQUENCY = 5
-#     ENVELOPE_LEVEL = 6
-
-# Filter Types (Currently unused)
-# class FilterType:
-#     LOW_PASS = "low_pass"
-#     HIGH_PASS = "high_pass"
-#     BAND_PASS = "band_pass"
-
-# Standard MIDI Control Change Numbers (Currently unused)
-# class MidiCC:
-#     MODULATION_WHEEL = 1
-#     BREATH = 2
-#     FOOT = 4
-#     PORTAMENTO_TIME = 5
-#     VOLUME = 7
-#     BALANCE = 8
-#     PAN = 10
-#     EXPRESSION = 11
-#     EFFECT1 = 12
-    
-#     # Sound Controllers
-#     SOUND_VARIATION = 70
-#     RESONANCE = 71
-#     RELEASE_TIME = 72
-#     ATTACK_TIME = 73
-#     BRIGHTNESS = 74
-    
-#     # Effect Depths
-#     REVERB = 91
-#     TREMOLO = 92
-#     CHORUS = 93
-#     DETUNE = 94
-#     PHASER = 95
-
-# MPE Configuration (Currently unused)
-# class MPEConfig:
-#     ZONE_MANAGER = 0       # MIDI channel 1 (zero-based)
-#     ZONE_START = 1         # First member channel
-#     ZONE_END = 15          # Last member channel
-#     DEFAULT_ZONE_MEMBER_COUNT = 15
-#     MASTER_PITCH_BEND_RANGE = 2    # ±2 semitones default for Manager Channel
-#     MEMBER_PITCH_BEND_RANGE = 48   # ±48 semitones default for Member Channels
 
 # MIDI Message Types
 class MidiMessageType:
