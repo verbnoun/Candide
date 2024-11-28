@@ -2,7 +2,6 @@
 synthesizer.py - Synthesis Value Calculations
 
 Provides value manipulation and calculations for voices.py.
-Handles wave creation, envelope generation, filter calculations, etc.
 All methods are stateless calculation tools.
 """
 import sys
@@ -38,15 +37,6 @@ def _log(message, module="SYNTH"):
         lines.append(f"  frequency: {frequency}")
         lines.append(f"  resonance: {resonance}")
         return "\n".join(lines)
-    
-    def format_envelope_calc(params, env_type):
-        """Format envelope calculation details."""
-        lines = []
-        lines.append(f"[{module}]")
-        lines.append(f"Envelope calculation ({env_type}):")
-        for param, value in params.items():
-            lines.append(f"  {param}: {value}")
-        return "\n".join(lines)
 
     if isinstance(message, dict):
         if 'wave' in str(message):
@@ -60,11 +50,6 @@ def _log(message, module="SYNTH"):
                 message.get('frequency', 0),
                 message.get('resonance', 0),
                 message.get('type', 'lowpass')
-            )
-        elif 'envelope' in str(message):
-            formatted = format_envelope_calc(
-                message.get('params', {}),
-                message.get('type', 'unknown')
             )
         else:
             formatted = f"[{module}] {message}"
@@ -84,11 +69,9 @@ class Synthesizer:
         
         _log("Creating synthio.Synthesizer instance...")
         _log(f"Using SAMPLE_RATE={SAMPLE_RATE}, AUDIO_CHANNEL_COUNT={AUDIO_CHANNEL_COUNT}")
-        # Use keyword arguments as required by synthio.Synthesizer
         self.synth = synthio.Synthesizer(sample_rate=SAMPLE_RATE, channel_count=AUDIO_CHANNEL_COUNT)
         _log("Synthesizer initialization complete")
         
-    # Wave Generation
     def create_wave(self, wave_type):
         """Generate waveform buffer of specified type"""
         _log({
@@ -134,7 +117,6 @@ class Synthesizer:
         """Convert MIDI note number to frequency using synthio"""
         return synthio.midi_to_hz(note_number)
             
-    # LFO Creation
     def create_lfo(self, rate, scale, offset=0, wave_type='sine'):
         """Create an LFO with specified parameters"""
         _log(f"Creating LFO: rate={rate}, scale={scale}, offset={offset}, type={wave_type}")
@@ -144,21 +126,17 @@ class Synthesizer:
                 _log("[ERROR] Failed to create LFO waveform")
                 return None
                 
-            # Use positional args for LFO creation
             return synthio.LFO(waveform, rate, scale, offset)
         except Exception as e:
             _log(f"[ERROR] LFO creation failed: {str(e)}")
             return None
             
-    # Filter Calculations
     def calculate_filter(self, frequency, resonance):
         """Create a filter with the given parameters"""
         if resonance is None:
             resonance = 0.7
             
-        # Handle frequency bounds
         frequency = max(20, min(20000, frequency))
-        
         filter_type = 'highpass' if frequency < 100 else 'lowpass'
         
         _log({
@@ -169,7 +147,6 @@ class Synthesizer:
         })
         
         try:
-            # Create appropriate filter type based on frequency range
             if frequency < 100:  # High pass for very low frequencies
                 return self.synth.high_pass_filter(frequency, resonance)
             else:  # Low pass for most frequencies
@@ -177,88 +154,24 @@ class Synthesizer:
         except Exception as e:
             _log(f"[ERROR] Filter creation failed: {str(e)}")
             return None
-            
+
     def calculate_filter_lfo(self, base_freq, resonance, lfo):
         """Calculate filter with LFO modulation"""
-        # Ensure base frequency exists
         if base_freq is None:
             base_freq = 1000
             _log("Using default base frequency: 1000Hz")
             
         try:
-            # Create filter using LFO for frequency modulation    
             return self.calculate_filter(base_freq * lfo.value, resonance)
         except Exception as e:
             _log(f"[ERROR] Filter LFO calculation failed: {str(e)}")
             return None
-            
-    # Envelope Calculations
-    def calculate_envelope(self, params, env_type):
-        """
-        Create envelope from parameters.
-        env_type: 'frequency', 'amplitude', 'filter', 'ring'
-        """
-        prefix = f"{env_type}_"
-        
-        envelope_params = {
-            'attack_time': 0.1,    # Default values
-            'decay_time': 0.05,
-            'sustain_level': 0.8,
-            'release_time': 0.2,
-            'attack_level': 1.0
-        }
-        
-        # Update with any provided params
-        for param, default in envelope_params.items():
-            key = prefix + param
-            if key in params:
-                envelope_params[param] = params[key]
-                
-        _log({
-            'envelope': True,
-            'type': env_type,
-            'params': envelope_params
-        })
-        
-        try:
-            # Use positional args for envelope creation
-            return synthio.Envelope(
-                envelope_params['attack_time'],
-                envelope_params['decay_time'],
-                envelope_params['release_time'],
-                envelope_params['attack_level'],
-                envelope_params['sustain_level']
-            )
-        except Exception as e:
-            _log(f"[ERROR] Envelope creation failed: {str(e)}")
-            return None
-            
-    def calculate_filter_envelope(self, params):
-        """Calculate filter parameters modulated by envelope"""
-        freq = params.get('filter_frequency', 1000)
-        res = params.get('filter_resonance', 0.7)
-        
-        _log(f"Calculating filter envelope: freq={freq}, res={res}")
-        
-        try:
-            env = self.calculate_envelope(params, 'filter')
-            return self.calculate_filter(freq, res)
-        except Exception as e:
-            _log(f"[ERROR] Filter envelope calculation failed: {str(e)}")
-            return None
 
-    # Amplitude Calculations
     def calculate_pressure_amplitude(self, pressure, current_amp):
         """Calculate amplitude based on pressure value"""
         _log(f"Calculating pressure amplitude: pressure={pressure}, current={current_amp}")
         return max(0.0, min(1.0, current_amp * pressure))
         
-    def calculate_expression(self, expression, current_amp):
-        """Calculate amplitude based on expression value"""
-        _log(f"Calculating expression amplitude: expression={expression}, current={current_amp}")
-        return max(0.0, min(1.0, current_amp * expression))
-
-    # Timbre Calculations    
     def calculate_timbre(self, cc74_value):
         """Calculate ring modulation frequency from CC74 value"""
         # Map CC74 0-1 to frequency range 100Hz-8000Hz
@@ -266,7 +179,6 @@ class Synthesizer:
         _log(f"Calculating timbre frequency: cc74={cc74_value}, freq={freq}")
         return freq
 
-    # Value Combination/Scaling
     def combine_values(self, val1, val2, mode='multiply'):
         """Combine two normalized values"""
         _log(f"Combining values: {val1} {mode} {val2}")

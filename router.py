@@ -201,7 +201,6 @@ class Router:
         parts = [template.split('/')[0]]  # Start with signal chain
         parts.append(parts[0])  # Add signal chain again for voice identifier
         
-        # Handle per_key vs global paths
         template_parts = template.split('/')
         if 'per_key' in template_parts:
             parts.append('per_key')
@@ -242,10 +241,11 @@ class Router:
             routes = []
             
             if msg['type'] == 'note_on':
+                note_num = msg['data']['note']
                 if 'note_number' in self.route_info['note_on']:
                     info = self.route_info['note_on']['note_number']
-                    value = self._normalize(msg['data']['note'], info['range'])
-                    routes.append(self._create_route(info['template'], msg['channel'], value))
+                    # Pass through note number directly
+                    routes.append(self._create_route(info['template'], msg['channel'], note_num))
                     
                 if 'velocity' in self.route_info['note_on']:
                     info = self.route_info['note_on']['velocity']
@@ -254,9 +254,10 @@ class Router:
                     
             elif msg['type'] == 'note_off':
                 if self.route_info['note_off']:
-                    routes.append(self._create_route(self.route_info['note_off'], 
-                                                   msg['channel'], 
-                                                   msg['data']['note']))
+                    routes.append(self._create_route(
+                        self.route_info['note_off'],
+                        msg['channel'],
+                        msg['data']['note']))  # Pass through note number
                     
             elif msg['type'] == 'pitch_bend':
                 if self.route_info['pitch_bend']:

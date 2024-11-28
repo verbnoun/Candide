@@ -43,93 +43,75 @@ def _log(message, module="VOICES"):
             color = LIGHT_YELLOW
         print(f"{color}[{module}] {message}{RESET}", file=sys.stderr)
 
-class EnvelopeHandler:
-    def __init__(self, synth_tools, default_params=None):
-        self.synth_tools = synth_tools
+class AmplifierEnvelope:
+    """Manages envelope parameters for synthio Note amplifier envelopes"""
+    def __init__(self):
         self.envelope = None
-        self.default_params = default_params or {
-            'attack_time': 0.1,
-            'decay_time': 0.05,
-            'sustain_level': 0.8,
-            'release_time': 0.2,
-            'attack_level': 1.0
-        }
+        self.params = {}
 
-    def update_envelope(self, params):
-        self.envelope = self.synth_tools.calculate_envelope(params, 'amplitude')
-
-    def handle_route(self, route_parts):
-        envelope_params = self.default_params.copy()
-        for part in route_parts:
-            if part.startswith('attack_time'):
-                envelope_params['attack_time'] = float(part.split('/')[-1])
-            elif part.startswith('decay_time'):
-                envelope_params['decay_time'] = float(part.split('/')[-1])
-            elif part.startswith('attack_level'):
-                envelope_params['attack_level'] = float(part.split('/')[-1])
-            elif part.startswith('sustain_level'):
-                envelope_params['sustain_level'] = float(part.split('/')[-1])
-            elif part.startswith('release_time'):
-                envelope_params['release_time'] = float(part.split('/')[-1])
-
-        self.update_envelope(envelope_params)
+    def update_param(self, param_name, value):
+        """Update parameter and recreate envelope"""
+        self.params[param_name] = value
+        try:
+            self.envelope = synthio.Envelope(
+                attack_time=self.params.get('attack_time', 0),
+                decay_time=self.params.get('decay_time', 0),
+                release_time=self.params.get('release_time', 0),
+                attack_level=self.params.get('attack_level', 0),
+                sustain_level=self.params.get('sustain_level', 0)
+            )
+            return self.envelope
+        except Exception as e:
+            _log(f"[ERROR] Failed to create amplifier envelope: {str(e)}")
+            return None
 
 class Voice:
     """Represents a single voice containing a synthio note"""
-    def __init__(self, synth_tools, synth, required_params):
-        self.note = None
-        self.identifier = None
-        self.start_time = time.monotonic()
+    def __init__(self, note_number, channel, synth_tools, synth):
+        self.note_number = note_number
+        self.channel = channel
+        self.identifier = f"{note_number}.{channel}"
         self.synth_tools = synth_tools
         self.synth = synth
+        self.note = None
         self.active = False
         
-        # Required parameters for note creation
+        # Parameters for note creation/update
         self.params = {
             'frequency': None,
-            'waveform': None,
             'amplitude': None,
             'envelope': None,
-            'bend': None,
-            'pressure': None,
-            'timbre': None
+            'bend': 0.0,
+            'ring_frequency': 0.0
         }
-        
-        # Apply any pre-configured parameters
-        if required_params:
-            self.params.update(required_params)
-            self.envelope_handler = EnvelopeHandler(synth_tools, required_params['envelope'])
-            self.params['envelope'] = self.envelope_handler.envelope
 
     def is_ready_for_note(self):
-        """Check if we have all required parameters to create note"""
-        return all(self.params[p] is not None for p in ['frequency', 'waveform', 'amplitude'])
+        """Check if we have minimum required parameters for note creation"""
+        return self.params['frequency'] is not None
 
     def update_param(self, param, value):
-        if param == 'envelope':
-            self.envelope_handler.handle_route(value.split('/'))
-            self.params['envelope'] = self.envelope_handler.envelope
-        else:
-            self.params[param] = value
-        _log({
-            'identifier': self.identifier,
-            'type': f'param_update_{param}',
-            'value': value
-        })
+        """Update parameter and note if it exists"""
+        self.params[param] = value
         
-        if self.is_ready_for_note() and not self.note:
+        if self.note:
+            try:
+                setattr(self.note, param, value)
+                _log(f"Updated note parameter: {self.identifier} {param}={value}")
+            except Exception as e:
+                _log(f"[ERROR] Failed to update note parameter: {str(e)}")
+        
+        if not self.note and self.is_ready_for_note():
             self.create_note()
 
     def create_note(self):
-        """Create note with all parameters"""
+        """Create note with current parameters"""
         try:
             self.note = synthio.Note(
                 frequency=self.params['frequency'],
-                waveform=self.params['waveform'],
-                amplitude=self.params['amplitude'],
-                envelope=self.params['envelope'],
-                bend=self.params['bend'],
-                ring_frequency=self.params.get('timbre', 0.0)
+                amplitude=self.params.get('amplitude', 1.0),
+                envelope=self.params.get('envelope'),
+                bend=self.params.get('bend', 0.0),
+                ring_frequency=self.params.get('ring_frequency', 0.0)
             )
             self.active = True
             _log(f"Created note for voice: {self.identifier}")
@@ -140,7 +122,7 @@ class Voice:
     def release(self):
         """Begin release phase of note"""
         self.active = False
-        _log(f"Released voice: identifier={self.identifier}")
+        _log(f"Released voice: {self.identifier}")
 
     def is_active(self):
         """Check if voice is currently active"""
@@ -152,94 +134,142 @@ class VoiceManager:
         _log("Starting VoiceManager initialization...")
         
         # Voice collection
-        _log("Creating voice collection...")
-        self.voices = {}
+        self.voices = {}  # identifier -> Voice
         
         # Synthesis tools
-        _log("Creating synthesis tools instance...")
         self.synth_tools = Synthesizer()
         
         # Main synthesizer
-        _log("Creating main synthio.Synthesizer instance...")
-        _log(f"Parameters: SAMPLE_RATE={SAMPLE_RATE}, AUDIO_CHANNEL_COUNT={AUDIO_CHANNEL_COUNT}")
         self.synth = synthio.Synthesizer(
             sample_rate=SAMPLE_RATE,
             channel_count=AUDIO_CHANNEL_COUNT
         )
         
-        # Track global envelope parameters
-        self.global_params = {
-            'attack_time': None,
-            'decay_time': None,
-            'attack_level': None,
-            'sustain_level': None
-        }
+        # Global amplifier envelope
+        self.amplifier_envelope = AmplifierEnvelope()
         
-        # Track per-channel MPE state
-        _log("Initializing channel state tracking...")
-        self.channel_state = {}
+        # MPE state tracking per channel
+        self.pending_mpe = {}  # channel -> {param: value}
         for channel in range(16):
-            self.channel_state[channel] = {
-                'pitch_bend': None,
-                'pressure': None,
-                'timbre': None
+            self.pending_mpe[channel] = {
+                'bend': 0.0,
+                'pressure': 1.0,
+                'ring_frequency': 0.0
             }
         
-        self.global_envelope_handler = EnvelopeHandler(self.synth_tools, self.global_params)
         _log("VoiceManager initialization complete")
 
     def get_synth(self):
         """Get synthesizer instance for audio system"""
         return self.synth
 
-    def update_global_param(self, param, value):
-        """Update global envelope parameter"""
-        self.global_params[param] = value
-        self.global_envelope_handler.handle_route([param, value])
-        _log(f"Updated global param {param}: {value}")
+    def _handle_amplifier_envelope(self, route_parts, param_name, value):
+        """Handle amplifier envelope parameter updates"""
+        if route_parts[0] != 'amplifier' or 'envelope' not in route_parts:
+            _log(f"[ERROR] Invalid envelope route: {'/'.join(route_parts)}")
+            return
+            
+        new_envelope = self.amplifier_envelope.update_param(param_name, value)
+        if new_envelope:
+            for voice in self.voices.values():
+                if voice.is_active():
+                    voice.update_param('envelope', new_envelope)
 
-    def update_channel_state(self, channel, param, value):
-        """Update channel MPE state"""
-        if channel in self.channel_state:
-            self.channel_state[channel][param] = value
-            _log(f"Updated channel {channel} {param}: {value}")
+    def _handle_note_on(self, channel, note_number):
+        """Handle note on event"""
+        voice_id = f"{note_number}.{channel}"
+        
+        # Create new voice
+        voice = Voice(note_number, channel, self.synth_tools, self.synth)
+        
+        # Set frequency using note number
+        voice.params['frequency'] = self.synth_tools.note_to_frequency(note_number)
+        
+        # Apply current envelope if it exists
+        if self.amplifier_envelope.envelope:
+            voice.params['envelope'] = self.amplifier_envelope.envelope
+        
+        # Apply any pending MPE for this channel
+        if channel in self.pending_mpe:
+            for param, value in self.pending_mpe[channel].items():
+                voice.params[param] = value
+            # Reset pending MPE
+            self.pending_mpe[channel] = {
+                'bend': 0.0,
+                'pressure': 1.0,
+                'ring_frequency': 0.0
+            }
+        
+        self.voices[voice_id] = voice
+        voice.create_note()
+
+    def _handle_note_off(self, channel, note_number):
+        """Handle note off event"""
+        voice_id = f"{note_number}.{channel}"
+        if voice_id in self.voices:
+            self.voices[voice_id].release()
+
+    def _get_voice_by_channel(self, channel):
+        """Find voice using specified channel"""
+        for voice in self.voices.values():
+            if voice.channel == channel and voice.is_active():
+                return voice
+        return None
+
+    def _handle_mpe_update(self, channel, param, value):
+        """Handle MPE parameter update"""
+        voice = self._get_voice_by_channel(channel)
+        if voice:
+            voice.update_param(param, value)
+        else:
+            self.pending_mpe[channel][param] = value
 
     def handle_route(self, route):
-        """Process an incoming route and update appropriate voice"""
-        _log(f"[Voice Manager] {route}")
+        """Process routes in format: signal_chain/signal_chain/scope/channel/params/value"""
+        _log(f"Processing route: {route}")
         
         parts = route.split('/')
-        target = parts[1]
-        
-        if target == 'global':
-            if 'envelope' in parts:
-                param_type = parts[3]
-                value = float(parts[-1])
-                self.update_global_param(param_type, value)
-        else:
-            note_str, channel = target.split('.')
-            required_params = {
-                'bend': self.channel_state[channel]['pitch_bend'],
-                'pressure': self.channel_state[channel]['pressure'],
-                'timbre': self.channel_state[channel]['timbre'],
-                'envelope': self.global_envelope_handler.envelope
-            }
-            if target not in self.voices:
-                self.voices[target] = Voice(self.synth_tools, self.synth, required_params)
-                self.voices[target].identifier = target
-                _log(f"Created new voice for target: {target}")
+        if len(parts) < 5:
+            _log(f"[ERROR] Invalid route format: {route}")
+            return
 
-            voice = self.voices[target]
-            # ... (existing voice update logic)
+        signal_chain = parts[0]
+        scope = parts[2]
+        channel = int(parts[3])
+        param_path = '/'.join(parts[4:-1])
+        value = float(parts[-1])
+
+        if scope == 'global':
+            if 'envelope' in param_path:
+                param_name = param_path.split('/')[-1]
+                self._handle_amplifier_envelope(parts, param_name, value)
+
+        elif scope == 'per_key':
+            if 'frequency' in param_path:
+                note_number = int(value)
+                self._handle_note_on(channel, note_number)
+                
+            elif 'release' in param_path:
+                note_number = int(value)
+                self._handle_note_off(channel, note_number)
+                
+            else:
+                # MPE parameter updates
+                if 'pressure' in param_path:
+                    self._handle_mpe_update(channel, 'amplitude', value)
+                elif 'bend' in param_path:
+                    self._handle_mpe_update(channel, 'bend', value)
+                elif 'ring_frequency' in param_path:
+                    self._handle_mpe_update(channel, 'ring_frequency', value)
 
     def cleanup_voices(self):
         """Remove completed voices"""
-        for identifier, voice in list(self.voices.items()):
+        for voice_id, voice in list(self.voices.items()):
             if not voice.is_active():
-                envelope_info = self.synth.note_info(voice.note)
-                if envelope_info[0] is None:
-                    _log(f"Cleaned up voice: {identifier}")
-                    del self.voices[identifier]
+                if voice.note:
+                    voice.note = None
+                del self.voices[voice_id]
+                _log(f"Cleaned up voice: {voice_id}")
 
     def cleanup(self):
         """Cleanup synthesizer"""
