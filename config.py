@@ -8,12 +8,12 @@ Paths are authoritative - no defaults or validation needed.
 
 # Basic toy piano configuration with minimum needed paths for synthio
 CASIO_PATHS = '''
-oscillator/per_key/frequency/20-20000/note_number
+oscillator/per_key/frequency/note_number
 oscillator/per_key/waveform/square/note_on
 amplifier/per_key/gain/0-1/velocity
 amplifier/global/envelope/attack_time/0.001-5/cc73/0.01
 amplifier/global/envelope/decay_time/0.001-5/cc75/0.05
-amplifier/global/envelope/attack_level/0-1/cc72/1.0
+amplifier/global/envelope/attack_level/0-1/cc72
 amplifier/global/envelope/sustain_level/0-1/cc70/0.8
 amplifier/per_key/envelope/attack/trigger/note_on
 amplifier/per_key/envelope/release/trigger/note_off

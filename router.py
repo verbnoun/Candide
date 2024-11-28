@@ -74,7 +74,22 @@ class Router:
             'cc': {}           # cc_number -> {route_template, range}
         }
         
-        # Build fast lookup tables from paths
+        # Initialize ring buffer
+        self.message_buffer = RingBuffer(BUFFER_SIZE)
+        
+        # Minimal state for continuous signal filtering
+        self.last_value = {}  # channel -> {pitch_bend, pressure, timbre}
+        
+        # Build routing tables
+        self._build_routing_tables(paths)
+        
+        # Log created tables
+        self._log_routing_tables()
+        
+        _log("Router initialized")
+        
+    def _build_routing_tables(self, paths):
+        """Build lookup tables from config paths"""
         for path in paths.strip().split('\n'):
             if not path.strip():
                 continue
@@ -83,19 +98,65 @@ class Router:
             if len(parts) < 4:
                 continue
                 
-            # Get key elements
-            source = parts[-1]
-            range_str = parts[-2]
-            route_template = '/'.join(parts[:-2])
+            # Work backwards through parts
+            parts_iter = reversed(parts)
+            
+            # Check last value for default
+            last = next(parts_iter)
+            try:
+                default = float(last)
+                source = next(parts_iter)
+            except ValueError:
+                default = None
+                source = last
+                
+            # Get range and check for special cases
+            range_str = next(parts_iter)
+            has_trigger = 'trigger' in range_str
+                
+            # Build template from remaining parts
+            # Include the range part if it's a parameter value (like 'square')
+            template_parts = []
+            if not range_str.replace('.', '').replace('-', '').isdigit() and not has_trigger:
+                template_parts.append(range_str)
+            
+            # Add remaining parts
+            for part in reversed(list(parts_iter)):
+                template_parts.append(part)
+                
+            route_template = '/'.join(template_parts)
             
             # Sort into appropriate lookup table
-            if source in ('note_number', 'velocity', 'note_on'):
-                self.route_info['note_on'][source] = {
+            if source == 'note_number':
+                self.route_info['note_on']['note_number'] = {
+                    'template': f"{route_template}/frequency",
+                    'range': 'na'
+                }
+            elif source == 'velocity':
+                self.route_info['note_on']['velocity'] = {
                     'template': route_template,
                     'range': range_str
                 }
+            elif source == 'note_on':
+                # Check if this is a trigger path
+                if has_trigger:
+                    key = 'trigger'
+                    template_range = 'na'
+                else:
+                    key = 'waveform'
+                    template_range = 'na'
+                    route_template = f"{route_template}/{range_str}"  # Include waveform type in template
+                    
+                self.route_info['note_on'][key] = {
+                    'template': route_template,
+                    'range': template_range
+                }
             elif source == 'note_off':
-                self.route_info['note_off'] = route_template
+                if has_trigger:
+                    self.route_info['note_off'] = {
+                        'template': route_template,
+                        'range': 'na'
+                    }
             elif source == 'pitch_bend':
                 self.route_info['pitch_bend'] = {
                     'template': route_template,
@@ -113,16 +174,20 @@ class Router:
                         'template': route_template,
                         'range': range_str
                     }
+                    _log(f"Added CC route for cc{cc_num}: template={route_template}, range={range_str}")
                 except ValueError:
                     continue
-
-        # Initialize ring buffer
-        self.message_buffer = RingBuffer(BUFFER_SIZE)
-        
-        # Minimal state for continuous signal filtering
-        self.last_value = {}  # channel -> {pitch_bend, pressure, timbre}
-        
-        _log("Router initialized")
+                    
+    def _log_routing_tables(self):
+        """Log the created routing tables"""
+        _log("\nRouting Tables Created:")
+        for msg_type, routes in self.route_info.items():
+            _log(f"  {msg_type}:")
+            if isinstance(routes, dict):
+                for key, info in routes.items():
+                    _log(f"    {key}: {info}")
+            else:
+                _log(f"    {routes}")
 
     def _should_process(self, message):
         """Quick check if message should be processed based on lookup tables"""
@@ -196,15 +261,20 @@ class Router:
         except ValueError:
             return value
 
-    def _create_route(self, template, channel, value):
-        """Create route from template and value"""
+    def _create_route(self, template, channel, value, note=None):
+        """Create route from template and value
+        
+        For per_key routes, includes channel.note in identifier if note available
+        """
         parts = [template.split('/')[0]]  # Start with signal chain
         parts.append(parts[0])  # Add signal chain again for voice identifier
         
         template_parts = template.split('/')
         if 'per_key' in template_parts:
             parts.append('per_key')
-            parts.append(str(channel))
+            # Include note number in identifier if available
+            identifier = f"{channel}.{note}" if note is not None else str(channel)
+            parts.append(identifier)
             # Add remaining parts excluding signal chain, per_key, and global
             parts.extend([p for p in template_parts[1:] if p not in ('per_key', 'global')])
         else:  # global scope
@@ -240,24 +310,37 @@ class Router:
             msg, vm = self.message_buffer.popleft()
             routes = []
             
+            # Get note number if available in message
+            note = msg['data'].get('note', None)
+            
             if msg['type'] == 'note_on':
-                note_num = msg['data']['note']
                 if 'note_number' in self.route_info['note_on']:
                     info = self.route_info['note_on']['note_number']
-                    # Pass through note number directly
-                    routes.append(self._create_route(info['template'], msg['channel'], note_num))
+                    routes.append(self._create_route(
+                        info['template'], 
+                        msg['channel'], 
+                        note,  # Note number as value
+                        note   # Note number for identifier
+                    ))
                     
                 if 'velocity' in self.route_info['note_on']:
                     info = self.route_info['note_on']['velocity']
                     value = self._normalize(msg['data']['velocity'], info['range'])
-                    routes.append(self._create_route(info['template'], msg['channel'], value))
+                    routes.append(self._create_route(
+                        info['template'], 
+                        msg['channel'], 
+                        value, 
+                        note
+                    ))
                     
             elif msg['type'] == 'note_off':
                 if self.route_info['note_off']:
                     routes.append(self._create_route(
                         self.route_info['note_off'],
                         msg['channel'],
-                        msg['data']['note']))  # Pass through note number
+                        note,  # Note number as value
+                        note   # Note number for identifier
+                    ))
                     
             elif msg['type'] == 'pitch_bend':
                 if self.route_info['pitch_bend']:
