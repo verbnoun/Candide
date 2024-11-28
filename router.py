@@ -65,13 +65,13 @@ class Router:
         """Initialize router with a set of paths from config"""
         _log("Building routing tables...")
         
+        # Accepted MIDI types set
+        self.accepted_midi = set()
+        
         # Main routing lookup tables
         self.route_info = {
-            'note_on': {},      # note_number/velocity -> {route_template, range}
-            'note_off': None,   # Just template if supported
-            'pitch_bend': {},   # template and range if supported
-            'pressure': {},     # template and range if supported
-            'cc': {}           # cc_number -> {route_template, range}
+            'note_on': {},
+            'note_off': None
         }
         
         # Initialize ring buffer
@@ -90,12 +90,6 @@ class Router:
         
     def _build_routing_tables(self, paths):
         """Build lookup tables from config paths"""
-        # Initialize only required tables
-        self.route_info = {
-            'note_on': {},
-            'note_off': None
-        }
-
         for path in paths.strip().split('\n'):
             if not path.strip() or len(path.split('/')) < 4:
                 continue
@@ -130,11 +124,13 @@ class Router:
                     'template': route_template,
                     'range': 'na'
                 }
+                self.accepted_midi.add('note_on')
             elif source == 'velocity':
                 self.route_info['note_on']['velocity'] = {
                     'template': route_template,
                     'range': range_str
                 }
+                self.accepted_midi.add('note_on')
             elif source == 'note_on':
                 key = 'trigger' if has_trigger else 'waveform'
                 if not has_trigger:
@@ -144,6 +140,7 @@ class Router:
                     'template': route_template,
                     'range': 'na'
                 }
+                self.accepted_midi.add('note_on')
             elif source == 'note_off':
                 if has_trigger:
                     self.route_info['note_off'] = {
@@ -152,6 +149,7 @@ class Router:
                             'range': 'na'
                         }
                     }
+                    self.accepted_midi.add('note_off')
             elif source == 'pitch_bend':
                 if 'pitch_bend' not in self.route_info:
                     self.route_info['pitch_bend'] = {}
@@ -159,6 +157,7 @@ class Router:
                     'template': route_template,
                     'range': range_str
                 }
+                self.accepted_midi.add('pitch_bend')
             elif source == 'channel_pressure':
                 if 'pressure' not in self.route_info:
                     self.route_info['pressure'] = {}
@@ -166,6 +165,7 @@ class Router:
                     'template': route_template,
                     'range': range_str
                 }
+                self.accepted_midi.add('pressure')
             elif source.startswith('cc'):
                 try:
                     if 'cc' not in self.route_info:
@@ -175,6 +175,7 @@ class Router:
                         'template': route_template,
                         'range': range_str
                     }
+                    self.accepted_midi.add('cc')
                     _log(f"Added CC route for cc{cc_num}: template={route_template}, range={range_str}")
                 except ValueError:
                     continue
@@ -191,21 +192,8 @@ class Router:
                 _log(f"    {routes}")
 
     def _should_process(self, message):
-        """Quick check if message should be processed based on lookup tables"""
-        msg_type = message['type']
-        
-        if msg_type == 'note_on':
-            return bool(self.route_info['note_on'])
-        elif msg_type == 'note_off':
-            return self.route_info['note_off'] is not None
-        elif msg_type == 'pitch_bend':
-            return bool(self.route_info['pitch_bend'])
-        elif msg_type == 'pressure':
-            return bool(self.route_info['pressure'])
-        elif msg_type == 'cc':
-            return message['data']['number'] in self.route_info['cc']
-            
-        return False
+        """Quick check if message should be processed based on whitelist"""
+        return message['type'] in self.accepted_midi
 
     def _check_continuous(self, message):
         """Check if continuous controller change exceeds threshold"""
@@ -279,7 +267,6 @@ class Router:
                 if part == 'per_key':
                     new_parts.append(identifier)
             parts = new_parts
-        # Removed global injection since it's already in template
         
         # Add the value
         parts.append(str(value))
@@ -295,7 +282,7 @@ class Router:
 
         # Check continuous signal threshold
         if message['type'] in ('pitch_bend', 'pressure') or \
-           (message['type'] == 'cc' and message['data']['number'] == 74):
+        (message['type'] == 'cc' and message['data']['number'] == 74):
             if not self._check_continuous(message):
                 _log(f"[REJECTED] Change below threshold: {message['type']}")
                 return
@@ -333,9 +320,10 @@ class Router:
                     ))
                     
             elif msg['type'] == 'note_off':
-                if self.route_info['note_off']:
+                if self.route_info['note_off'] and 'trigger' in self.route_info['note_off']:
+                    info = self.route_info['note_off']['trigger']
                     routes.append(self._create_route(
-                        self.route_info['note_off'],
+                        info['template'],
                         msg['channel'],
                         note,  # Note number as value
                         note   # Note number for identifier
