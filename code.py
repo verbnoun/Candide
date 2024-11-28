@@ -217,6 +217,9 @@ class AudioSystem:
         try:
             # Setup I2S
             _log("Setting up I2S output...")
+            
+            audiobusio.I2SOut(I2S_BIT_CLOCK, I2S_WORD_SELECT, I2S_DATA).deinit()
+
             self.audio_out = audiobusio.I2SOut(
                 bit_clock=I2S_BIT_CLOCK,
                 word_select=I2S_WORD_SELECT,

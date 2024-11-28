@@ -43,40 +43,6 @@ def _log(message, module="VOICES"):
             color = LIGHT_YELLOW
         print(f"{color}[{module}] {message}{RESET}", file=sys.stderr)
 
-class VoiceBeep:
-    """Simple audio test that runs as part of VoiceManager initialization"""
-
-    # Static note parameters for the beep
-    BEEP_FREQUENCY = 440
-    BEEP_AMPLITUDE = 0.5
-
-    def play(self, synth):
-        try:
-            # Create a simple synthio note with static parameters
-            note = synthio.Note(
-                frequency=self.BEEP_FREQUENCY,
-                amplitude=self.BEEP_AMPLITUDE
-            )
-
-            _log("VoiceBeep: pressing NOTE ...")
-            synth.press(note)
-            time.sleep(0.5)
-
-            _log("VoiceBeep: releasing NOTE ...")
-            synth.release(note)
-            time.sleep(0.5)
-
-            _log("VoiecBeep: PRESSING 64 ...")
-            synth.press(64)
-            time.sleep(0.5)
-            
-            _log("VoiceBeep: Releasing 64 ...")
-            synth.release(64)
-            time.sleep(0.5)
-
-        except Exception as e:
-            _log(f"[VoiceBeep] error: {str(e)}")
-
 class Voice:
     """Represents a single voice containing a synthio note"""
     def __init__(self, channel, note_number, synth_tools):
@@ -218,10 +184,6 @@ class VoiceManager:
             sample_rate=SAMPLE_RATE,
             channel_count=AUDIO_CHANNEL_COUNT
         )
-        
-        # Create the VoiceBeep instance and play the test tone
-        self.voice_beep = VoiceBeep()
-        self.voice_beep.play(self.synth)
         
         _log("VoiceManager initialization complete")
 
