@@ -4,6 +4,15 @@ voices.py - Voice and Note Management
 Manages voice objects containing synthio notes.
 Uses synthesizer.py for all value calculations.
 Handles routes based on config path structure.
+
+not handling triggers correctly
+synthio note_info should be used to monitor note life cycle
+voice needs a simple state machine
+Remove All Defaults
+Update envelope paramater assignments to NOT use defaults
+we should break voice manager into oscillator / filter / envelope and handle their routes at that level
+    each would have a global and per key, a way to process their data, etc
+
 """
 import time
 import sys
@@ -101,11 +110,11 @@ class Voice:
     def assemble_envelope(self):
         """Create envelope from stored parameters"""
         envelope_params = {
-            'attack_time': self.params.get('attack_time', 0),
-            'decay_time': self.params.get('decay_time', 0),
-            'release_time': self.params.get('release_time', 0),
-            'attack_level': self.params.get('attack_level', 1.0),
-            'sustain_level': self.params.get('sustain_level', 0.8)
+            'attack_time': self.params.get('attack_time'),
+            'decay_time': self.params.get('decay_time'),
+            'release_time': self.params.get('release_time'),
+            'attack_level': self.params.get('attack_level'),
+            'sustain_level': self.params.get('sustain_level')
         }
         try:
             return synthio.Envelope(**envelope_params)
@@ -315,6 +324,7 @@ class VoiceManager:
             return
             
         # Store global parameter
+        # Do we overwrite old paramaters or keep them? like if cc73 changes, do we have both copies?
         self.store_global_param(param_path, value)
         
         # Apply to all active voices
@@ -348,7 +358,7 @@ class VoiceManager:
                 self.apply_parameter(voice, signal_chain, param_path, value)
                 
 
-                # we need a way to know the state of the synthio note so we dont double press.
+                # i dont think this happnens because of attack trigger
                 # Press note if ready and note isn't active yet
                 if voice.is_ready_for_note() and voice.note and not voice.is_active():
                     _log(f"Voice ready, pressing note: {identifier}")
@@ -485,11 +495,11 @@ class VoiceManager:
                     # Update envelope if note exists
                     if voice.note:
                         envelope = synthio.Envelope(
-                            attack_time=voice.params.get('attack_time', 0),
-                            decay_time=voice.params.get('decay_time', 0), 
-                            release_time=voice.params.get('release_time', 0),
-                            attack_level=voice.params.get('attack_level', 1.0),
-                            sustain_level=voice.params.get('sustain_level', 0.8)
+                            attack_time=voice.params.get('attack_time'),
+                            decay_time=voice.params.get('decay_time'), 
+                            release_time=voice.params.get('release_time'),
+                            attack_level=voice.params.get('attack_level'),
+                            sustain_level=voice.params.get('sustain_level')
                         )
                         voice.note.envelope = envelope
                         

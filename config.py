@@ -7,17 +7,17 @@ Paths are authoritative - no defaults or validation needed.
 """
 
 # Basic toy piano configuration with minimum needed paths for synthio
+# Ensure multiple routes can be created per signal, see velocity
 CASIO_PATHS = '''
 oscillator/per_key/frequency/note_number
 oscillator/per_key/waveform/square/note_on
-amplifier/per_key/gain/0-1/velocity
 amplifier/per_key/envelope/attack/trigger/note_on
-amplifier/global/envelope/attack_time/0.001-5/cc73/0.01
-amplifier/global/envelope/attack_level/0-1/cc85
+amplifier/per_key/envelope/attack_level/0-1/velocity
+amplifier/global/envelope/attack_time/0.001-5/cc73/0.001
 amplifier/global/envelope/decay_time/0.001-5/cc75/0.05
-amplifier/global/envelope/sustain_level/0-1/cc70/0.8
-amplifier/global/envelope/release_time/0.001-5/cc72/0.2
+amplifier/per_key/envelope/sustain_level/0-0.5/velocity
 amplifier/per_key/envelope/release/trigger/note_off
+amplifier/global/envelope/release_time/0.001-5/cc72/0.2
 '''
 
 # Pressure-sensitive organ configuration 
