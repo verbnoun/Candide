@@ -8,7 +8,7 @@ Handles routes based on config path structure.
 import time
 import sys
 import synthio
-from synthesizer import Synthesizer, timer
+from synthesizer import Synthesizer
 from constants import VOICES_DEBUG, SAMPLE_RATE, AUDIO_CHANNEL_COUNT
 
 def _log(message, module="VOICES"):
@@ -347,6 +347,8 @@ class VoiceManager:
                 voice = self.voices[identifier]
                 self.apply_parameter(voice, signal_chain, param_path, value)
                 
+
+                # we need a way to know the state of the synthio note so we dont double press.
                 # Press note if ready and note isn't active yet
                 if voice.is_ready_for_note() and voice.note and not voice.is_active():
                     _log(f"Voice ready, pressing note: {identifier}")
