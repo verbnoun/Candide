@@ -27,6 +27,10 @@ def _log(message, module="SYNTH"):
 class Synthesizer:
     """Synthesis calculation tools and value manipulation"""
     
+    def __init__(self):
+        # Cache for storing generated waveforms
+        self._waveforms = {}
+        
     def note_to_frequency(self, note_number):
         """Convert MIDI note number to frequency using synthio"""
         return synthio.midi_to_hz(note_number)
@@ -35,6 +39,33 @@ class Synthesizer:
         """Calculate amplitude based on pressure value"""
         _log(f"Calculating pressure amplitude: pressure={pressure}, current={current_amp}")
         return max(0.0, min(1.0, current_amp * pressure))
+    
+    def get_waveform(self, wave_type):
+        """Get waveform data, generating if needed"""
+        if wave_type not in self._waveforms:
+            _log(f"Generating waveform: {wave_type}")
+            try:
+                if wave_type == 'square':
+                    # Generate square wave - simple high/low values
+                    import array
+                    length = 512
+                    square = array.array('h')
+                    for i in range(length):
+                        if i < length/2:
+                            square.append(32000)  # Max positive value
+                        else:
+                            square.append(-32000)  # Max negative value
+                    self._waveforms[wave_type] = square
+                else:
+                    _log(f"[ERROR] Unknown waveform type: {wave_type}")
+                    return None
+                    
+            except Exception as e:
+                _log(f"[ERROR] Failed to generate waveform: {str(e)}")
+                return None
+                
+        _log(f"Retrieved waveform: {wave_type}")
+        return self._waveforms[wave_type]
             
     def calculate_filter(self, frequency, resonance):
         """Create a filter with the given parameters"""

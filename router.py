@@ -112,7 +112,11 @@ class Router:
                 
             # Build template from remaining parts
             template_parts = []
-            if not range_str.replace('.', '').replace('-', '').isdigit() and not has_trigger:
+            
+            # Only add non-numeric range_str to template if it's not a waveform type
+            if not range_str.replace('.', '').replace('-', '').isdigit() and \
+            not has_trigger and \
+            'waveform' not in path:
                 template_parts.append(range_str)
             
             template_parts.extend(reversed(list(parts_iter)))
@@ -133,13 +137,18 @@ class Router:
                 self.accepted_midi.add('note_on')
             elif source == 'note_on':
                 key = 'trigger' if has_trigger else 'waveform'
-                if not has_trigger:
-                    route_template = f"{route_template}/{range_str}"
-                    
-                self.route_info['note_on'][key] = {
-                    'template': route_template,
-                    'range': 'na'
-                }
+                if has_trigger:
+                    self.route_info['note_on'][key] = {
+                        'template': route_template,
+                        'range': 'na'
+                    }
+                else:
+                    # For waveform, store wave type but don't add to template
+                    self.route_info['note_on'][key] = {
+                        'template': route_template,
+                        'wave_type': range_str,
+                        'range': 'na'
+                    }
                 self.accepted_midi.add('note_on')
             elif source == 'note_off':
                 if has_trigger:
@@ -318,15 +327,34 @@ class Router:
                         value, 
                         note
                     ))
+                
+                if 'waveform' in self.route_info['note_on']:
+                    info = self.route_info['note_on']['waveform']
+                    routes.append(self._create_route(
+                        info['template'],
+                        msg['channel'],
+                        info['wave_type'],  # Use stored wave type
+                        note
+                    ))
                     
-            elif msg['type'] == 'note_off':
-                if self.route_info['note_off'] and 'trigger' in self.route_info['note_off']:
-                    info = self.route_info['note_off']['trigger']
+                if 'trigger' in self.route_info['note_on']:
+                    info = self.route_info['note_on']['trigger']
                     routes.append(self._create_route(
                         info['template'],
                         msg['channel'],
                         note,  # Note number as value
                         note   # Note number for identifier
+                    ))
+                    
+            elif msg['type'] == 'note_off':
+                if self.route_info['note_off'] and 'trigger' in self.route_info['note_off']:
+                    info = self.route_info['note_off']['trigger']
+                    note = msg['data'].get('note', None)
+                    routes.append(self._create_route(
+                        info['template'],     # 'amplifier/per_key/envelope/release' 
+                        msg['channel'],       # For identifier construction
+                        'trigger',            # Value from rightmost path element
+                        note                  # For per_key identifier
                     ))
                     
             elif msg['type'] == 'pitch_bend':

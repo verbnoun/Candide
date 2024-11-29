@@ -58,14 +58,13 @@ class BootBeep:
             synth = synthio.Synthesizer(sample_rate=SAMPLE_RATE, channel_count=AUDIO_CHANNEL_COUNT)
             
             audio_out.play(synth)
-            
-            _log("BootBeep: BEEP!")
+            _log("Testing basic hardware audio output...")
             synth.press(64)
             time.sleep(0.05)
             
             synth.release(64)
             time.sleep(0.05)
-            
+            _log("BootBeep: BEEP!")
             synth.deinit()
             audio_out.deinit()  # Important: free up I2S pins
             

@@ -56,10 +56,10 @@ class Voice:
         # Parameters for note creation/update
         self.params = {
             'frequency': None,
-            'amplitude': 1.0,
+            'amplitude': None,
             'envelope': None,
-            'bend': 0.0,
-            'ring_frequency': 0.0,
+            'bend': None,
+            'ring_frequency': None,
             'filter': None,
             'waveform': None
         }
@@ -67,17 +67,31 @@ class Voice:
 
     def is_ready_for_note(self):
         """Check if we have minimum required parameters for note creation"""
-        return self.params['frequency'] is not None
+        required_params = ['frequency', 'waveform']
+        for param in required_params:
+            if self.params[param] is None:
+                _log(f"Missing required parameter for note creation: {param}")
+                return False
+        return True
 
     def update_param(self, param, value):
         """Update parameter and note if it exists"""
         _log(f"Updating voice parameter: {self.identifier} {param}={value}")
-        self.params[param] = value
+        
+        if param == 'waveform':
+            # Get waveform data from synth tools
+            waveform_data = self.synth_tools.get_waveform(value)
+            if waveform_data is None:
+                _log(f"[ERROR] Failed to get waveform data: {value}")
+                return
+            self.params[param] = waveform_data
+        else:
+            self.params[param] = value
         
         if self.note:
             try:
-                setattr(self.note, param, value)
-                _log(f"Updated note parameter: {self.identifier} {param}={value}")
+                setattr(self.note, param, self.params[param])
+                _log(f"Updated note parameter: {self.identifier} {param}")
             except Exception as e:
                 _log(f"[ERROR] Failed to update note parameter: {str(e)}")
         
@@ -101,37 +115,33 @@ class Voice:
 
     def create_note(self):
         try:
-            # Prepare note parameters
-            note_params = {
-                'frequency': self.params['frequency'],
-                'amplitude': self.params['amplitude'],
-                'bend': self.params['bend'],
-                'ring_frequency': self.params['ring_frequency']
-            }
-            _log({
-                'type': 'note_creation',
-                'identifier': self.identifier,
-                'frequency': note_params['frequency'],
-                'amplitude': note_params['amplitude'],
-                'bend': note_params['bend'],
-                'ring_frequency': note_params['ring_frequency']
-            })
-
+            # Build note parameters from what we have
+            note_params = {}
+            
+            # Required parameters
+            note_params['frequency'] = self.params['frequency']
+            note_params['waveform'] = self.params['waveform']
+            
+            # Optional parameters - only add if we have them
+            if self.params['amplitude'] is not None:
+                note_params['amplitude'] = self.params['amplitude']
+            if self.params['bend'] is not None:
+                note_params['bend'] = self.params['bend']
+            if self.params['ring_frequency'] is not None:
+                note_params['ring_frequency'] = self.params['ring_frequency']
+            
             # Create and add envelope if we have envelope parameters
             envelope = self.assemble_envelope()
             if envelope:
                 note_params['envelope'] = envelope
-                _log({
-                    'type': 'envelope_creation',
-                    'identifier': self.identifier,
-                    'attack_time': envelope.attack_time,
-                    'decay_time': envelope.decay_time,
-                    'release_time': envelope.release_time,
-                    'attack_level': envelope.attack_level,
-                    'sustain_level': envelope.sustain_level
-                })
 
-            # Create note with clean parameter set
+            _log({
+                'type': 'note_creation',
+                'identifier': self.identifier,
+                'params': note_params
+            })
+
+            # Create note with parameter set
             self.note = synthio.Note(**note_params)
             self.active = True
             _log(f"Created note for voice: {self.identifier}")
@@ -169,6 +179,7 @@ class VoiceManager:
             'gain': 'amplitude',
             'pressure': 'amplitude',
             'bend': 'bend',
+            'waveform': 'waveform'
         }
 
         # Voice management
@@ -195,14 +206,11 @@ class VoiceManager:
         """Test basic synthesizer audio output"""
         try:
             _log("Testing synthesizer audio output...")
-            
-            # Basic beep using raw synth
             self.synth.press(64)  # Middle C
             time.sleep(0.1)
             self.synth.release(64)
             time.sleep(0.05)
-            
-            _log("Synthesizer audio test complete")
+            _log("Synthio and Audio System BEEP!")
             
         except Exception as e:
             _log(f"[ERROR] Synthesizer audio test failed: {str(e)}")
@@ -252,11 +260,11 @@ class VoiceManager:
 
     def apply_stored_params(self, voice):
         """Apply stored parameters to a new voice"""
-        # Apply global params
+        # Apply global params first
         for param, value in self.global_params.items():
             voice.update_param(param, value)
         
-        # Apply channel-specific params
+        # Then apply channel-specific params
         if voice.channel in self.channel_params:
             for param, value in self.channel_params[voice.channel].items():
                 voice.update_param(param, value)
@@ -283,8 +291,8 @@ class VoiceManager:
             _log(f"[ERROR] No scope found in route: {route}")
             return
             
-        param_path = '/'.join(parts[1:])  # Include all parts for parameter handling
-        value = float(parts[-1])
+        param_path = '/'.join(parts[1:])
+        value = parts[-1]
 
         # Extract channel and note if present in path
         channel, note = self.extract_identifier(param_path)
@@ -298,6 +306,14 @@ class VoiceManager:
         """Handle global parameter routes"""
         _log(f"Processing global route: {signal_chain}/{param_path}")
         
+        try:
+            # Convert value to float unless it's a waveform type
+            if 'waveform' not in param_path:
+                value = float(value)
+        except ValueError as e:
+            _log(f"[ERROR] Failed to convert value to float: {str(e)}")
+            return
+            
         # Store global parameter
         self.store_global_param(param_path, value)
         
@@ -307,6 +323,7 @@ class VoiceManager:
                 self.apply_parameter(voice, signal_chain, param_path, value)
 
     def handle_per_key_route(self, signal_chain, param_path, value, channel, note):
+        """Handle per-key parameter routes"""
         _log(f"Processing per-key route: {signal_chain}/{param_path}")
 
         # Store channel-specific parameters if we have a channel
@@ -318,22 +335,22 @@ class VoiceManager:
         if channel is not None and note is not None:
             identifier = f"{channel}.{note}"
 
-            # Create new voice if needed and all required params are present
-            if identifier not in self.voices and signal_chain == 'frequency' and \
-            'frequency' in self.channel_params.get(channel, {}):
+            # Create new voice if needed
+            if identifier not in self.voices and signal_chain == 'frequency':
                 _log(f"Creating new voice: identifier={identifier}")
                 voice = Voice(channel, note, self.synth_tools)
                 self.voices[identifier] = voice
                 self.apply_stored_params(voice)
-                self.press_note(voice)  # Press the note
 
             # Update existing voice
             if identifier in self.voices:
                 voice = self.voices[identifier]
                 self.apply_parameter(voice, signal_chain, param_path, value)
-                if voice.is_ready_for_note():
-                    _log("Voice ready, pressing ...")
-                    self.press_note(voice)  # Press the note
+                
+                # Press note if ready and note isn't active yet
+                if voice.is_ready_for_note() and voice.note and not voice.is_active():
+                    _log(f"Voice ready, pressing note: {identifier}")
+                    self.press_note(voice)
 
     def press_note(self, voice):
         """Press a note in the synthesizer"""
@@ -355,6 +372,15 @@ class VoiceManager:
             })
             voice.update_param('frequency', freq)
             
+        elif signal_chain == 'oscillator':
+            if 'waveform' in param_path:
+                _log({
+                    'type': 'waveform_update',
+                    'identifier': voice.identifier,
+                    'waveform_type': value
+                })
+                voice.update_param('waveform', value)
+                
         elif signal_chain == 'amplifier':
             if 'envelope' in param_path:
                 self.handle_envelope_update(voice, param_path, value)
@@ -407,14 +433,19 @@ class VoiceManager:
             voice.release()
         else:
             try:
-                new_envelope = voice.params.get('envelope', None)
-                if new_envelope is None:
-                    new_envelope = synthio.Envelope()
-                
-                # Update envelope parameter
-                param_name = parts[-1]
-                setattr(new_envelope, param_name, value)
-                voice.update_param('envelope', new_envelope)
+                # Get current envelope params - will raise KeyError if any missing
+                envelope = synthio.Envelope(
+                    attack_time=voice.params['attack_time'],
+                    decay_time=voice.params['decay_time'],
+                    release_time=voice.params['release_time'],
+                    attack_level=voice.params['attack_level'],
+                    sustain_level=voice.params['sustain_level']
+                )
+                if voice.note:
+                    voice.note.envelope = envelope
+                    
+            except KeyError as e:
+                _log(f"[ERROR] Missing envelope parameter: {str(e)}")
             except Exception as e:
                 _log(f"[ERROR] Failed to update envelope: {str(e)}")
 
