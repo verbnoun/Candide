@@ -8,7 +8,7 @@ Handles routes based on config path structure.
 import time
 import sys
 import synthio
-from synthesizer import Synthesizer
+from synthesizer import Synthesizer, timer
 from constants import VOICES_DEBUG, SAMPLE_RATE, AUDIO_CHANNEL_COUNT
 
 def _log(message, module="VOICES"):

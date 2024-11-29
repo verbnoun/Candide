@@ -4,6 +4,7 @@ synthesizer.py - Synthesis Value Calculations
 Provides value manipulation and calculations for voices.py.
 All methods are stateless calculation tools.
 """
+import time
 import sys
 import synthio
 from constants import SYNTH_DEBUG
@@ -23,6 +24,44 @@ def _log(message, module="SYNTH"):
     else:
         color = RED if "[ERROR]" in str(message) else GREEN
         print(f"{color}[{module}] {message}{RESET}", file=sys.stderr)
+
+class Timer:
+    """
+    A generic timer class that calls a provided callback when the timer expires.
+    """
+    def __init__(self):
+        self._start_time = None
+        self._duration = None
+        self._callback = None
+
+    def start(self, duration, callback):
+        """
+        Start the timer with the given duration and callback.
+        
+        Parameters:
+        duration (float): The duration of the timer in seconds.
+        callback (callable): The function to be called when the timer expires.
+        """
+        self._start_time = time.monotonic()
+        self._duration = duration
+        self._callback = callback
+
+    def update(self):
+        """
+        Check if the timer has expired and call the provided callback if so.
+        """
+        if self._start_time is not None:
+            if time.monotonic() - self._start_time >= self._duration:
+                self._callback()
+                self.reset()
+
+    def reset(self):
+        """
+        Reset the timer, clearing the start time, duration, and callback.
+        """
+        self._start_time = None
+        self._duration = None
+        self._callback = None
 
 class Synthesizer:
     """Synthesis calculation tools and value manipulation"""
