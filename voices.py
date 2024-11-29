@@ -364,7 +364,7 @@ class VoiceManager:
         """Apply parameter update to voice based on signal chain"""
         if signal_chain == 'frequency':
             # Use synth_tools to calculate frequency from MIDI note number
-            freq = self.synth_tools.note_to_frequency(value)
+            freq = self.synth_tools.note_to_frequency(float(value))  # Convert to float here
             _log({
                 'type': 'frequency_update',
                 'identifier': voice.identifier,
@@ -383,71 +383,120 @@ class VoiceManager:
                 
         elif signal_chain == 'amplifier':
             if 'envelope' in param_path:
-                self.handle_envelope_update(voice, param_path, value)
+                parts = param_path.split('/')
+                if 'trigger' in parts:
+                    self.handle_envelope_update(voice, param_path, value)
+                else:
+                    # Handle numeric envelope parameters
+                    try:
+                        float_value = float(value)
+                        self.handle_envelope_update(voice, param_path, float_value)
+                    except ValueError as e:
+                        _log(f"[ERROR] Failed to convert envelope value to float: {str(e)}")
+                        return
             elif 'gain' in param_path:
-                _log({
-                    'type': 'amplitude_update',
-                    'identifier': voice.identifier,
-                    'new_amplitude': value
-                })
-                voice.update_param('amplitude', value)
+                try:
+                    float_value = float(value)
+                    _log({
+                        'type': 'amplitude_update',
+                        'identifier': voice.identifier,
+                        'new_amplitude': float_value
+                    })
+                    voice.update_param('amplitude', float_value)
+                except ValueError as e:
+                    _log(f"[ERROR] Failed to convert amplitude value to float: {str(e)}")
+                    return
             elif 'pressure' in param_path:
-                amplitude = self.synth_tools.calculate_pressure_amplitude(value, voice.params['amplitude'])
-                _log({
-                    'type': 'amplitude_update',
-                    'identifier': voice.identifier,
-                    'new_amplitude': amplitude
-                })
-                voice.update_param('amplitude', amplitude)
-                
+                try:
+                    float_value = float(value)
+                    amplitude = self.synth_tools.calculate_pressure_amplitude(
+                        float_value, 
+                        voice.params['amplitude']
+                    )
+                    _log({
+                        'type': 'amplitude_update',
+                        'identifier': voice.identifier,
+                        'new_amplitude': amplitude
+                    })
+                    voice.update_param('amplitude', amplitude)
+                except ValueError as e:
+                    _log(f"[ERROR] Failed to convert pressure value to float: {str(e)}")
+                    return
+                    
         elif signal_chain == 'filter':
             filter_parts = param_path.split('/')
             if len(filter_parts) >= 2:
-                param = filter_parts[-1]
-                if param == 'frequency':
-                    new_filter = self.synth_tools.calculate_filter(value, None)
-                    _log({
-                        'type': 'filter_update',
-                        'identifier': voice.identifier,
-                        'new_filter_frequency': value,
-                        'new_filter_resonance': new_filter.resonance
-                    })
-                    voice.update_param('filter', new_filter)
-                elif param == 'resonance':
-                    current_freq = 1000  # Default if not set
-                    if voice.params['filter']:
-                        current_freq = voice.params['filter'].frequency
-                    new_filter = self.synth_tools.calculate_filter(current_freq, value)
-                    _log({
-                        'type': 'filter_update',
-                        'identifier': voice.identifier,
-                        'new_filter_frequency': current_freq,
-                        'new_filter_resonance': value
-                    })
-                    voice.update_param('filter', new_filter)
+                try:
+                    float_value = float(value)
+                    param = filter_parts[-1]
+                    if param == 'frequency':
+                        new_filter = self.synth_tools.calculate_filter(float_value, None)
+                        _log({
+                            'type': 'filter_update',
+                            'identifier': voice.identifier,
+                            'new_filter_frequency': float_value,
+                            'new_filter_resonance': new_filter.resonance
+                        })
+                        voice.update_param('filter', new_filter)
+                    elif param == 'resonance':
+                        current_freq = 1000  # Default if not set
+                        if voice.params['filter']:
+                            current_freq = voice.params['filter'].frequency
+                        new_filter = self.synth_tools.calculate_filter(current_freq, float_value)
+                        _log({
+                            'type': 'filter_update',
+                            'identifier': voice.identifier,
+                            'new_filter_frequency': current_freq,
+                            'new_filter_resonance': float_value
+                        })
+                        voice.update_param('filter', new_filter)
+                except ValueError as e:
+                    _log(f"[ERROR] Failed to convert filter value to float: {str(e)}")
+                    return
 
     def handle_envelope_update(self, voice, param_path, value):
         """Update envelope parameters"""
         parts = param_path.split('/')
-        if 'release' in parts:
-            voice.release()
-        else:
-            try:
-                # Get current envelope params - will raise KeyError if any missing
-                envelope = synthio.Envelope(
-                    attack_time=voice.params['attack_time'],
-                    decay_time=voice.params['decay_time'],
-                    release_time=voice.params['release_time'],
-                    attack_level=voice.params['attack_level'],
-                    sustain_level=voice.params['sustain_level']
-                )
-                if voice.note:
-                    voice.note.envelope = envelope
+        
+        # Handle trigger signals for envelope stages
+        if 'trigger' in parts:
+            if 'release' in parts:
+                voice.release()
+                return
+            # Ready for other envelope stage triggers (attack, decay etc)
+            return
+                
+        # Handle numeric envelope parameters
+        try:
+            # Find parameter name from path
+            param_name = None
+            for part in parts:
+                if part in ['attack_time', 'decay_time', 'release_time', 
+                            'attack_level', 'sustain_level']:
+                    param_name = part
+                    break
                     
-            except KeyError as e:
-                _log(f"[ERROR] Missing envelope parameter: {str(e)}")
-            except Exception as e:
-                _log(f"[ERROR] Failed to update envelope: {str(e)}")
+            if param_name:
+                if param_name in voice.params:
+                    voice.params[param_name] = float(value)
+                    
+                    # Update envelope if note exists
+                    if voice.note:
+                        envelope = synthio.Envelope(
+                            attack_time=voice.params.get('attack_time', 0),
+                            decay_time=voice.params.get('decay_time', 0), 
+                            release_time=voice.params.get('release_time', 0),
+                            attack_level=voice.params.get('attack_level', 1.0),
+                            sustain_level=voice.params.get('sustain_level', 0.8)
+                        )
+                        voice.note.envelope = envelope
+                        
+        except ValueError as e:
+            _log(f"[ERROR] Failed to convert envelope parameter value to float: {str(e)}")
+        except KeyError as e:
+            _log(f"[ERROR] Missing envelope parameter: {str(e)}")
+        except Exception as e:
+            _log(f"[ERROR] Failed to update envelope: {str(e)}")
 
     def cleanup_voices(self):
         """Remove completed voices"""

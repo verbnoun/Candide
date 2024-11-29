@@ -340,10 +340,10 @@ class Router:
                 if 'trigger' in self.route_info['note_on']:
                     info = self.route_info['note_on']['trigger']
                     routes.append(self._create_route(
-                        info['template'],
-                        msg['channel'],
-                        note,  # Note number as value
-                        note   # Note number for identifier
+                        info['template'],     # 'amplifier/per_key/envelope/attack'
+                        msg['channel'],       # For identifier construction
+                        'trigger',            # Value from rightmost path element
+                        note                  # For per_key identifier
                     ))
                     
             elif msg['type'] == 'note_off':
