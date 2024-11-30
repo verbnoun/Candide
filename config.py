@@ -9,7 +9,7 @@ Paths are authoritative - no defaults or validation needed.
 # Basic toy piano configuration with minimum needed paths for synthio
 # Ensure multiple routes can be created per signal, see velocity
 CASIO_PATHS = '''
-oscillator/per_key/frequency/note_number
+oscillator/per_key/frequency/trigger/note_number
 oscillator/per_key/waveform/square/note_on
 amplifier/per_key/envelope/attack/trigger/note_on
 amplifier/per_key/envelope/attack_level/0-1/velocity

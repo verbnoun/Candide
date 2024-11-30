@@ -73,7 +73,7 @@ class OscillatorRoutes(RouteProcessor):
         
     def process_per_key(self, identifier, param, value):
         if param == 'frequency':
-            # Convert note number to frequency when storing
+            # Always convert note number to frequency when storing
             freq = self.synth_tools.note_to_frequency(float(value))
             super().process_per_key(identifier, param, freq)
         else:
@@ -120,27 +120,46 @@ class Voice:
         })
         
     def process_route(self, route_parts, value):
-        signal_chain = route_parts[0]
-        param = route_parts[-2]
+        """Process incoming routes to modify voice parameters
         
-        if signal_chain == 'oscillator':
-            if param == 'frequency':
-                value = self.synth_tools.note_to_frequency(float(value))
-            self.osc.process_per_key(self.identifier, param, value)
-            self._try_update_note(param, value)
-            
-        elif signal_chain == 'filter':
-            self.filter.process_per_key(self.identifier, param, value)
-            self._update_filter()
-            
-        elif signal_chain == 'amplifier':
-            if value == 'trigger':
-                trigger_type = 'attack' if 'attack' in route_parts else 'release'
-                self.amp.add_trigger(self.identifier, trigger_type)
-            else:
-                self.amp.process_per_key(self.identifier, param, value)
+        Examples:
+        - oscillator/per_key/frequency/trigger/79    # when triggered, set freq to note 79 
+        - oscillator/per_key/waveform/square        # set waveform type
+        - amplifier/per_key/envelope/attack/trigger # trigger start of attack phase
+        - amplifier/per_key/envelope/sustain_level/0.5 # set sustain level value
+        """
+        signal_chain = route_parts[0]
+        
+        # Extract param and value type if present from route parts
+        param = None
+        value_type = None
+        for i, part in enumerate(route_parts):
+            if part in ('frequency', 'waveform', 'attack', 'release', 'sustain_level'):
+                param = part
+                value_type = route_parts[i+1] if i+1 < len(route_parts) else None
+                break
                 
+        if not param:
+            _log("[ERROR] No valid parameter in route: {}".format('/'.join(route_parts)))
+            return
+                
+        if signal_chain == 'oscillator':
+            if param == 'frequency' and value_type == 'trigger':
+                self.osc.process_per_key(self.identifier, param, value)
+                self._try_update_note(param, value)
+            elif param == 'waveform':  # waveform has no value_type, just store directly
+                self.osc.process_per_key(self.identifier, param, value)
+                self._try_update_note(param, value)
+                
+        elif signal_chain == 'amplifier':
+            if value_type == 'trigger':
+                # param will be 'attack' or 'release'
+                self.amp.add_trigger(self.identifier, param)
+            else:  # handle non-trigger params (like sustain_level)
+                self.amp.process_per_key(self.identifier, param, value)
+                    
         self._handle_pending_trigger()
+
         
     def _try_update_note(self, param, value):
         if self.note and self.state == "PLAYING":
@@ -170,6 +189,10 @@ class Voice:
             _log("[ERROR] Filter update failed: {}".format(str(e)))
             
     def _handle_pending_trigger(self):
+        """Process any pending envelope triggers
+        A trigger means "execute this action now" - for envelopes this means
+        start attack phase or start release phase.
+        """
         trigger = self.amp.get_trigger(self.identifier)
         if not trigger:
             return
@@ -208,35 +231,55 @@ class Voice:
         try:
             osc_values = self.osc.get_values(self.identifier)
             amp_values = self.amp.get_values(self.identifier)
-            
+
             note_params = {
                 'frequency': osc_values['frequency'],
                 'waveform': self.synth_tools.get_waveform(osc_values['waveform'])
             }
-            
+
             env_params = {}
             for param in ['attack_time', 'decay_time', 'release_time', 'attack_level', 'sustain_level']:
                 if param in amp_values:
-                    env_params[param] = amp_values[param]
+                    # Attempt to convert to float
+                    try:
+                        env_params[param] = float(amp_values[param])
+                    except ValueError:
+                        _log(
+                            "[ERROR] Note creation failed: {}: {} must be of type float, not {}".format(
+                                param, amp_values[param], type(amp_values[param]).__name__
+                            )
+                        )
+                        return
+
             if env_params:
-                note_params['envelope'] = synthio.Envelope(**env_params)
-                
-            filter_values = self.filter.get_values(self.identifier)
-            if filter_values:
-                freq = filter_values.get('frequency', 1000)
-                res = filter_values.get('resonance', 0.7)
-                note_params['filter'] = self.synth_tools.calculate_filter(freq, res)
-            
+                try:
+                    note_params['envelope'] = synthio.Envelope(**env_params)
+                except TypeError as te:
+                    message = str(te)
+                    for key, value in env_params.items():
+                        if key in message:
+                            _log(
+                                "[ERROR] Note creation failed: {}: {} must be of type float, not {}".format(
+                                    key, value, type(value).__name__
+                                )
+                            )
+                            break
+                    else:
+                        _log("[ERROR] Note creation failed: {}".format(message))
+                    return
+
             self.note = synthio.Note(**note_params)
             _log({
                 'identifier': self.identifier,
                 'action': 'note_create',
                 'detail': "params={}".format(note_params)
             })
-            
+
         except Exception as e:
             _log("[ERROR] Note creation failed: {}".format(str(e)))
             self.note = None
+
+
             
     def is_active(self):
         return self.active
