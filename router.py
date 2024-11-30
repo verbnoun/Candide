@@ -70,8 +70,18 @@ class Router:
         
         # Main routing lookup tables
         self.route_info = {
-            'note_on': {},
-            'note_off': None
+            'note_on': {
+                'note_number_routes': [],
+                'velocity_routes': [],
+                'trigger_routes': [],
+                'waveform_routes': []
+            },
+            'note_off': {
+                'trigger_routes': []
+            },
+            'cc': {},
+            'pitch_bend': {'routes': []},
+            'pressure': {'routes': []}
         }
         
         # Initialize ring buffer
@@ -87,34 +97,54 @@ class Router:
         self._log_routing_tables()
         
         _log("Router initialized")
+
+    def _store_route_info(self, msg_type, route_type, template, **kwargs):
+        """Helper to store route info with consistent structure"""
+        route_info = {
+            'template': template,
+            'range': kwargs.get('range', 'na')
+        }
+        
+        # Add any additional parameters
+        for key, value in kwargs.items():
+            if key != 'range':
+                route_info[key] = value
+                
+        # Initialize container if needed
+        if msg_type == 'cc':
+            cc_num = kwargs.get('cc_num')
+            if cc_num not in self.route_info['cc']:
+                self.route_info['cc'][cc_num] = {'routes': []}
+            self.route_info['cc'][cc_num]['routes'].append(route_info)
+        else:
+            if route_type not in self.route_info[msg_type]:
+                self.route_info[msg_type][route_type] = []
+            self.route_info[msg_type][route_type].append(route_info)
+            
+        self.accepted_midi.add(msg_type)
         
     def _build_routing_tables(self, paths):
-        """Build lookup tables from config paths
-        
-        Examples of supported paths:
-        Oscillator:
-            oscillator/per_key/frequency/note_number
-            oscillator/per_key/waveform/square/note_on
-            oscillator/ring/per_key/frequency/20-20000/na/880
-        Filter:
-            filter/per_key/frequency/20-20000/cc74/1000
-            filter/global/frequency/20-20000/cc1/1000
-        Amplifier:
-            amplifier/per_key/envelope/attack/trigger/note_on
-            amplifier/global/envelope/attack_time/0.001-5/cc73/0.001
-        """
-        
+        """Build lookup tables from config paths"""
         # Initialize routing tables
         self.accepted_midi = set()
         self.route_info = {
-            'note_on': {},
-            'note_off': None
+            'note_on': {
+                'note_number_routes': [],
+                'velocity_routes': [],
+                'trigger_routes': [],
+                'waveform_routes': []
+            },
+            'note_off': {
+                'trigger_routes': []
+            },
+            'cc': {},
+            'pitch_bend': {'routes': []},
+            'pressure': {'routes': []}
         }
         
         # Process each path
         for path in paths.strip().split('\n'):
             if not path.strip():
-                _log("[ERROR] Empty path found, skipping")
                 continue
                 
             parts = path.split('/')
@@ -125,244 +155,132 @@ class Router:
             category = parts[0]
             if category == 'oscillator':
                 _log("Processing oscillator path: {}".format(path))
-                self._process_oscillator_path(parts)
+                self._process_oscillator_path(path, parts)
             elif category == 'filter':
                 _log("Processing filter path: {}".format(path))
-                self._process_filter_path(parts)
+                self._process_filter_path(path, parts)
             elif category == 'amplifier':
                 _log("Processing amplifier path: {}".format(path))
-                self._process_amplifier_path(parts)
-            else:
-                _log("[ERROR] Invalid category: {}".format(category))
+                self._process_amplifier_path(path, parts)
 
-    def _process_oscillator_path(self, parts):
-        """Process oscillator category paths
-        
-        Examples:
-        - oscillator/per_key/frequency/trigger/note_number
-        """
-        if len(parts) < 4:
-            _log("[ERROR] Oscillator path too short: {}".format('/'.join(parts)))
-            return
+    def _process_oscillator_path(self, path, parts):
+        """Process oscillator category paths"""
+        if 'frequency' in parts and 'note_number' in parts:
+            _log("Adding note number frequency route")
+            self._store_route_info(
+                'note_on',
+                'note_number_routes',
+                path
+            )
             
-        template_parts = ['oscillator']
-        
-        # Level 1: Check for special oscillator types
-        level1 = parts[1]
-        if level1 == 'ring':
-            template_parts.append('ring')
-            if len(parts) < 5:
-                _log("[ERROR] Ring modulator path too short: {}".format('/'.join(parts)))
-                return
-            level1 = parts[2]
-            _log("Processing ring modulator path")
-        # EXTENSION POINT: Add new oscillator types (sub, noise, etc)
-        
-        # Process scope
-        if level1 == 'per_key':
-            template_parts.append('per_key')
-            _log("Processing per-key oscillator path")
-        elif level1 == 'global':
-            template_parts.append('global')
-            _log("Processing global oscillator path")
-        else:
-            _log("[ERROR] Invalid oscillator scope: {}".format(level1))
-            return
-        
-        # Process frequency and value type
-        if 'frequency' in parts:
-            template_parts.append('frequency')
-            freq_idx = parts.index('frequency')
-            
-            # Look for value type (trigger, level, etc)
-            if freq_idx + 1 < len(parts):
-                value_type = parts[freq_idx + 1]
-                template_parts.append(value_type)
-                
-                # Get MIDI value container
-                if freq_idx + 2 < len(parts):
-                    midi_value = parts[freq_idx + 2]
-                    if midi_value == 'note_number':
-                        _log("Adding note number frequency trigger route")
-                        self.route_info['note_on']['note_number'] = {
-                            'template': '/'.join(template_parts),
-                            'range': 'na'
-                        }
-                        self.accepted_midi.add('note_on')
-        
-        # Process waveform
         if 'waveform' in parts:
-            try:
-                wave_idx = parts.index('waveform')
-                if wave_idx + 1 < len(parts):
-                    wave_type = parts[wave_idx + 1]
-                    template_parts.extend(['waveform'])
-                    _log("Adding waveform route with type: {}".format(wave_type))
-                    self.route_info['note_on']['waveform'] = {
-                        'template': '/'.join(template_parts),
-                        'wave_type': wave_type,
-                        'range': 'na'
-                    }
-                    self.accepted_midi.add('note_on')
-            except ValueError:
-                _log("[ERROR] Error processing waveform path: {}".format('/'.join(parts)))
+            wave_idx = parts.index('waveform')
+            if wave_idx + 1 < len(parts):
+                wave_type = parts[wave_idx + 1]
+                _log("Adding waveform route")
+                self._store_route_info(
+                    'note_on',
+                    'waveform_routes',
+                    path,
+                    wave_type=wave_type
+                )
 
-            # EXTENSION POINT: Add handling for new note_on path types
-
-    def _process_filter_path(self, parts):
+    def _process_filter_path(self, path, parts):
         """Process filter category paths"""
-        if len(parts) < 4:
-            _log("[ERROR] Filter path too short: {}".format('/'.join(parts)))
-            return
-            
-        template_parts = ['filter']
-        
-        # Process scope
-        scope = parts[1]
-        if scope == 'per_key':
-            template_parts.append('per_key')
-            _log("Processing per-key filter path")
-        elif scope == 'global':
-            template_parts.append('global')
-            _log("Processing global filter path")
-        else:
-            _log("[ERROR] Invalid filter scope: {}".format(scope))
-            return
-        # EXTENSION POINT: Add new filter scopes
-        
-        # Process filter parameters
-        if 'frequency' in parts:
-            template_parts.append('frequency')
-            try:
+        try:
+            if 'frequency' in parts:
                 range_str = parts[parts.index('frequency') + 1]
-                cc_num = int(parts[-2][2:])  # Extract number from cc74
-                _log("Adding filter frequency CC route for cc{}".format(cc_num))
-                if 'cc' not in self.route_info:
-                    self.route_info['cc'] = {}
-                self.route_info['cc'][cc_num] = {
-                    'template': '/'.join(template_parts),
-                    'range': range_str
-                }
-                self.accepted_midi.add('cc')
-            except (ValueError, IndexError):
-                _log("[ERROR] Invalid frequency CC format: {}".format('/'.join(parts)))
-        
-        if 'resonance' in parts:
-            template_parts.append('resonance')
-            try:
+                cc_num = int(parts[-2][2:])
+                _log("Adding filter frequency CC route")
+                base_path = f"{parts[0]}/{parts[1]}/frequency"
+                self._store_route_info(
+                    'cc',
+                    'routes',
+                    base_path,
+                    range=range_str,
+                    cc_num=cc_num
+                )
+                
+            if 'resonance' in parts:
                 range_str = parts[parts.index('resonance') + 1]
                 cc_num = int(parts[-2][2:])
-                _log("Adding filter resonance CC route for cc{}".format(cc_num))
-                if 'cc' not in self.route_info:
-                    self.route_info['cc'] = {}
-                self.route_info['cc'][cc_num] = {
-                    'template': '/'.join(template_parts),
-                    'range': range_str
-                }
-                self.accepted_midi.add('cc')
-            except (ValueError, IndexError):
-                _log("[ERROR] Invalid resonance CC format: {}".format('/'.join(parts)))
-        # EXTENSION POINT: Add new filter parameters (cutoff, bandwidth, etc)
+                _log("Adding filter resonance CC route")
+                base_path = f"{parts[0]}/{parts[1]}/resonance"
+                self._store_route_info(
+                    'cc',
+                    'routes',
+                    base_path,
+                    range=range_str,
+                    cc_num=cc_num
+                )
+        except (ValueError, IndexError):
+            _log("[ERROR] Invalid filter path format: {}".format(path))
 
-    def _process_amplifier_path(self, parts):
-        """Process amplifier category paths
-        
-        Examples:
-        - amplifier/per_key/envelope/attack/trigger/note_on   # Trigger path
-        - amplifier/per_key/envelope/release/trigger/note_off # Trigger path
-        - amplifier/global/envelope/attack_time/0.001-5/cc73/0.001  # CC path with default
-        - amplifier/per_key/envelope/attack_level/0-1/velocity  # Level path
-        """
-        if len(parts) < 4:
-            _log("[ERROR] Amplifier path too short: {}".format('/'.join(parts)))
+    def _process_amplifier_path(self, path, parts):
+        """Process amplifier category paths"""
+        if 'envelope' not in parts:
             return
             
-        template_parts = ['amplifier']
-        
-        # Process scope
-        scope = parts[1]
-        if scope == 'per_key':
-            template_parts.append('per_key')
-            _log("Processing per-key amplifier path")
-        elif scope == 'global':
-            template_parts.append('global')
-            _log("Processing global amplifier path")
-        else:
-            _log("[ERROR] Invalid amplifier scope: {}".format(scope))
+        env_idx = parts.index('envelope')
+        if env_idx + 1 >= len(parts):
             return
-        
-        # Process envelope parameters
-        if 'envelope' in parts:
-            template_parts.append('envelope')
-            env_idx = parts.index('envelope')
             
-            if env_idx + 1 >= len(parts):
-                _log("[ERROR] Missing envelope parameter: {}".format('/'.join(parts)))
-                return
-                
-            # Add envelope parameter (attack, release, etc)
-            env_param = parts[env_idx + 1]
-            template_parts.append(env_param)
-            
-            # Check for CC paths first as they have a distinct structure
-            if len(parts) >= 6 and parts[-2].startswith('cc'):
-                try:
-                    cc_num = int(parts[-2][2:])
-                    range_str = parts[-3]
-                    _log("Adding envelope CC route for cc{}".format(cc_num))
-                    if 'cc' not in self.route_info:
-                        self.route_info['cc'] = {}
-                    self.route_info['cc'][cc_num] = {
-                        'template': '/'.join(template_parts),
-                        'range': range_str
-                    }
-                    self.accepted_midi.add('cc')
-                except (ValueError, IndexError):
-                    _log("[ERROR] Invalid CC format: {}".format('/'.join(parts)))
-                
-            # Process trigger paths
-            elif 'trigger' in parts:
-                trigger_idx = parts.index('trigger')
-                template_parts.append('trigger')
-                if parts[-1] == 'note_on':
-                    _log("Adding note_on trigger route")
-                    self.route_info['note_on']['trigger'] = {
-                        'template': '/'.join(template_parts),
-                        'range': 'na'
-                    }
-                    self.accepted_midi.add('note_on')
-                elif parts[-1] == 'note_off':
-                    _log("Adding note_off trigger route")
-                    if not self.route_info['note_off']:
-                        self.route_info['note_off'] = {}
-                    self.route_info['note_off']['trigger'] = {
-                        'template': '/'.join(template_parts),
-                        'range': 'na'
-                    }
-                    self.accepted_midi.add('note_off')
-                    
-            # Process level paths
-            elif 'level' in parts[-3]:  # Check for level in parameter name
-                try:
-                    range_str = parts[-2]  # Range comes before velocity
-                    if parts[-1] == 'velocity':
-                        _log("Adding velocity level route")
-                        self.route_info['note_on']['velocity'] = {
-                            'template': '/'.join(template_parts),
-                            'range': range_str
-                        }
-                        self.accepted_midi.add('note_on')
-                except (ValueError, IndexError):
-                    _log("[ERROR] Invalid level format: {}".format('/'.join(parts)))
-        
-        # Check for optional default value
-        if len(parts[-1].split('-')) == 1 and parts[-1] not in ['note_on', 'note_off', 'velocity']:
+        # Process CC paths
+        if len(parts) >= 6 and parts[-2].startswith('cc'):
             try:
-                default = float(parts[-1])
-                _log("Found default value: {}".format(default))
-            except ValueError:
-                _log("[ERROR] Invalid default value: {}".format(parts[-1]))
-                    
+                cc_num = int(parts[-2][2:])
+                param_idx = env_idx + 1
+                range_idx = param_idx + 1
+                
+                # Get range from path
+                range_str = parts[range_idx] if range_idx < len(parts) else 'na'
+                
+                _log("Adding envelope CC route")
+                # Create base path without range and default value
+                base_path = f"{parts[0]}/{parts[1]}/envelope/{parts[param_idx]}"
+                self._store_route_info(
+                    'cc',
+                    'routes',
+                    base_path,
+                    range=range_str,
+                    cc_num=cc_num
+                )
+            except (ValueError, IndexError):
+                _log("[ERROR] Invalid CC format: {}".format(path))
+                
+        # Process trigger paths
+        elif 'trigger' in parts:
+            if parts[-1] == 'note_on':
+                _log("Adding note_on trigger route")
+                self._store_route_info(
+                    'note_on',
+                    'trigger_routes',
+                    path
+                )
+            elif parts[-1] == 'note_off':
+                _log("Adding note_off trigger route")
+                self._store_route_info(
+                    'note_off',
+                    'trigger_routes',
+                    path
+                )
+                
+        # Process level paths
+        elif 'level' in parts[-3]:
+            try:
+                range_str = parts[-2]
+                if parts[-1] == 'velocity':
+                    _log("Adding velocity level route")
+                    self._store_route_info(
+                        'note_on',
+                        'velocity_routes',
+                        path,
+                        range=range_str,
+                        parameter=parts[env_idx + 1]
+                    )
+            except (ValueError, IndexError):
+                _log("[ERROR] Invalid level format: {}".format(path))
+
     def _log_routing_tables(self):
         """Log the created routing tables"""
         _log("\nRouting Tables Created:")
@@ -371,8 +289,6 @@ class Router:
             if isinstance(routes, dict):
                 for key, info in routes.items():
                     _log(f"    {key}: {info}")
-            else:
-                _log(f"    {routes}")
 
     def _should_process(self, message):
         """Quick check if message should be processed based on whitelist"""
@@ -383,12 +299,11 @@ class Router:
         msg_type = message['type']
         channel = message['channel']
         
-        # Initialize channel state if needed
         if channel not in self.last_value:
             self.last_value[channel] = {
-                'pitch_bend': 8192,  # Center
+                'pitch_bend': 8192,
                 'pressure': 0,
-                'timbre': 64  # Center
+                'timbre': 64
             }
         
         current = None
@@ -403,7 +318,7 @@ class Router:
             current = message['data']['value']
             threshold = PRESSURE_THRESHOLD
             state_key = 'pressure'
-        elif msg_type == 'cc' and message['data']['number'] == 74:  # timbre
+        elif msg_type == 'cc' and message['data']['number'] == 74:
             current = message['data']['value']
             threshold = TIMBRE_THRESHOLD
             state_key = 'timbre'
@@ -434,15 +349,10 @@ class Router:
             return value
 
     def _create_route(self, template, channel, value, note=None):
-        """Create route from template and value
-        
-        For per_key routes, includes channel.note in identifier if note available
-        Template already contains full path including signal chain and scope
-        """
+        """Create route from template and value"""
         parts = template.split('/')
         
         if 'per_key' in parts:
-            # For per_key routes, inject identifier after per_key
             identifier = f"{channel}.{note}" if note is not None else str(channel)
             new_parts = []
             for part in parts:
@@ -451,9 +361,6 @@ class Router:
                     new_parts.append(identifier)
             parts = new_parts
         
-        # Add value if:
-        # 1. It's not empty (for triggers)
-        # 2. OR it's a numeric value (for CC, velocity, etc)
         if value or str(value).replace('.', '').replace('-', '').isdigit():
             parts.append(str(value))
         
@@ -461,96 +368,89 @@ class Router:
 
     def process_message(self, message, voice_manager):
         """Transform MIDI message to route"""
-        # Fast check - do we handle this message type?
         if not self._should_process(message):
             _log(f"[REJECTED] Message type not in config: {message['type']}")
             return
 
-        # Check continuous signal threshold
         if message['type'] in ('pitch_bend', 'pressure') or \
         (message['type'] == 'cc' and message['data']['number'] == 74):
             if not self._check_continuous(message):
                 _log(f"[REJECTED] Change below threshold: {message['type']}")
                 return
 
-        # Add to buffer
         self.message_buffer.append((message, voice_manager))
         _log(f"Message queued. Buffer size: {len(self.message_buffer)}/{BUFFER_SIZE}")
         
-        # Process from buffer
         while len(self.message_buffer):
             msg, vm = self.message_buffer.popleft()
             routes = []
             
-            # Get note number if available in message
             note = msg['data'].get('note', None)
             
             if msg['type'] == 'note_on':
-                if 'note_number' in self.route_info['note_on']:
-                    info = self.route_info['note_on']['note_number']
+                # Handle note number routes
+                for info in self.route_info['note_on']['note_number_routes']:
                     routes.append(self._create_route(
-                        info['template'], 
-                        msg['channel'], 
-                        note,  # Note number as value
-                        note   # Note number for identifier
-                    ))
-                    
-                if 'velocity' in self.route_info['note_on']:
-                    info = self.route_info['note_on']['velocity']
-                    value = self._normalize(msg['data']['velocity'], info['range'])
-                    routes.append(self._create_route(
-                        info['template'], 
-                        msg['channel'], 
-                        value, 
+                        info['template'],
+                        msg['channel'],
+                        note,
                         note
                     ))
                 
-                if 'waveform' in self.route_info['note_on']:
-                    info = self.route_info['note_on']['waveform']
+                # Handle velocity routes
+                for info in self.route_info['note_on']['velocity_routes']:
+                    value = self._normalize(msg['data']['velocity'], info['range'])
                     routes.append(self._create_route(
                         info['template'],
                         msg['channel'],
-                        info['wave_type'],  # Use stored wave type
+                        value,
+                        note
+                    ))
+                
+                # Handle waveform routes
+                for info in self.route_info['note_on']['waveform_routes']:
+                    routes.append(self._create_route(
+                        info['template'],
+                        msg['channel'],
+                        info['wave_type'],
                         note
                     ))
                     
-                if 'trigger' in self.route_info['note_on']:
-                    info = self.route_info['note_on']['trigger']
-                    routes.append(self._create_route(
-                        info['template'],     # Already contains '.../trigger'
-                        msg['channel'],       
-                        '',                   # No value needed for trigger
-                        note                  
-                    ))
-                    
-            elif msg['type'] == 'note_off':
-                if self.route_info['note_off'] and 'trigger' in self.route_info['note_off']:
-                    info = self.route_info['note_off']['trigger']
+                # Handle trigger routes
+                for info in self.route_info['note_on']['trigger_routes']:
                     routes.append(self._create_route(
                         info['template'],
                         msg['channel'],
-                        '',              # No value needed for trigger
+                        '',
+                        note
+                    ))
+                    
+            elif msg['type'] == 'note_off':
+                # Handle trigger routes
+                for info in self.route_info['note_off']['trigger_routes']:
+                    routes.append(self._create_route(
+                        info['template'],
+                        msg['channel'],
+                        '',
                         note
                     ))
                     
             elif msg['type'] == 'pitch_bend':
-                if self.route_info['pitch_bend']:
-                    info = self.route_info['pitch_bend']
+                for info in self.route_info['pitch_bend']['routes']:
                     value = self._normalize(msg['data']['value'], info['range'])
                     routes.append(self._create_route(info['template'], msg['channel'], value))
                     
             elif msg['type'] == 'pressure':
-                if self.route_info['pressure']:
-                    info = self.route_info['pressure']
+                for info in self.route_info['pressure']['routes']:
                     value = self._normalize(msg['data']['value'], info['range'])
                     routes.append(self._create_route(info['template'], msg['channel'], value))
                     
             elif msg['type'] == 'cc':
                 cc_num = msg['data']['number']
                 if cc_num in self.route_info['cc']:
-                    info = self.route_info['cc'][cc_num]
-                    value = self._normalize(msg['data']['value'], info['range'])
-                    routes.append(self._create_route(info['template'], msg['channel'], value))
+                    for info in self.route_info['cc'][cc_num]['routes']:
+                        value = self._normalize(msg['data']['value'], info['range'])
+                        routes.append(self._create_route(info['template'], msg['channel'], value))
 
             # Send routes to voice manager
             for route in routes:

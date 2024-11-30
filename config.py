@@ -12,12 +12,12 @@ CASIO_PATHS = '''
 oscillator/per_key/frequency/trigger/note_number
 oscillator/per_key/waveform/square/note_on
 amplifier/per_key/envelope/attack/trigger/note_on
-amplifier/per_key/envelope/attack_level/0-1/velocity
-amplifier/global/envelope/attack_time/0.001-5/cc73/0.001
-amplifier/global/envelope/decay_time/0.001-5/cc75/0.05
-amplifier/per_key/envelope/sustain_level/0-0.5/velocity
+amplifier/per_key/envelope/attack_level/0-1/cc74/1
+amplifier/global/envelope/attack_time/0.001-0.5/cc73/0.5
+amplifier/global/envelope/decay_time/0.001-0.25/cc75/0.25
+amplifier/per_key/envelope/sustain_level/0-0.8/velocity/0.8
 amplifier/per_key/envelope/release/trigger/note_off
-amplifier/global/envelope/release_time/0.001-5/cc72/0.2
+amplifier/global/envelope/release_time/0.001-2/cc72/0.2
 '''
 
 # Pressure-sensitive organ configuration 

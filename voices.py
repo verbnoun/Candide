@@ -33,7 +33,14 @@ def _log(message, module="VOICES"):
             RESET
         ), file=sys.stderr)
     else:
-        color = RED if "[ERROR]" in str(message) else YELLOW if "[REJECTED]" in str(message) else LIGHT_YELLOW
+        # Modified error detection to properly color error messages
+        message_str = str(message)
+        if "[ERROR]" in message_str:
+            color = RED
+        elif "[REJECTED]" in message_str:
+            color = YELLOW
+        else:
+            color = LIGHT_YELLOW
         print("{}[{}] {}{}".format(color, module, message, RESET), file=sys.stderr)
 
 class RouteProcessor:
@@ -134,7 +141,7 @@ class Voice:
         param = None
         value_type = None
         for i, part in enumerate(route_parts):
-            if part in ('frequency', 'waveform', 'attack', 'release', 'sustain_level'):
+            if part in ('frequency', 'waveform', 'attack', 'release', 'sustain_level', 'attack_level'):  # Added attack_level
                 param = part
                 value_type = route_parts[i+1] if i+1 < len(route_parts) else None
                 break
@@ -155,8 +162,14 @@ class Voice:
             if value_type == 'trigger':
                 # param will be 'attack' or 'release'
                 self.amp.add_trigger(self.identifier, param)
-            else:  # handle non-trigger params (like sustain_level)
-                self.amp.process_per_key(self.identifier, param, value)
+            else:  # handle non-trigger params (like sustain_level and attack_level)
+                try:
+                    # Convert value to float for envelope parameters
+                    float_value = float(value)
+                    self.amp.process_per_key(self.identifier, param, float_value)
+                except ValueError:
+                    _log("[ERROR] Invalid value for {}: {} - must be a number".format(param, value))
+                    return
                     
         self._handle_pending_trigger()
 
