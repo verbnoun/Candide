@@ -15,9 +15,11 @@ amplifier/per_key/envelope/attack/trigger/note_on
 amplifier/global/envelope/attack_level/0-1/cc74/1
 amplifier/global/envelope/attack_time/0.001-0.5/cc73/0.5
 amplifier/global/envelope/decay_time/0.001-0.25/cc75/0.25
-amplifier/per_key/envelope/sustain_level/0-0.8/velocity/0.8
+amplifier/global/envelope/sustain_level/0-1/cc85/0.8
 amplifier/per_key/envelope/release/trigger/note_off
-amplifier/global/envelope/release_time/0.001-2/cc72/0.2
+amplifier/global/envelope/release_time/0.001-3/cc72/0.2
+filter/high_pass/global/resonance/0.1-2.0/cc71/0.7
+filter/high_pass/global/frequency/20-20000/cc70/1000
 '''
 
 # Pressure-sensitive organ configuration 

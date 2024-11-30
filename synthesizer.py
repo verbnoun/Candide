@@ -66,6 +66,14 @@ class Timer:
 class Synthesizer:
     """Synthesis calculation tools and value manipulation"""
     
+    # Map filter type strings to synthio FilterMode enums
+    FILTER_MODES = {
+        'lowpass': synthio.FilterMode.LOW_PASS,
+        'highpass': synthio.FilterMode.HIGH_PASS,
+        'bandpass': synthio.FilterMode.BAND_PASS,
+        'notch': synthio.FilterMode.NOTCH
+    }
+    
     def __init__(self):
         # Cache for storing generated waveforms
         self._waveforms = {}
@@ -106,26 +114,47 @@ class Synthesizer:
         _log(f"Retrieved waveform: {wave_type}")
         return self._waveforms[wave_type]
             
-    def calculate_filter(self, frequency, resonance):
-        """Create a filter with the given parameters"""
+    def calculate_filter(self, frequency, resonance, filter_type='lowpass'):
+        """Create a filter with the given parameters using synthio.BlockBiquad
+        
+        Args:
+            frequency (float): Filter frequency in Hz (20-20000)
+            resonance (float): Filter resonance/Q (0.1-2.0)
+            filter_type (str): One of 'lowpass', 'highpass', 'bandpass', 'notch'
+            
+        Returns:
+            synthio.BlockBiquad: Configured filter object
+            
+        The filter types correspond to synthio.FilterMode:
+        - lowpass: Attenuates frequencies above cutoff (LOW_PASS)
+        - highpass: Attenuates frequencies below cutoff (HIGH_PASS)
+        - bandpass: Passes frequencies within a range around cutoff (BAND_PASS)
+        - notch: Attenuates frequencies within a range around cutoff (NOTCH)
+        """
         if resonance is None:
             resonance = 0.7
             
+        # Clamp frequency and resonance to valid ranges
         frequency = max(20, min(20000, frequency))
-        filter_type = 'highpass' if frequency < 100 else 'lowpass'
+        resonance = max(0.1, min(2.0, resonance))
+        
+        # Convert filter type string to synthio FilterMode
+        filter_mode = self.FILTER_MODES.get(filter_type.lower())
+        if filter_mode is None:
+            _log(f"[ERROR] Unknown filter type: {filter_type}, defaulting to lowpass")
+            filter_mode = synthio.FilterMode.LOW_PASS
         
         _log({
             'filter': True,
             'type': filter_type,
+            'mode': str(filter_mode),
             'frequency': frequency,
             'resonance': resonance
         })
         
         try:
-            if frequency < 100:  # High pass for very low frequencies
-                return synthio.HighPassFilter(frequency, resonance)
-            else:  # Low pass for most frequencies
-                return synthio.LowPassFilter(frequency, resonance)
+            # Create filter using synthio.BlockBiquad with appropriate FilterMode
+            return synthio.BlockBiquad(filter_mode, frequency, resonance)
         except Exception as e:
             _log(f"[ERROR] Filter creation failed: {str(e)}")
             return None

@@ -22,25 +22,26 @@ def _log(message, module="VOICES"):
     LIGHT_YELLOW = "\033[93m"
     RESET = "\033[0m"
     
+    # Determine color based on message content
+    message_str = str(message)
+    if "[ERROR]" in message_str:
+        color = RED
+    elif "[REJECTED]" in message_str:
+        color = YELLOW
+    else:
+        color = LIGHT_YELLOW
+    
     if isinstance(message, str) and '/' in message:
-        print("{}[{}] Route: {}{}".format(LIGHT_YELLOW, module, message, RESET), file=sys.stderr)
+        print("{}[{}] Route: {}{}".format(color, module, message, RESET), file=sys.stderr)
     elif isinstance(message, dict):
         print("{}[{}] Voice {}: {} - {}{}".format(
-            LIGHT_YELLOW, module,
+            color, module,
             message.get('identifier', 'unknown'),
             message.get('action', 'unknown'),
             message.get('detail', ''),
             RESET
         ), file=sys.stderr)
     else:
-        # Modified error detection to properly color error messages
-        message_str = str(message)
-        if "[ERROR]" in message_str:
-            color = RED
-        elif "[REJECTED]" in message_str:
-            color = YELLOW
-        else:
-            color = LIGHT_YELLOW
         print("{}[{}] {}{}".format(color, module, message, RESET), file=sys.stderr)
 
 class RouteProcessor:
@@ -89,9 +90,87 @@ class OscillatorRoutes(RouteProcessor):
     def has_minimum_requirements(self, identifier):
         values = self.get_values(identifier)
         return 'frequency' in values and 'waveform' in values
-        
+
 class FilterRoutes(RouteProcessor):
-    pass
+    """Handles filter routing with no defaults"""
+    def __init__(self):
+        super().__init__()
+        self.filter_types = {}  # Store filter type per identifier
+        self.valid_types = {'high_pass', 'low_pass', 'band_pass', 'notch'}
+        
+    def process_global(self, param, value, route_parts):
+        """Process global filter parameter from route parts"""
+        # Extract filter type from route
+        filter_type = None
+        for part in route_parts:
+            if part in self.valid_types:
+                filter_type = part.replace('_', '')
+                break
+                
+        if not filter_type:
+            _log("[ERROR] No valid filter type found in route")
+            return
+            
+        if param not in {'frequency', 'resonance'}:
+            _log("[ERROR] Invalid filter parameter: {}".format(param))
+            return
+            
+        try:
+            float_value = float(value)
+            self.global_values[param] = float_value
+            self.filter_types['global'] = filter_type
+            _log({
+                'action': 'global_store',
+                'identifier': 'global',
+                'detail': f"{param}={float_value} (type={filter_type})"
+            })
+        except ValueError:
+            _log("[ERROR] Invalid value for {}: {} - must be a number".format(param, value))
+        
+    def process_per_key(self, identifier, param, value, route_parts):
+        """Process per-key filter parameter from route parts"""
+        # Extract filter type from route
+        filter_type = None
+        for part in route_parts:
+            if part in self.valid_types:
+                filter_type = part.replace('_', '')
+                break
+                
+        if not filter_type:
+            _log("[ERROR] No valid filter type found in route")
+            return
+            
+        if param not in {'frequency', 'resonance'}:
+            _log("[ERROR] Invalid filter parameter: {}".format(param))
+            return
+            
+        try:
+            float_value = float(value)
+            if identifier not in self.per_key_values:
+                self.per_key_values[identifier] = {}
+            self.per_key_values[identifier][param] = float_value
+            self.filter_types[identifier] = filter_type
+            _log({
+                'action': 'per_key_store',
+                'identifier': identifier,
+                'detail': f"{param}={float_value} (type={filter_type})"
+            })
+        except ValueError:
+            _log("[ERROR] Invalid value for {}: {} - must be a number".format(param, value))
+        
+    def get_values(self, identifier):
+        """Get filter values including filter type"""
+        values = self.global_values.copy()
+        if identifier in self.per_key_values:
+            values.update(self.per_key_values[identifier])
+            
+        # Get filter type, but don't provide a default
+        if identifier in self.filter_types:
+            values['filter_type'] = self.filter_types[identifier]
+        elif 'global' in self.filter_types:
+            values['filter_type'] = self.filter_types['global']
+            
+        return values
         
 class AmplifierRoutes(RouteProcessor):
     def __init__(self):
@@ -127,13 +206,7 @@ class Voice:
         })
         
     def process_route(self, route_parts, value):
-        """Process incoming routes to modify voice parameters
-        
-        Examples:
-        - oscillator/per_key/1.72/frequency/trigger/note_number/72  # set freq to note 72 when triggered
-        - oscillator/per_key/1.72/waveform/square/note_on/square   # set waveform to square
-        - amplifier/per_key/1.72/envelope/release/trigger/note_off  # trigger release on note off
-        """
+        """Process incoming routes to modify voice parameters"""
         signal_chain = route_parts[0]
         
         # Extract the actual parameter and any modifiers from the route
@@ -155,6 +228,9 @@ class Voice:
                     value_type = 'trigger'
                 break
             elif part in ('attack_time', 'decay_time', 'release_time', 'attack_level', 'sustain_level'):  # Envelope params
+                param = part
+                break
+            elif part in ('frequency', 'resonance'):  # Filter params
                 param = part
                 break
                 
@@ -181,7 +257,7 @@ class Voice:
                 
         elif signal_chain == 'filter':
             if param in ('frequency', 'resonance'):
-                self.filter.process_per_key(self.identifier, param, value)
+                self.filter.process_per_key(self.identifier, param, value, route_parts)
                 self._update_filter()
             else:
                 _log("[ERROR] No route for '{}' in filter".format(param or route_parts[-2]))
@@ -194,6 +270,9 @@ class Voice:
                 try:
                     float_value = float(value)
                     self.amp.process_per_key(self.identifier, param, float_value)
+                    # Update envelope parameters if note exists
+                    if self.note and hasattr(self.note, 'envelope'):
+                        setattr(self.note.envelope, param, float_value)
                 except ValueError:
                     _log("[ERROR] Invalid value for {}: {} - must be a number".format(param, value))
                     return
@@ -204,9 +283,14 @@ class Voice:
         self._handle_pending_trigger()
         
     def _try_update_note(self, param, value):
+        """Update note parameter if note exists and is playing"""
         if self.note and self.state == "PLAYING":
             try:
-                setattr(self.note, param, value)
+                if param == 'frequency':
+                    self.note.frequency = self.synth_tools.note_to_frequency(float(value))
+                else:
+                    setattr(self.note, param, value)
+                
                 _log({
                     'identifier': self.identifier,
                     'action': 'note_update',
@@ -216,6 +300,7 @@ class Voice:
                 _log("[ERROR] Failed to update note {}: {}".format(param, str(e)))
                 
     def _update_filter(self):
+        """Update filter parameters with no defaults"""
         if not self.note or self.state != "PLAYING":
             return
             
@@ -223,18 +308,37 @@ class Voice:
         if not filter_values:
             return
             
+        # Require all necessary filter parameters
+        if 'frequency' not in filter_values:
+            _log("[ERROR] Missing filter frequency")
+            return
+            
+        if 'resonance' not in filter_values:
+            _log("[ERROR] Missing filter resonance")
+            return
+            
+        if 'filter_type' not in filter_values:
+            _log("[ERROR] Missing filter type")
+            return
+            
         try:
-            freq = filter_values.get('frequency', 1000)
-            res = filter_values.get('resonance', 0.7)
-            self.note.filter = self.synth_tools.calculate_filter(freq, res)
+            self.note.filter = self.synth_tools.calculate_filter(
+                filter_values['frequency'],
+                filter_values['resonance'],
+                filter_values['filter_type']
+            )
+            
+            _log({
+                'identifier': self.identifier,
+                'action': 'filter_update',
+                'detail': f"freq={filter_values['frequency']}, res={filter_values['resonance']}, type={filter_values['filter_type']}"
+            })
+            
         except Exception as e:
             _log("[ERROR] Filter update failed: {}".format(str(e)))
             
     def _handle_pending_trigger(self):
-        """Process any pending envelope triggers
-        A trigger means "execute this action now" - for envelopes this means
-        start attack phase or start release phase.
-        """
+        """Process any pending envelope triggers"""
         trigger = self.amp.get_trigger(self.identifier)
         if not trigger:
             return
@@ -277,7 +381,7 @@ class Voice:
     def _create_note(self):
         try:
             osc_values = self.osc.get_values(self.identifier)
-            amp_values = self.amp.get_values(self.identifier)
+            amp_values = self.amp.get_values(self.identifier)  # This includes global values
 
             note_params = {
                 'frequency': osc_values['frequency'],
@@ -362,6 +466,7 @@ class VoiceManager:
             _log("[ERROR] Synthesizer audio test failed: {}".format(str(e)))
 
     def handle_route(self, route):
+        """Process routes with no defaults"""
         _log("Processing route: {}".format(route))
         
         parts = route.split('/')
@@ -371,6 +476,7 @@ class VoiceManager:
             
         signal_chain = parts[0]
         value = parts[-1]
+        param = parts[-2]
         identifier = None
         
         for part in parts:
@@ -384,10 +490,14 @@ class VoiceManager:
                        self.amp if signal_chain == 'amplifier' else None
                        
             if processor:
-                param = parts[-2]
-                processor.process_global(param, value)
+                if signal_chain == 'filter':
+                    processor.process_global(param, value, parts)
+                else:
+                    processor.process_global(param, value)
+                    
+                # Update all active voices with the new global value
                 for voice in self.voices.values():
-                    if voice.is_active():
+                    if voice.is_active() and voice.state == "PLAYING":
                         voice.process_route(parts, value)
             return
             
