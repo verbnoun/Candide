@@ -420,6 +420,16 @@ class Voice:
                     return
 
             self.note = synthio.Note(**note_params)
+            
+            # Apply filter if all parameters are available
+            filter_values = self.filter.get_values(self.identifier)
+            if filter_values and all(k in filter_values for k in ['frequency', 'resonance', 'filter_type']):
+                self.note.filter = self.synth_tools.calculate_filter(
+                    filter_values['frequency'],
+                    filter_values['resonance'],
+                    filter_values['filter_type']
+                )
+            
             _log({
                 'identifier': self.identifier,
                 'action': 'note_create',
@@ -492,6 +502,10 @@ class VoiceManager:
             if processor:
                 if signal_chain == 'filter':
                     processor.process_global(param, value, parts)
+                    # Update all active voices with new global filter values
+                    for voice in self.voices.values():
+                        if voice.is_active() and voice.state == "PLAYING":
+                            voice._update_filter()
                 else:
                     processor.process_global(param, value)
                     

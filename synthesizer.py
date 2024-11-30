@@ -6,6 +6,7 @@ All methods are stateless calculation tools.
 """
 import time
 import sys
+import math
 import synthio
 from constants import SYNTH_DEBUG
 
@@ -92,20 +93,48 @@ class Synthesizer:
         if wave_type not in self._waveforms:
             _log(f"Generating waveform: {wave_type}")
             try:
+                import array
+                length = 512
+                waveform = array.array('h')
+                
                 if wave_type == 'square':
                     # Generate square wave - simple high/low values
-                    import array
-                    length = 512
-                    square = array.array('h')
                     for i in range(length):
                         if i < length/2:
-                            square.append(32000)  # Max positive value
+                            waveform.append(32000)  # Max positive value
                         else:
-                            square.append(-32000)  # Max negative value
-                    self._waveforms[wave_type] = square
+                            waveform.append(-32000)  # Max negative value
+                            
+                elif wave_type == 'sine':
+                    # Generate sine wave using math.sin
+                    for i in range(length):
+                        # Scale sine wave to fit in 16-bit range
+                        value = int(32000 * math.sin(2 * math.pi * i / length))
+                        waveform.append(value)
+                        
+                elif wave_type == 'triangle':
+                    # Generate triangle wave using linear ramps
+                    for i in range(length):
+                        if i < length/4:  # First quarter: ramp up
+                            value = int(32000 * (4 * i / length))
+                        elif i < 3*length/4:  # Middle half: ramp down
+                            value = int(32000 * (2 - 4 * i / length))
+                        else:  # Last quarter: ramp up
+                            value = int(32000 * (-4 + 4 * i / length))
+                        waveform.append(value)
+                        
+                elif wave_type == 'saw':
+                    # Generate sawtooth wave using linear ramp
+                    for i in range(length):
+                        # Ramp from -32000 to 32000 over the length
+                        value = int(-32000 + (64000 * i / length))
+                        waveform.append(value)
+                        
                 else:
                     _log(f"[ERROR] Unknown waveform type: {wave_type}")
                     return None
+                    
+                self._waveforms[wave_type] = waveform
                     
             except Exception as e:
                 _log(f"[ERROR] Failed to generate waveform: {str(e)}")

@@ -192,7 +192,10 @@ class Router:
                 range_str = parts[parts.index('frequency') + 1]
                 cc_num = int(parts[-2][2:])
                 _log("Adding filter frequency CC route")
-                base_path = f"{parts[0]}/{parts[1]}/frequency"
+                # Build path preserving filter type and scope (global/per_key)
+                filter_type = parts[1]  # e.g. 'band_pass'
+                scope = parts[2] if len(parts) > 2 else 'global'  # e.g. 'global' or 'per_key'
+                base_path = f"{parts[0]}/{filter_type}/{scope}/frequency"
                 self._store_route_info(
                     'cc',
                     'routes',
@@ -205,7 +208,10 @@ class Router:
                 range_str = parts[parts.index('resonance') + 1]
                 cc_num = int(parts[-2][2:])
                 _log("Adding filter resonance CC route")
-                base_path = f"{parts[0]}/{parts[1]}/resonance"
+                # Build path preserving filter type and scope (global/per_key)
+                filter_type = parts[1]  # e.g. 'band_pass'
+                scope = parts[2] if len(parts) > 2 else 'global'  # e.g. 'global' or 'per_key'
+                base_path = f"{parts[0]}/{filter_type}/{scope}/resonance"
                 self._store_route_info(
                     'cc',
                     'routes',
