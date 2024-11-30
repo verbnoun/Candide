@@ -102,12 +102,12 @@ class AmplifierRoutes(RouteProcessor):
         return None
 
 class Voice:
-    def __init__(self, identifier, osc, filter_proc, amp, synth_tools):
+    def __init__(self, identifier, osc, filter_proc, amp, synth_tools, synth):
         self.identifier = identifier
         self.state = "COLLECTING"
         self.note = None
         self.active = True
-        
+        self.synth = synth
         self.osc = osc
         self.filter = filter_proc
         self.amp = amp
@@ -218,9 +218,14 @@ class Voice:
             if self.state != "PLAYING":
                 _log("[ERROR] Release trigger in wrong state: {}".format(self.state))
                 return
-                
             self.state = "FINISHING"
             self.active = False
+            if self.note:
+                try:
+                    _log("Pressing release:")
+                    self.synth.release(self.note)
+                except Exception as e:
+                    _log("[ERROR] Failed to release note: {}".format(str(e)))
             _log({
                 'identifier': self.identifier,
                 'action': 'state_change',
@@ -349,7 +354,7 @@ class VoiceManager:
         if identifier:
             if identifier not in self.voices:
                 self.voices[identifier] = Voice(
-                    identifier, self.osc, self.filter, self.amp, self.synth_tools
+                    identifier, self.osc, self.filter, self.amp, self.synth_tools, self.synth
                 )
             
             voice = self.voices[identifier]
