@@ -130,49 +130,78 @@ class Voice:
         """Process incoming routes to modify voice parameters
         
         Examples:
-        - oscillator/per_key/frequency/trigger/79    # when triggered, set freq to note 79 
-        - oscillator/per_key/waveform/square        # set waveform type
-        - amplifier/per_key/envelope/attack/trigger # trigger start of attack phase
-        - amplifier/per_key/envelope/sustain_level/0.5 # set sustain level value
+        - oscillator/per_key/1.72/frequency/trigger/note_number/72  # set freq to note 72 when triggered
+        - oscillator/per_key/1.72/waveform/square/note_on/square   # set waveform to square
+        - amplifier/per_key/1.72/envelope/release/trigger/note_off  # trigger release on note off
         """
         signal_chain = route_parts[0]
         
-        # Extract param and value type if present from route parts
+        # Extract the actual parameter and any modifiers from the route
         param = None
         value_type = None
+        
+        # Search for known parameters in the route
         for i, part in enumerate(route_parts):
-            if part in ('frequency', 'waveform', 'attack', 'release', 'sustain_level', 'attack_level'):  # Added attack_level
+            if part in ('frequency', 'waveform'):  # Oscillator params
                 param = part
-                value_type = route_parts[i+1] if i+1 < len(route_parts) else None
+                # Look ahead for trigger
+                if i + 1 < len(route_parts) and route_parts[i + 1] == 'trigger':
+                    value_type = 'trigger'
+                break
+            elif part in ('attack', 'release'):  # Amplifier params
+                param = part
+                # Look ahead for trigger
+                if i + 1 < len(route_parts) and route_parts[i + 1] == 'trigger':
+                    value_type = 'trigger'
+                break
+            elif part in ('attack_time', 'decay_time', 'release_time', 'attack_level', 'sustain_level'):  # Envelope params
+                param = part
                 break
                 
-        if not param:
-            _log("[ERROR] No valid parameter in route: {}".format('/'.join(route_parts)))
-            return
-                
         if signal_chain == 'oscillator':
+            if not param:
+                _log("[ERROR] No route for '{}' in oscillator".format(route_parts[-2]))
+                return
+                
             if param == 'frequency' and value_type == 'trigger':
+                # Extract the actual note number from the value
+                try:
+                    note_number = float(value)
+                    self.osc.process_per_key(self.identifier, param, note_number)
+                    self._try_update_note(param, note_number)
+                except ValueError:
+                    _log("[ERROR] Invalid note number value: {}".format(value))
+                    return
+            elif param == 'waveform':
                 self.osc.process_per_key(self.identifier, param, value)
                 self._try_update_note(param, value)
-            elif param == 'waveform':  # waveform has no value_type, just store directly
-                self.osc.process_per_key(self.identifier, param, value)
-                self._try_update_note(param, value)
+            else:
+                _log("[ERROR] No route for '{}' in oscillator".format(param))
+                return
+                
+        elif signal_chain == 'filter':
+            if param in ('frequency', 'resonance'):
+                self.filter.process_per_key(self.identifier, param, value)
+                self._update_filter()
+            else:
+                _log("[ERROR] No route for '{}' in filter".format(param or route_parts[-2]))
+                return
                 
         elif signal_chain == 'amplifier':
-            if value_type == 'trigger':
-                # param will be 'attack' or 'release'
+            if param in ('attack', 'release') and value_type == 'trigger':
                 self.amp.add_trigger(self.identifier, param)
-            else:  # handle non-trigger params (like sustain_level and attack_level)
+            elif param in ('attack_time', 'decay_time', 'release_time', 'attack_level', 'sustain_level'):
                 try:
-                    # Convert value to float for envelope parameters
                     float_value = float(value)
                     self.amp.process_per_key(self.identifier, param, float_value)
                 except ValueError:
                     _log("[ERROR] Invalid value for {}: {} - must be a number".format(param, value))
                     return
+            else:
+                _log("[ERROR] No route for '{}' in amplifier".format(param or route_parts[-2]))
+                return
                     
         self._handle_pending_trigger()
-
         
     def _try_update_note(self, param, value):
         if self.note and self.state == "PLAYING":
@@ -296,8 +325,6 @@ class Voice:
         except Exception as e:
             _log("[ERROR] Note creation failed: {}".format(str(e)))
             self.note = None
-
-
             
     def is_active(self):
         return self.active
