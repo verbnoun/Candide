@@ -47,10 +47,13 @@ def _log(message, module="VOICES"):
 class RouteProcessor:
     """Base class for processing routes for a signal chain section"""
     def __init__(self):
+        # Single source of truth for global values
         self.global_values = {}
+        # Per-key values only store key-specific overrides
         self.per_key_values = {}
         
     def process_global(self, param, value):
+        """Process global parameter - the single source of truth"""
         self.global_values[param] = value
         _log({
             'action': 'global_store',
@@ -59,20 +62,31 @@ class RouteProcessor:
         })
         
     def process_per_key(self, identifier, param, value):
+        """Process per-key parameter - only for key-specific overrides"""
         if identifier not in self.per_key_values:
             self.per_key_values[identifier] = {}
-        self.per_key_values[identifier][param] = value
-        _log({
-            'action': 'per_key_store',
-            'identifier': identifier,
-            'detail': "{}={}".format(param, value)
-        })
+        # Only store if different from global value
+        if param not in self.global_values or value != self.global_values[param]:
+            self.per_key_values[identifier][param] = value
+            _log({
+                'action': 'per_key_store',
+                'identifier': identifier,
+                'detail': "{}={}".format(param, value)
+            })
         
     def get_values(self, identifier):
+        """Get values with globals as the base, only overridden by per-key values"""
+        # Start with a copy of global values
         values = self.global_values.copy()
+        # Only override with per-key values if they exist
         if identifier in self.per_key_values:
             values.update(self.per_key_values[identifier])
         return values
+        
+    def clear_per_key(self, identifier):
+        """Clear per-key values when voice is cleaned up"""
+        if identifier in self.per_key_values:
+            del self.per_key_values[identifier]
 
 class OscillatorRoutes(RouteProcessor):
     def __init__(self):
@@ -95,12 +109,10 @@ class FilterRoutes(RouteProcessor):
     """Handles filter routing with no defaults"""
     def __init__(self):
         super().__init__()
-        self.filter_types = {}  # Store filter type per identifier
         self.valid_types = {'high_pass', 'low_pass', 'band_pass', 'notch'}
         
     def process_global(self, param, value, route_parts):
         """Process global filter parameter from route parts"""
-        # Extract filter type from route
         filter_type = None
         for part in route_parts:
             if part in self.valid_types:
@@ -117,8 +129,11 @@ class FilterRoutes(RouteProcessor):
             
         try:
             float_value = float(value)
+            # Store filter type in global values
+            if 'filter_type' not in self.global_values:
+                self.global_values['filter_type'] = filter_type
             self.global_values[param] = float_value
-            self.filter_types['global'] = filter_type
+            
             _log({
                 'action': 'global_store',
                 'identifier': 'global',
@@ -129,7 +144,6 @@ class FilterRoutes(RouteProcessor):
         
     def process_per_key(self, identifier, param, value, route_parts):
         """Process per-key filter parameter from route parts"""
-        # Extract filter type from route
         filter_type = None
         for part in route_parts:
             if part in self.valid_types:
@@ -148,8 +162,14 @@ class FilterRoutes(RouteProcessor):
             float_value = float(value)
             if identifier not in self.per_key_values:
                 self.per_key_values[identifier] = {}
-            self.per_key_values[identifier][param] = float_value
-            self.filter_types[identifier] = filter_type
+            # Only store if different from global
+            if param not in self.global_values or float_value != self.global_values[param]:
+                self.per_key_values[identifier][param] = float_value
+            # Store filter type if different from global
+            if ('filter_type' not in self.global_values or 
+                filter_type != self.global_values['filter_type']):
+                self.per_key_values[identifier]['filter_type'] = filter_type
+                
             _log({
                 'action': 'per_key_store',
                 'identifier': identifier,
@@ -158,20 +178,12 @@ class FilterRoutes(RouteProcessor):
         except ValueError:
             _log("[ERROR] Invalid value for {}: {} - must be a number".format(param, value))
         
-    def get_values(self, identifier):
-        """Get filter values including filter type"""
-        values = self.global_values.copy()
-        if identifier in self.per_key_values:
-            values.update(self.per_key_values[identifier])
-            
-        # Get filter type, but don't provide a default
-        if identifier in self.filter_types:
-            values['filter_type'] = self.filter_types[identifier]
-        elif 'global' in self.filter_types:
-            values['filter_type'] = self.filter_types['global']
-            
-        return values
-        
+    def has_minimum_requirements(self, values):
+        """Check if minimum filter requirements are met"""
+        return ('frequency' in values and 
+                'resonance' in values and 
+                'filter_type' in values)
+
 class AmplifierRoutes(RouteProcessor):
     def __init__(self):
         super().__init__()
@@ -305,20 +317,7 @@ class Voice:
             return
             
         filter_values = self.filter.get_values(self.identifier)
-        if not filter_values:
-            return
-            
-        # Require all necessary filter parameters
-        if 'frequency' not in filter_values:
-            _log("[ERROR] Missing filter frequency")
-            return
-            
-        if 'resonance' not in filter_values:
-            _log("[ERROR] Missing filter resonance")
-            return
-            
-        if 'filter_type' not in filter_values:
-            _log("[ERROR] Missing filter type")
+        if not self.filter.has_minimum_requirements(filter_values):
             return
             
         try:
@@ -381,7 +380,7 @@ class Voice:
     def _create_note(self):
         try:
             osc_values = self.osc.get_values(self.identifier)
-            amp_values = self.amp.get_values(self.identifier)  # This includes global values
+            amp_values = self.amp.get_values(self.identifier)
 
             note_params = {
                 'frequency': osc_values['frequency'],
@@ -391,7 +390,6 @@ class Voice:
             env_params = {}
             for param in ['attack_time', 'decay_time', 'release_time', 'attack_level', 'sustain_level']:
                 if param in amp_values:
-                    # Attempt to convert to float
                     try:
                         env_params[param] = float(amp_values[param])
                     except ValueError:
@@ -423,7 +421,7 @@ class Voice:
             
             # Apply filter if all parameters are available
             filter_values = self.filter.get_values(self.identifier)
-            if filter_values and all(k in filter_values for k in ['frequency', 'resonance', 'filter_type']):
+            if self.filter.has_minimum_requirements(filter_values):
                 self.note.filter = self.synth_tools.calculate_filter(
                     filter_values['frequency'],
                     filter_values['resonance'],
@@ -442,6 +440,14 @@ class Voice:
             
     def is_active(self):
         return self.active
+        
+    def cleanup(self):
+        """Clean up voice state"""
+        self.osc.clear_per_key(self.identifier)
+        self.filter.clear_per_key(self.identifier)
+        self.amp.clear_per_key(self.identifier)
+        self.note = None
+        self.active = False
 
 class VoiceManager:
     def __init__(self):
@@ -476,7 +482,7 @@ class VoiceManager:
             _log("[ERROR] Synthesizer audio test failed: {}".format(str(e)))
 
     def handle_route(self, route):
-        """Process routes with no defaults"""
+        """Process routes with proper state handling"""
         _log("Processing route: {}".format(route))
         
         parts = route.split('/')
@@ -502,10 +508,6 @@ class VoiceManager:
             if processor:
                 if signal_chain == 'filter':
                     processor.process_global(param, value, parts)
-                    # Update all active voices with new global filter values
-                    for voice in self.voices.values():
-                        if voice.is_active() and voice.state == "PLAYING":
-                            voice._update_filter()
                 else:
                     processor.process_global(param, value)
                     
@@ -531,9 +533,11 @@ class VoiceManager:
                     _log("[ERROR] Failed to press note: {}".format(str(e)))
 
     def cleanup_voices(self):
+        """Clean up inactive voices and their state"""
         for identifier in list(self.voices.keys()):
             if not self.voices[identifier].is_active():
                 _log("Cleaning up voice: {}".format(identifier))
+                self.voices[identifier].cleanup()
                 del self.voices[identifier]
 
     def cleanup(self):
