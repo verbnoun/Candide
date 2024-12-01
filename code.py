@@ -20,7 +20,7 @@ import audiobusio
 import audiomixer
 import busio
 from hardware import HardwareManager
-from config import CASIO_PATHS, ORGAN_PATHS, MPE_PATHS, SIGNAL_CHAIN_ORDER
+import config  # Import config module directly to inspect it
 from midi import MidiLogic
 from voices import VoiceManager
 from router import Router
@@ -277,53 +277,87 @@ class AudioSystem:
         except Exception as e:
             _log(f"[ERROR] Audio cleanup failed: {str(e)}")
 
-class RouterManager:  # Renamed from SynthManager to clarify purpose
+class RouterManager:
     """Manages instrument configuration and routing"""
     def __init__(self, voice_manager):
-        _log("Router Manager init ...")  # Updated log message
+        _log("Router Manager init ...")
         self.voice_manager = voice_manager
         self.router = None
-        self.current_instrument = 'casio'
+        self.instruments = {}
+        self.current_instrument = None
+        self._discover_instruments()
         self._setup_router()
 
+    def _discover_instruments(self):
+        """Discover available instruments from config"""
+        _log("Discovering available instruments...")
+        self.instruments.clear()
+        
+        # Look for all variables ending in _PATHS in config module
+        for name in dir(config):
+            if name.endswith('_PATHS'):
+                instrument_name = name[:-6].lower()  # Remove _PATHS and convert to lowercase
+                paths = getattr(config, name)
+                if isinstance(paths, str):  # Ensure it's a string (path configuration)
+                    self.instruments[instrument_name] = paths
+                    _log(f"Found instrument: {instrument_name} ({len(paths.splitlines())} paths)")
+        
+        if not self.instruments:
+            _log("[ERROR] No instruments found in config")
+            raise RuntimeError("No instruments found in config")
+            
+        # Set first instrument as default if none selected
+        if not self.current_instrument:
+            self.current_instrument = next(iter(self.instruments))
+            _log(f"Set default instrument: {self.current_instrument}")
+
     def _setup_router(self):
+        """Initialize router with current instrument"""
         _log("Setting up router ...")
-        # Pass CASIO_PATHS as a positional argument
-        self.router = Router(CASIO_PATHS)  # Fixed - using positional arg
-        _log("Router setup complete")
+        try:
+            if not self.current_instrument:
+                raise RuntimeError("No instrument selected")
+                
+            self.router = Router(self.instruments[self.current_instrument])
+            _log(f"Router setup complete with instrument: {self.current_instrument}")
+        except Exception as e:
+            _log(f"[ERROR] Router setup failed: {str(e)}")
+            raise
 
     def set_instrument(self, instrument_name):
         """Switch to new instrument"""
         _log(f"Switching to instrument: {instrument_name}")
         try:
-            paths = None
-            if instrument_name == 'casio':
-                paths = CASIO_PATHS
-            elif instrument_name == 'organ':
-                paths = ORGAN_PATHS
-            elif instrument_name == 'mpe':
-                paths = MPE_PATHS
-            else:
+            if instrument_name not in self.instruments:
                 _log(f"[ERROR] Unknown instrument: {instrument_name}")
-                return
+                return False
             
-            # Create new Router with paths as positional argument    
-            self.router = Router(paths)  # Fixed - using positional arg
+            # Release all currently held notes before switching
+            self.voice_manager.release_all_notes()
+            
+            # Create new Router with selected instrument
+            paths = self.instruments[instrument_name]
+            self.router = Router(paths)
             self.current_instrument = instrument_name
-            _log(f"Switched to {instrument_name}")
+            
+            # Log the change with path count for verification
+            path_count = len(paths.splitlines())
+            _log(f"Successfully switched to {instrument_name}")
+            _log(f"Loaded {path_count} paths for {instrument_name}")
+            
+            return True
             
         except Exception as e:
             _log(f"[ERROR] Failed to set instrument: {str(e)}")
+            return False
 
     def get_current_config(self):
         """Get current instrument configuration"""
-        if self.current_instrument == 'casio':
-            return CASIO_PATHS
-        elif self.current_instrument == 'organ':
-            return ORGAN_PATHS
-        elif self.current_instrument == 'mpe':
-            return MPE_PATHS
-        return None
+        return self.instruments.get(self.current_instrument)
+
+    def get_available_instruments(self):
+        """Get list of available instruments"""
+        return list(self.instruments.keys())
 
 class Candide:
     def __init__(self):
@@ -400,18 +434,37 @@ class Candide:
         current_time = time.monotonic()
         if current_time - self.last_encoder_scan >= ENCODER_SCAN_INTERVAL:
             events = self.hardware_manager.read_encoder()
-            if self.connection_manager.state in [ConnectionState.STANDALONE, ConnectionState.CONNECTED]:
+            # Only process instrument changes in STANDALONE or CONNECTED states
+            valid_states = [ConnectionState.STANDALONE, ConnectionState.CONNECTED]
+            current_state = self.connection_manager.state
+            
+            if events:
+                _log(f"Encoder events received in state {current_state}: {events}")
+                
+            if current_state in valid_states:
                 for event_type, direction in events:
-                    _log(f"Encoder events: {events}")
                     if event_type == 'instrument_change':
-                        instruments = ['casio', 'organ', 'mpe']
-                        current_idx = instruments.index(self.router_manager.current_instrument)  # Updated reference
+                        # Get list of available instruments
+                        instruments = self.router_manager.get_available_instruments()
+                        current_idx = instruments.index(self.router_manager.current_instrument)
+                        # Calculate new index with wraparound
                         new_idx = (current_idx + direction) % len(instruments)
                         new_instrument = instruments[new_idx]
-                        _log(f"Switching to instrument: {new_instrument}")
-                        self.router_manager.set_instrument(new_instrument)  # Updated reference
-                        # Send new config if connected
-                        self.connection_manager.send_config()
+                        
+                        _log(f"Encoder triggered instrument change: {self.router_manager.current_instrument} -> {new_instrument}")
+                        if self.router_manager.set_instrument(new_instrument):
+                            # Update MIDI router reference
+                            self.midi.router = self.router_manager.router
+                            
+                            # Send new config if connected
+                            if current_state == ConnectionState.CONNECTED:
+                                _log(f"Sending new {new_instrument} config to connected device...")
+                                self.connection_manager.send_config()
+                                _log("Config sent successfully")
+            else:
+                # Log if we got encoder events but ignored them due to invalid state
+                if events:
+                    _log(f"Ignoring encoder events during {current_state} state")
                             
             self.last_encoder_scan = current_time
 

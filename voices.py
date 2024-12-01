@@ -532,6 +532,24 @@ class VoiceManager:
                 except Exception as e:
                     _log("[ERROR] Failed to press note: {}".format(str(e)))
 
+    def release_all_notes(self):
+        """Release all currently active notes"""
+        _log("Releasing all active notes")
+        try:
+            # Release all active voices
+            for voice in list(self.voices.values()):
+                if voice.is_active() and voice.state == "PLAYING":
+                    if voice.note:
+                        self.synth.release(voice.note)
+                    voice.state = "FINISHING"
+                    voice.active = False
+            
+            # Let cleanup_voices handle the rest
+            self.cleanup_voices()
+            
+        except Exception as e:
+            _log(f"[ERROR] Failed to release all notes: {str(e)}")
+
     def cleanup_voices(self):
         """Clean up inactive voices and their state"""
         for identifier in list(self.voices.keys()):

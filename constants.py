@@ -9,7 +9,7 @@ import board
 
 # Debug Flags
 DEBUG = True
-HARDWARE_DEBUG = False
+HARDWARE_DEBUG = True
 MIDI_DEBUG = False
 ROUTER_DEBUG = True
 VOICES_DEBUG = True
@@ -31,7 +31,6 @@ AUDIO_CHANNEL_COUNT = 2  # Number of audio channels (stereo)
 I2S_BIT_CLOCK = board.GP1
 I2S_WORD_SELECT = board.GP2
 I2S_DATA = board.GP0
-
 
 # Hardware Constants
 INSTRUMENT_ENC_CLK = board.GP20
@@ -85,8 +84,9 @@ class MidiMessageType:
 
 # Connection States
 class ConnectionState:
-    STANDALONE = 0
-    DETECTED = 1
-    HANDSHAKING = 2
-    CONNECTED = 3
-    RETRY_DELAY = 4
+    """Connection states for base station communication"""
+    STANDALONE = "standalone"
+    DETECTED = "detected"
+    HANDSHAKING = "handshaking"
+    CONNECTED = "connected"
+    RETRY_DELAY = "retry_delay"

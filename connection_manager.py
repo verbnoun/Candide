@@ -11,7 +11,8 @@ import digitalio
 from constants import (
     DETECT_PIN, HANDSHAKE_CC, HANDSHAKE_VALUE,
     HELLO_INTERVAL, HANDSHAKE_TIMEOUT, HEARTBEAT_INTERVAL,
-    HANDSHAKE_MAX_RETRIES, RETRY_DELAY, SETUP_DELAY
+    HANDSHAKE_MAX_RETRIES, RETRY_DELAY, SETUP_DELAY,
+    ConnectionState  # Import ConnectionState from constants
 )
 
 def _log(message):
@@ -22,14 +23,6 @@ def _log(message):
     
     color = RED if "[ERROR]" in message else WHITE
     print(f"{color}[CANDID] {message}{RESET}", file=sys.stderr)
-
-class ConnectionState:
-    """Connection states for base station communication"""
-    STANDALONE = "standalone"
-    DETECTED = "detected"
-    HANDSHAKING = "handshaking"
-    CONNECTED = "connected"
-    RETRY_DELAY = "retry_delay"
 
 class CandideConnectionManager:
     """Manages connection state and handshake protocol"""
