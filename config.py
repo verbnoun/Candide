@@ -25,10 +25,10 @@ oscillator/ring/bend/global/-12-12/cc75
 filter/band_pass/resonance/global/0.1-2.0/cc71
 filter/band_pass/frequency/global/20-20000/cc70
 
-amplifier/envelope/attack_level/global/0-1/cc74
+amplifier/envelope/attack_level/per_key/0.001-1/velocity/note_on
 amplifier/envelope/attack_time/global/0.001-0.5/cc73
 amplifier/envelope/decay_time/global/0.001-0.25/cc75
-amplifier/envelope/sustain_level/global/0-1/cc85
+amplifier/envelope/sustain_level/per_key/pressure
 amplifier/envelope/release_time/global/0.001-3/cc72
 
 lfo/rate/tremolo_lfo/global/0.1-10/cc71

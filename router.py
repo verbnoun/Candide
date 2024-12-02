@@ -146,6 +146,10 @@ class PathProcessor:
                     msg_type = 'pitch_bend'
                 elif midi_type == 'pressure':
                     msg_type = 'pressure'
+                elif midi_type == 'velocity':
+                    msg_type = 'note_on'  # velocity comes with note_on
+                elif midi_type == 'note_number':
+                    msg_type = 'note_on'  # note_number comes with note_on
                 
                 _log(f"Determined message type: {msg_type}")
                 if msg_type:
@@ -173,15 +177,35 @@ class ValueProcessor:
         # State tracking for continuous controls
         self.last_value = {}  # channel -> {pitch_bend, pressure, timbre}
 
-    def get_route_value(self, message, range_str=None):
+    def get_route_value(self, message, template):
         """Process MIDI message into appropriate route value"""
         msg_type = message['type']
         
-        # Get raw value based on message type
-        if msg_type == 'note_on':
+        # Check if this route should have a value appended
+        if template.endswith('/saw') or template.endswith('/triangle'):
+            return None
+            
+        # Handle note_on without value specifier
+        if msg_type == 'note_on' and template.endswith('/note_on'):
+            return None
+            
+        # Handle note_number
+        if 'note_number' in template:
+            return message['data'].get('note')
+            
+        # Handle velocity with range
+        if 'velocity' in template:
             raw_value = message['data'].get('velocity', 127)
-        elif msg_type == 'note_off':
-            raw_value = 0  # Note offs always generate 0 value
+            # Extract range from template
+            range_parts = [part for part in template.split('/') if '-' in part]
+            range_str = range_parts[0] if range_parts else None
+            if range_str:
+                return self.normalize_value(raw_value, range_str)
+            return raw_value
+            
+        # Get raw value based on message type
+        if msg_type == 'note_off':
+            return None  # note_off doesn't need a value
         elif msg_type == 'pitch_bend':
             raw_value = message['data'].get('value', 8192)
         elif msg_type == 'pressure':
@@ -190,6 +214,10 @@ class ValueProcessor:
             raw_value = message['data'].get('value', 0)
         else:
             return None
+
+        # Extract range if present in template
+        range_parts = [part for part in template.split('/') if '-' in part]
+        range_str = range_parts[0] if range_parts else None
 
         # Return raw value if no range specified
         if not range_str or range_str == 'na':
@@ -202,14 +230,14 @@ class ValueProcessor:
         if scope == 'global':
             return 'global'
             
-        # For per_key scope, try to build V{note}.{channel}
+        # For per_key scope, build V{note}.{channel} with X for missing data
         try:
-            note = message['data']['note']
-            channel = message['channel']
+            note = message['data'].get('note', 'XX')  # Use XX if note is missing
+            channel = message.get('channel', 'X')     # Use X if channel is missing
             return f"V{note}.{channel}"
-        except (KeyError, TypeError):
-            # If we can't build the scope, let it fail
-            raise ValueError("Cannot create per_key scope without note data")
+        except Exception as e:
+            _log(f"[ERROR] Error creating per_key scope: {str(e)}")
+            return "VXX.X"  # Fallback to completely unknown scope
 
     def should_process_message(self, message):
         """Check if a continuous controller message exceeds threshold"""
@@ -286,8 +314,11 @@ class RouteBuilder:
             formatted_path = template.format(scope_value)
             _log(f"Formatted path: {formatted_path}")
             
-            # Split into parts
-            parts = formatted_path.split('/')
+            # Split into parts and remove any range or value type specifiers
+            parts = []
+            for part in formatted_path.split('/'):
+                if '-' not in part and part not in ('velocity', 'note_number'):
+                    parts.append(part)
             
             # Add value if provided
             if value is not None:
@@ -327,8 +358,8 @@ class RouteBuilder:
                 # Get scope value (global or voice-specific)
                 scope_value = value_processor.get_route_scope(message, route_info['scope'])
                 
-                # Get normalized value based on route range
-                value = value_processor.get_route_value(message, route_info.get('range'))
+                # Get value based on route template
+                value = value_processor.get_route_value(message, route_info['template'])
                     
                 # Create and add route
                 route = self.create_route(route_info['template'], scope_value, value)
