@@ -169,7 +169,7 @@ class PathProcessor:
 class ValueProcessor:
     """Handles MIDI value processing and normalization"""
     
-    # Filtering thresholds for continuous signals
+    # Filtering thresholds for continuous signals 
     PITCH_BEND_THRESHOLD = 64    # For 14-bit values (0-16383)
     PRESSURE_THRESHOLD = 2       # For 7-bit values (0-127)
     TIMBRE_THRESHOLD = 2        # For 7-bit values (0-127)
@@ -183,6 +183,10 @@ class ValueProcessor:
         """Process MIDI message into appropriate route value"""
         msg_type = message['type']
         
+        # Extract range if present in template
+        range_parts = [part for part in template.split('/') if '-' in part]
+        range_str = range_parts[0] if range_parts else None
+            
         # Check if this route should have a value appended
         if template.endswith('/saw') or template.endswith('/triangle'):
             return None
@@ -195,37 +199,35 @@ class ValueProcessor:
         if 'note_number' in template:
             return message['data'].get('note')
             
-        # Handle velocity with range
-        if 'velocity' in template:
-            raw_value = message['data'].get('velocity', 127)
-            # Extract range from template
-            range_parts = [part for part in template.split('/') if '-' in part]
-            range_str = range_parts[0] if range_parts else None
-            if range_str:
-                return self.normalize_value(raw_value, range_str)
-            return raw_value
-            
         # Get raw value based on message type
         if msg_type == 'note_off':
-            return None  # note_off doesn't need a value
+            return None
         elif msg_type == 'pitch_bend':
             raw_value = message['data'].get('value', 8192)
+            _log(f"[PITCH BEND] Got raw value: {raw_value}")
+            _log(f"[PITCH BEND] Template range: {range_str}")
+            if range_str:
+                normalized = self.normalize_value(raw_value, range_str, msg_type)
+                _log(f"[PITCH BEND] Normalized value: {normalized}")
+                return normalized
+            return raw_value
         elif msg_type == 'pressure':
             raw_value = message['data'].get('value', 0)
+            if range_str:
+                return self.normalize_value(raw_value, range_str, msg_type)
+            return raw_value
         elif msg_type == 'cc':
             raw_value = message['data'].get('value', 0)
-        else:
-            return None
-
-        # Extract range if present in template
-        range_parts = [part for part in template.split('/') if '-' in part]
-        range_str = range_parts[0] if range_parts else None
-
-        # Return raw value if no range specified
-        if not range_str or range_str == 'na':
+            if range_str:
+                return self.normalize_value(raw_value, range_str, msg_type)
+            return raw_value
+        elif 'velocity' in template:
+            raw_value = message['data'].get('velocity', 127)
+            if range_str:
+                return self.normalize_value(raw_value, range_str, msg_type)
             return raw_value
 
-        return self.normalize_value(raw_value, range_str)
+        return None
 
     def get_route_scope(self, message, scope):
         """Generate scope value from message using template"""
@@ -280,20 +282,39 @@ class ValueProcessor:
         self.last_value[channel][state_key] = current
         return True
 
-    def normalize_value(self, value, range_str):
-        """Normalize value to specified range"""
+    def normalize_value(self, value, range_str, msg_type):
+        """Normalize value to specified range based on message type"""
         try:
-            low, high = map(float, range_str.split('-'))
+            _log(f"[NORMALIZE] Input: value={value}, range={range_str}, type={msg_type}")
             
-            # Handle different value ranges
-            if 0 <= value <= 127:  # Standard MIDI
-                return low + (value/127.0) * (high - low)
-            elif 0 <= value <= 16383:  # Pitch bend
-                return low + ((value-8192)/8192.0) * (high - low)
+            # Special handling for negative ranges (e.g., -12-12, -1-1)
+            range_parts = range_str.split('-')
+            if len(range_parts) == 3:  # Case for negative ranges like -12-12
+                low = float(f"-{range_parts[1]}")  # Convert -12 properly
+                high = float(range_parts[2])       # Convert 12 properly
+            else:  # Standard case like 0-127
+                low = float(range_parts[0])
+                high = float(range_parts[1])
+                
+            _log(f"[NORMALIZE] Range decoded: low={low}, high={high}")
             
-            return value
+            if msg_type == 'pitch_bend':
+                # Normalize from 0-16383 to -1 to 1 range
+                normalized_pos = (value - 8192) / 8192.0
+                _log(f"[NORMALIZE] Normalized position (-1 to 1): {normalized_pos}")
+                
+                # Scale normalized position to target range
+                result = low + ((normalized_pos + 1) / 2.0) * (high - low)
+                _log(f"[NORMALIZE] Final result: {result}")
+                return result
+            else:
+                # Standard MIDI values 0-127
+                result = low + (value/127.0) * (high - low)
+                _log(f"[NORMALIZE] Standard MIDI result: {result}")
+                return result
             
-        except (ValueError, TypeError):
+        except (ValueError, TypeError) as e:
+            _log(f"[NORMALIZE] Error: {str(e)}")
             return value
 
 class RouteBuilder:
