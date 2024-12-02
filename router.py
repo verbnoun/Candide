@@ -165,25 +165,69 @@ class Router:
 
     def _process_oscillator_path(self, path, parts):
         """Process oscillator category paths"""
-        if 'frequency' in parts and 'note_number' in parts:
-            _log("Adding note number frequency route")
-            self._store_route_info(
-                'note_on',
-                'note_number_routes',
-                path
-            )
+        try:
+            if 'frequency' in parts:
+                freq_idx = parts.index('frequency')
+                if freq_idx + 1 < len(parts):
+                    # Handle CC frequency control
+                    if any(p.startswith('cc') for p in parts):
+                        range_str = parts[freq_idx + 1]
+                        cc_part = next(p for p in parts if p.startswith('cc'))
+                        cc_num = int(cc_part[2:])  # Extract number from ccXX
+                        _log("Adding oscillator frequency CC route")
+                        
+                        # Build path preserving oscillator type and scope
+                        osc_type = parts[1]  # e.g. 'ring'
+                        scope = parts[2]  # e.g. 'global' or 'per_key'
+                        base_path = f"{parts[0]}/{osc_type}/{scope}/frequency"
+                        
+                        self._store_route_info(
+                            'cc',
+                            'routes',
+                            base_path,
+                            range=range_str,
+                            cc_num=cc_num
+                        )
+                    # Handle note number frequency control
+                    elif 'note_number' in parts:
+                        _log("Adding note number frequency route")
+                        self._store_route_info(
+                            'note_on',
+                            'note_number_routes',
+                            path
+                        )
             
-        if 'waveform' in parts:
-            wave_idx = parts.index('waveform')
-            if wave_idx + 1 < len(parts):
-                wave_type = parts[wave_idx + 1]
-                _log("Adding waveform route")
-                self._store_route_info(
-                    'note_on',
-                    'waveform_routes',
-                    path,
-                    wave_type=wave_type
-                )
+            if 'waveform' in parts:
+                wave_idx = parts.index('waveform')
+                if wave_idx + 1 < len(parts):
+                    wave_type = parts[wave_idx + 1]
+                    _log("Adding waveform route")
+                    self._store_route_info(
+                        'note_on',
+                        'waveform_routes',
+                        path,
+                        wave_type=wave_type
+                    )
+
+            # Handle press_note/release_note trigger paths
+            if 'trigger' in parts:
+                if 'press_note' in parts:
+                    _log("Adding note_on trigger route")
+                    self._store_route_info(
+                        'note_on',
+                        'trigger_routes',
+                        path
+                    )
+                elif 'release_note' in parts:
+                    _log("Adding note_off trigger route")
+                    self._store_route_info(
+                        'note_off',
+                        'trigger_routes',
+                        path
+                    )
+                    
+        except (ValueError, IndexError) as e:
+            _log("[ERROR] Invalid oscillator path: {}".format(path))
 
     def _process_filter_path(self, path, parts):
         """Process filter category paths"""
@@ -219,8 +263,8 @@ class Router:
                     range=range_str,
                     cc_num=cc_num
                 )
-        except (ValueError, IndexError):
-            _log("[ERROR] Invalid filter path format: {}".format(path))
+        except (ValueError, IndexError) as e:
+            _log("[ERROR] Invalid filter path: {}".format(path))
 
     def _process_amplifier_path(self, path, parts):
         """Process amplifier category paths"""
@@ -251,7 +295,7 @@ class Router:
                     range=range_str,
                     cc_num=cc_num
                 )
-            except (ValueError, IndexError):
+            except (ValueError, IndexError) as e:
                 _log("[ERROR] Invalid CC format: {}".format(path))
                 
         # Process trigger paths
@@ -284,7 +328,7 @@ class Router:
                         range=range_str,
                         parameter=parts[env_idx + 1]
                     )
-            except (ValueError, IndexError):
+            except (ValueError, IndexError) as e:
                 _log("[ERROR] Invalid level format: {}".format(path))
 
     def _log_routing_tables(self):
@@ -375,17 +419,17 @@ class Router:
     def process_message(self, message, voice_manager):
         """Transform MIDI message to route"""
         if not self._should_process(message):
-            _log(f"[REJECTED] Message type not in config: {message['type']}")
+            _log("[REJECTED] Message type not in config: {}".format(message['type']))
             return
 
         if message['type'] in ('pitch_bend', 'pressure') or \
         (message['type'] == 'cc' and message['data']['number'] == 74):
             if not self._check_continuous(message):
-                _log(f"[REJECTED] Change below threshold: {message['type']}")
+                _log("[REJECTED] Change below threshold: {}".format(message['type']))
                 return
 
         self.message_buffer.append((message, voice_manager))
-        _log(f"Message queued. Buffer size: {len(self.message_buffer)}/{BUFFER_SIZE}")
+        _log("Message queued. Buffer size: {}/{}".format(len(self.message_buffer), BUFFER_SIZE))
         
         while len(self.message_buffer):
             msg, vm = self.message_buffer.popleft()
@@ -460,5 +504,5 @@ class Router:
 
             # Send routes to voice manager
             for route in routes:
-                _log(f"Sending route: {route}")
+                _log("Sending route: {}".format(route))
                 vm.handle_route(route)

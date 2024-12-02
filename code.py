@@ -240,7 +240,7 @@ class AudioSystem:
             
             # Set initial low volume for test
             original_volume = self.mixer.voice[0].level
-            self.mixer.voice[0].level = 0.1
+            self.mixer.voice[0].level = 0.5
             
             # Test audio path
             self.voice_manager.test_audio_hardware()

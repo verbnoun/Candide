@@ -9,8 +9,8 @@ import board
 
 # Debug Flags
 DEBUG = True
-HARDWARE_DEBUG = True
-MIDI_DEBUG = False
+HARDWARE_DEBUG = False
+MIDI_DEBUG = True
 ROUTER_DEBUG = True
 VOICES_DEBUG = True
 SYNTH_DEBUG = True

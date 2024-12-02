@@ -91,19 +91,90 @@ class RouteProcessor:
 class OscillatorRoutes(RouteProcessor):
     def __init__(self):
         super().__init__()
+        # Add separate ring modulation values
+        self.ring_global_values = {}
+        self.ring_per_key_values = {}
         self.synth_tools = Synthesizer()
         
-    def process_per_key(self, identifier, param, value):
-        if param == 'frequency':
-            # Always convert note number to frequency when storing
-            freq = self.synth_tools.note_to_frequency(float(value))
-            super().process_per_key(identifier, param, freq)
+    def process_global(self, param, value, is_ring=False):
+        """Process global parameter with ring modulation support"""
+        if is_ring:
+            # Convert frequency values to float
+            if param == 'frequency':
+                try:
+                    value = float(value)
+                except ValueError:
+                    _log("[ERROR] Invalid ring frequency value: {}".format(value))
+                    return
+            self.ring_global_values[param] = value
+            _log({
+                'action': 'global_store',
+                'identifier': 'global',
+                'detail': "ring_{}={}".format(param, value)
+            })
         else:
-            super().process_per_key(identifier, param, value)
+            super().process_global(param, value)
             
+    def process_per_key(self, identifier, param, value, is_ring=False):
+        """Process per-key parameter with ring modulation support"""
+        if is_ring:
+            if identifier not in self.ring_per_key_values:
+                self.ring_per_key_values[identifier] = {}
+            # Only store if different from global value
+            if param not in self.ring_global_values or value != self.ring_global_values[param]:
+                if param == 'frequency':
+                    # Convert note number to frequency when storing
+                    freq = self.synth_tools.note_to_frequency(float(value))
+                    self.ring_per_key_values[identifier][param] = freq
+                else:
+                    self.ring_per_key_values[identifier][param] = value
+                _log({
+                    'action': 'per_key_store',
+                    'identifier': identifier,
+                    'detail': "ring_{}={}".format(param, value)
+                })
+        else:
+            if param == 'frequency':
+                # Convert note number to frequency when storing
+                freq = self.synth_tools.note_to_frequency(float(value))
+                super().process_per_key(identifier, param, freq)
+            else:
+                super().process_per_key(identifier, param, value)
+                
+    def get_ring_values(self, identifier):
+        """Get ring modulation values with globals as base"""
+        values = self.ring_global_values.copy()
+        if identifier in self.ring_per_key_values:
+            values.update(self.ring_per_key_values[identifier])
+        return values
+                
     def has_minimum_requirements(self, identifier):
+        """Check if minimum synthio oscillator requirements are met"""
         values = self.get_values(identifier)
-        return 'frequency' in values and 'waveform' in values
+        has_reqs = 'frequency' in values and 'waveform' in values
+        _log({
+            'action': 'oscillator_check',
+            'identifier': identifier,
+            'detail': f"Requirements met: {has_reqs}, Values: {values}"
+        })
+        return has_reqs
+        
+    def has_ring_requirements(self, identifier):
+        """Check if minimum ring modulation requirements are met"""
+        values = self.get_ring_values(identifier)
+        has_reqs = 'frequency' in values and 'waveform' in values
+        _log({
+            'action': 'ring_check',
+            'identifier': identifier,
+            'detail': f"Ring requirements met: {has_reqs}, Values: {values}"
+        })
+        return has_reqs
+        
+    def clear_per_key(self, identifier):
+        """Clear per-key values including ring modulation"""
+        super().clear_per_key(identifier)
+        if identifier in self.ring_per_key_values:
+            del self.ring_per_key_values[identifier]
 
 class FilterRoutes(RouteProcessor):
     """Handles filter routing with no defaults"""
@@ -180,9 +251,14 @@ class FilterRoutes(RouteProcessor):
         
     def has_minimum_requirements(self, values):
         """Check if minimum filter requirements are met"""
-        return ('frequency' in values and 
-                'resonance' in values and 
-                'filter_type' in values)
+        has_reqs = ('frequency' in values and 
+                   'resonance' in values and 
+                   'filter_type' in values)
+        _log({
+            'action': 'filter_check',
+            'detail': f"Requirements met: {has_reqs}, Values: {values}"
+        })
+        return has_reqs
 
 class AmplifierRoutes(RouteProcessor):
     def __init__(self):
@@ -198,6 +274,46 @@ class AmplifierRoutes(RouteProcessor):
             del self.triggers[identifier]
             return trigger
         return None
+        
+    def has_minimum_requirements(self, identifier):
+        """Check if minimum envelope requirements are met"""
+        # Get combined values (global + per-key overrides)
+        values = self.get_values(identifier)
+        
+        # Check for required envelope parameters
+        required_params = {'attack_time', 'decay_time', 'release_time', 
+                         'attack_level', 'sustain_level'}
+        
+        # Log current state
+        _log({
+            'action': 'envelope_check',
+            'identifier': identifier,
+            'detail': f"Checking envelope requirements. Global values: {self.global_values}"
+        })
+        
+        if identifier in self.per_key_values:
+            _log({
+                'action': 'envelope_check',
+                'identifier': identifier,
+                'detail': f"Per-key values: {self.per_key_values[identifier]}"
+            })
+        
+        # Check each required parameter
+        missing_params = required_params - set(values.keys())
+        if missing_params:
+            _log({
+                'action': 'envelope_check',
+                'identifier': identifier,
+                'detail': f"Missing required parameters: {missing_params}"
+            })
+            return False
+            
+        _log({
+            'action': 'envelope_check',
+            'identifier': identifier,
+            'detail': "All envelope requirements met"
+        })
+        return True
 
 class Voice:
     def __init__(self, identifier, osc, filter_proc, amp, synth_tools, synth):
@@ -210,6 +326,7 @@ class Voice:
         self.filter = filter_proc
         self.amp = amp
         self.synth_tools = synth_tools
+        self.trigger_source = None  # Track where the trigger came from
         
         _log({
             'identifier': identifier,
@@ -224,13 +341,21 @@ class Voice:
         # Extract the actual parameter and any modifiers from the route
         param = None
         value_type = None
+        is_ring = False
+        
+        # Check if this is a ring modulation route
+        if 'ring' in route_parts:
+            is_ring = True
         
         # Search for known parameters in the route
         for i, part in enumerate(route_parts):
-            if part in ('frequency', 'waveform'):  # Oscillator params
+            if part in ('frequency', 'waveform', 'press_note', 'release_note'):
                 param = part
+                # For waveform routes, get the actual waveform value
+                if param == 'waveform' and i + 1 < len(route_parts):
+                    value = route_parts[i + 1]  # Use the waveform type (sine, saw, etc)
                 # Look ahead for trigger
-                if i + 1 < len(route_parts) and route_parts[i + 1] == 'trigger':
+                elif i + 1 < len(route_parts) and route_parts[i + 1] == 'trigger':
                     value_type = 'trigger'
                 break
             elif part in ('attack', 'release'):  # Amplifier params
@@ -255,14 +380,48 @@ class Voice:
                 # Extract the actual note number from the value
                 try:
                     note_number = float(value)
-                    self.osc.process_per_key(self.identifier, param, note_number)
-                    self._try_update_note(param, note_number)
+                    self.osc.process_per_key(self.identifier, param, note_number, is_ring)
+                    self._try_update_note(param, note_number, is_ring)
                 except ValueError:
                     _log("[ERROR] Invalid note number value: {}".format(value))
                     return
             elif param == 'waveform':
-                self.osc.process_per_key(self.identifier, param, value)
-                self._try_update_note(param, value)
+                self.osc.process_per_key(self.identifier, param, value, is_ring)
+                self._try_update_note(param, value, is_ring)
+            elif param == 'press_note' and value_type == 'trigger':
+                # Handle press_note trigger
+                if self.state != "COLLECTING":
+                    _log("[ERROR] Press note trigger in wrong state: {}".format(self.state))
+                    return
+                    
+                if not self.osc.has_minimum_requirements(self.identifier):
+                    _log("[ERROR] Press note trigger without minimum oscillator requirements")
+                    return
+                    
+                self._create_note()
+                self.state = "PLAYING"
+                _log({
+                    'identifier': self.identifier,
+                    'action': 'state_change',
+                    'detail': 'COLLECTING -> PLAYING'
+                })
+            elif param == 'release_note' and value_type == 'trigger':
+                # Handle release_note trigger
+                if self.state != "PLAYING":
+                    _log("[ERROR] Release note trigger in wrong state: {}".format(self.state))
+                    return
+                self.state = "FINISHING"
+                self.active = False
+                if self.note:
+                    try:
+                        self.synth.release(self.note)
+                    except Exception as e:
+                        _log("[ERROR] Failed to release note: {}".format(str(e)))
+                _log({
+                    'identifier': self.identifier,
+                    'action': 'state_change',
+                    'detail': 'PLAYING -> FINISHING'
+                })
             else:
                 _log("[ERROR] No route for '{}' in oscillator".format(param))
                 return
@@ -277,6 +436,8 @@ class Voice:
                 
         elif signal_chain == 'amplifier':
             if param in ('attack', 'release') and value_type == 'trigger':
+                # Store trigger source for requirement checking
+                self.trigger_source = 'amplifier'
                 self.amp.add_trigger(self.identifier, param)
             elif param in ('attack_time', 'decay_time', 'release_time', 'attack_level', 'sustain_level'):
                 try:
@@ -294,19 +455,25 @@ class Voice:
                     
         self._handle_pending_trigger()
         
-    def _try_update_note(self, param, value):
+    def _try_update_note(self, param, value, is_ring=False):
         """Update note parameter if note exists and is playing"""
         if self.note and self.state == "PLAYING":
             try:
-                if param == 'frequency':
-                    self.note.frequency = self.synth_tools.note_to_frequency(float(value))
+                if is_ring:
+                    if param == 'frequency':
+                        self.note.ring_frequency = self.synth_tools.note_to_frequency(float(value))
+                    elif param == 'waveform':
+                        self.note.ring_waveform = self.synth_tools.get_waveform(value)
                 else:
-                    setattr(self.note, param, value)
+                    if param == 'frequency':
+                        self.note.frequency = self.synth_tools.note_to_frequency(float(value))
+                    else:
+                        setattr(self.note, param, value)
                 
                 _log({
                     'identifier': self.identifier,
                     'action': 'note_update',
-                    'detail': "{}={}".format(param, value)
+                    'detail': "{}{}={}".format('ring_' if is_ring else '', param, value)
                 })
             except Exception as e:
                 _log("[ERROR] Failed to update note {}: {}".format(param, str(e)))
@@ -347,8 +514,14 @@ class Voice:
                 _log("[ERROR] Attack trigger in wrong state: {}".format(self.state))
                 return
                 
+            # Always check oscillator requirements
             if not self.osc.has_minimum_requirements(self.identifier):
-                _log("[ERROR] Attack without minimum requirements")
+                _log("[ERROR] Attack trigger without minimum oscillator requirements")
+                return
+                
+            # Only check envelope requirements if trigger came from amplifier
+            if self.trigger_source == 'amplifier' and not self.amp.has_minimum_requirements(self.identifier):
+                _log("[ERROR] Attack trigger without minimum envelope requirements")
                 return
                 
             self._create_note()
@@ -367,7 +540,6 @@ class Voice:
             self.active = False
             if self.note:
                 try:
-                    _log("Pressing release:")
                     self.synth.release(self.note)
                 except Exception as e:
                     _log("[ERROR] Failed to release note: {}".format(str(e)))
@@ -378,44 +550,52 @@ class Voice:
             })
             
     def _create_note(self):
+        """Create note based on trigger source requirements"""
         try:
             osc_values = self.osc.get_values(self.identifier)
-            amp_values = self.amp.get_values(self.identifier)
-
             note_params = {
                 'frequency': osc_values['frequency'],
                 'waveform': self.synth_tools.get_waveform(osc_values['waveform'])
             }
 
-            env_params = {}
-            for param in ['attack_time', 'decay_time', 'release_time', 'attack_level', 'sustain_level']:
-                if param in amp_values:
-                    try:
-                        env_params[param] = float(amp_values[param])
-                    except ValueError:
-                        _log(
-                            "[ERROR] Note creation failed: {}: {} must be of type float, not {}".format(
-                                param, amp_values[param], type(amp_values[param]).__name__
-                            )
-                        )
-                        return
+            # Add ring modulation parameters if requirements are met
+            ring_values = self.osc.get_ring_values(self.identifier)
+            if self.osc.has_ring_requirements(self.identifier):
+                note_params['ring_frequency'] = ring_values['frequency']
+                note_params['ring_waveform'] = self.synth_tools.get_waveform(ring_values['waveform'])
 
-            if env_params:
-                try:
-                    note_params['envelope'] = synthio.Envelope(**env_params)
-                except TypeError as te:
-                    message = str(te)
-                    for key, value in env_params.items():
-                        if key in message:
+            # Include envelope parameters if trigger came from amplifier
+            if self.trigger_source == 'amplifier':
+                amp_values = self.amp.get_values(self.identifier)
+                env_params = {}
+                for param in ['attack_time', 'decay_time', 'release_time', 'attack_level', 'sustain_level']:
+                    if param in amp_values:
+                        try:
+                            env_params[param] = float(amp_values[param])
+                        except ValueError:
                             _log(
                                 "[ERROR] Note creation failed: {}: {} must be of type float, not {}".format(
-                                    key, value, type(value).__name__
+                                    param, amp_values[param], type(amp_values[param]).__name__
                                 )
                             )
-                            break
-                    else:
-                        _log("[ERROR] Note creation failed: {}".format(message))
-                    return
+                            return
+
+                if env_params:
+                    try:
+                        note_params['envelope'] = synthio.Envelope(**env_params)
+                    except TypeError as te:
+                        message = str(te)
+                        for key, value in env_params.items():
+                            if key in message:
+                                _log(
+                                    "[ERROR] Note creation failed: {}: {} must be of type float, not {}".format(
+                                        key, value, type(value).__name__
+                                    )
+                                )
+                                break
+                        else:
+                            _log("[ERROR] Note creation failed: {}".format(message))
+                        return
 
             self.note = synthio.Note(**note_params)
             
@@ -448,6 +628,7 @@ class Voice:
         self.amp.clear_per_key(self.identifier)
         self.note = None
         self.active = False
+        self.trigger_source = None
 
 class VoiceManager:
     def __init__(self):
@@ -494,6 +675,11 @@ class VoiceManager:
         value = parts[-1]
         param = parts[-2]
         identifier = None
+        is_ring = False
+        
+        # Check if this is a ring modulation route
+        if 'ring' in parts:
+            is_ring = True
         
         for part in parts:
             if '.' in part:
@@ -509,7 +695,10 @@ class VoiceManager:
                 if signal_chain == 'filter':
                     processor.process_global(param, value, parts)
                 else:
-                    processor.process_global(param, value)
+                    if signal_chain == 'oscillator' and is_ring:
+                        processor.process_global(param, value, is_ring=True)
+                    else:
+                        processor.process_global(param, value)
                     
                 # Update all active voices with the new global value
                 for voice in self.voices.values():
