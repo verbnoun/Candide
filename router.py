@@ -135,6 +135,9 @@ class PathProcessor:
                     self.route_info['cc'][cc_num] = {'routes': []}
                 _log(f"Appending route info for CC {cc_num}")
                 self.route_info['cc'][cc_num]['routes'].append(route_info)
+                # Add both specific CC type and generic 'cc' type to accepted_midi
+                self.accepted_midi.add(midi_type)  # e.g. 'cc70'
+                self.accepted_midi.add('cc')       # generic 'cc' type
             else:
                 _log(f"Processing non-CC MIDI type: {midi_type}")
                 msg_type = None
@@ -155,9 +158,8 @@ class PathProcessor:
                 if msg_type:
                     _log(f"Appending route info for {msg_type}")
                     self.route_info[msg_type]['routes'].append(route_info)
+                    self.accepted_midi.add(msg_type)
 
-            _log(f"Adding {midi_type} to accepted_midi set")
-            self.accepted_midi.add(midi_type)
             _log(f"Successfully added route info for {midi_type}")
             
         except Exception as e:
@@ -437,8 +439,19 @@ class Router:
 
     def _should_process_message(self, message):
         """Determine if message should be processed"""
-        if message['type'] not in self.path_processor.accepted_midi:
-            _log(f"[REJECTED] Message type not in config: {message['type']}")
+        msg_type = message['type']
+        
+        # For CC messages, check if we have routes for this CC number
+        if msg_type == 'cc':
+            cc_num = message['data']['number']
+            if cc_num not in self.path_processor.route_info['cc']:
+                _log(f"[REJECTED] No routes configured for CC number: {cc_num}")
+                return False
+            return self.value_processor.should_process_message(message)
+            
+        # For other message types, check if they're in accepted_midi
+        if msg_type not in self.path_processor.accepted_midi:
+            _log(f"[REJECTED] Message type not in config: {msg_type}")
             return False
 
         return self.value_processor.should_process_message(message)

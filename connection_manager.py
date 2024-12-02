@@ -77,22 +77,28 @@ class CandideConnectionManager:
                     continue
                     
                 parts = line.split('/')
-                # Find the CC number and corresponding parameter name
+                # Find scope index
+                scope_idx = -1
                 for i, part in enumerate(parts):
-                    if part.startswith('cc') and len(part) > 2:
-                        try:
-                            cc_num = int(part[2:])
-                            if cc_num not in seen_ccs:
-                                # Get parameter name from previous part in path
-                                param_name = parts[i-2]  
-                                cc_configs.append((cc_num, param_name))
-                                seen_ccs.add(cc_num)
-                                if len(cc_configs) >= 14:  # Limit to 14 pots
-                                    break
-                        except ValueError:
-                            continue
-                if len(cc_configs) >= 14:
-                    break
+                    if part in ('global', 'per_key'):
+                        scope_idx = i
+                        break
+                        
+                if scope_idx == -1:
+                    continue
+
+                # Find CC number and corresponding parameter name
+                midi_type = parts[-1]
+                if midi_type.startswith('cc'):
+                    try:
+                        cc_num = int(midi_type[2:])
+                        if cc_num not in seen_ccs:
+                            # Get parameter name from parts before scope
+                            param_name = parts[scope_idx - 1]  # Last part before scope
+                            cc_configs.append((cc_num, param_name))
+                            seen_ccs.add(cc_num)
+                    except ValueError:
+                        continue
 
             # Generate config string
             if cc_configs:
