@@ -9,14 +9,6 @@ Builds efficient lookup tables at init for fast message processing.
 import sys
 from constants import ROUTER_DEBUG
 
-# Ring buffer size - adjust based on expected message rate and processing time
-BUFFER_SIZE = 64  # Conservative size for Pico
-
-# Filtering thresholds for continuous signals
-PITCH_BEND_THRESHOLD = 64    # For 14-bit values (0-16383)
-PRESSURE_THRESHOLD = 2       # For 7-bit values (0-127)
-TIMBRE_THRESHOLD = 2        # For 7-bit values (0-127)
-
 def _log(message, module="ROUTER"):
     """Conditional logging function that respects ROUTER_DEBUG flag."""
     if not ROUTER_DEBUG:
@@ -44,6 +36,7 @@ def _log(message, module="ROUTER"):
 class RingBuffer:
     """Simple ring buffer implementation for CircuitPython"""
     def __init__(self, size):
+        _log("Initializing RingBuffer with size: " + str(size))
         self.data = []  # Use a regular list instead of deque
         self.size = size
         
@@ -60,449 +53,387 @@ class RingBuffer:
     def __len__(self):
         return len(self.data)
 
-class Router:
-    def __init__(self, paths):
-        """Initialize router with a set of paths from config"""
-        _log("Building routing tables...")
-        
-        # Accepted MIDI types set
-        self.accepted_midi = set()
-        
-        # Main routing lookup tables
+class PathProcessor:
+    """Handles path parsing and routing table construction"""
+    def __init__(self):
+        _log("Initializing PathProcessor")
         self.route_info = {
-            'note_on': {
-                'note_number_routes': [],
-                'velocity_routes': [],
-                'trigger_routes': [],
-                'waveform_routes': []
-            },
-            'note_off': {
-                'trigger_routes': []
-            },
-            'cc': {},
+            'note_on': {'routes': []},
+            'note_off': {'routes': []},
             'pitch_bend': {'routes': []},
+            'cc': {},
             'pressure': {'routes': []}
         }
-        
-        # Initialize ring buffer
-        self.message_buffer = RingBuffer(BUFFER_SIZE)
-        
-        # Minimal state for continuous signal filtering
-        self.last_value = {}  # channel -> {pitch_bend, pressure, timbre}
-        
-        # Build routing tables
-        self._build_routing_tables(paths)
-        
-        # Log created tables
-        self._log_routing_tables()
-        
-        _log("Router initialized")
+        self.accepted_midi = set()
 
-    def _store_route_info(self, msg_type, route_type, template, **kwargs):
-        """Helper to store route info with consistent structure"""
-        route_info = {
-            'template': template,
-            'range': kwargs.get('range', 'na')
-        }
-        
-        # Add any additional parameters
-        for key, value in kwargs.items():
-            if key != 'range':
-                route_info[key] = value
-                
-        # Initialize container if needed
-        if msg_type == 'cc':
-            cc_num = kwargs.get('cc_num')
-            if cc_num not in self.route_info['cc']:
-                self.route_info['cc'][cc_num] = {'routes': []}
-            self.route_info['cc'][cc_num]['routes'].append(route_info)
-        else:
-            if route_type not in self.route_info[msg_type]:
-                self.route_info[msg_type][route_type] = []
-            self.route_info[msg_type][route_type].append(route_info)
+    def process_paths(self, paths):
+        """Process path strings into routing tables"""
+        _log("Processing paths...")
+        if not isinstance(paths, str):
+            _log(f"[ERROR] Expected string for paths, got: {type(paths)}")
+            return
             
-        self.accepted_midi.add(msg_type)
-        
-    def _build_routing_tables(self, paths):
-        """Build lookup tables from config paths"""
-        # Initialize routing tables
-        self.accepted_midi = set()
-        self.route_info = {
-            'note_on': {
-                'note_number_routes': [],
-                'velocity_routes': [],
-                'trigger_routes': [],
-                'waveform_routes': []
-            },
-            'note_off': {
-                'trigger_routes': []
-            },
-            'cc': {},
-            'pitch_bend': {'routes': []},
-            'pressure': {'routes': []}
-        }
-        
-        # Process each path
         for path in paths.strip().split('\n'):
             if not path.strip():
                 continue
-                
+            
+            _log(f"Processing path: {path}")
             parts = path.split('/')
             if len(parts) < 4:
-                _log("[ERROR] Path too short (min 4 segments): {}".format(path))
+                _log(f"[ERROR] Path too short: {path}")
                 continue
-                
-            category = parts[0]
-            if category == 'oscillator':
-                _log("Processing oscillator path: {}".format(path))
-                self._process_oscillator_path(path, parts)
-            elif category == 'filter':
-                _log("Processing filter path: {}".format(path))
-                self._process_filter_path(path, parts)
-            elif category == 'amplifier':
-                _log("Processing amplifier path: {}".format(path))
-                self._process_amplifier_path(path, parts)
 
-    def _process_oscillator_path(self, path, parts):
-        """Process oscillator category paths"""
-        try:
-            if 'frequency' in parts:
-                freq_idx = parts.index('frequency')
-                if freq_idx + 1 < len(parts):
-                    # Handle CC frequency control
-                    if any(p.startswith('cc') for p in parts):
-                        range_str = parts[freq_idx + 1]
-                        cc_part = next(p for p in parts if p.startswith('cc'))
-                        cc_num = int(cc_part[2:])  # Extract number from ccXX
-                        _log("Adding oscillator frequency CC route")
-                        
-                        # Build path preserving oscillator type and scope
-                        osc_type = parts[1]  # e.g. 'ring'
-                        scope = parts[2]  # e.g. 'global' or 'per_key'
-                        base_path = f"{parts[0]}/{osc_type}/{scope}/frequency"
-                        
-                        self._store_route_info(
-                            'cc',
-                            'routes',
-                            base_path,
-                            range=range_str,
-                            cc_num=cc_num
-                        )
-                    # Handle note number frequency control
-                    elif 'note_number' in parts:
-                        _log("Adding note number frequency route")
-                        self._store_route_info(
-                            'note_on',
-                            'note_number_routes',
-                            path
-                        )
-            
-            if 'waveform' in parts:
-                wave_idx = parts.index('waveform')
-                if wave_idx + 1 < len(parts):
-                    wave_type = parts[wave_idx + 1]
-                    _log("Adding waveform route")
-                    self._store_route_info(
-                        'note_on',
-                        'waveform_routes',
-                        path,
-                        wave_type=wave_type
-                    )
-
-            # Handle press_note/release_note trigger paths
-            if 'trigger' in parts:
-                if 'press_note' in parts:
-                    _log("Adding note_on trigger route")
-                    self._store_route_info(
-                        'note_on',
-                        'trigger_routes',
-                        path
-                    )
-                elif 'release_note' in parts:
-                    _log("Adding note_off trigger route")
-                    self._store_route_info(
-                        'note_off',
-                        'trigger_routes',
-                        path
-                    )
+            # Find scope index
+            scope_idx = -1
+            for i, part in enumerate(parts):
+                if part in ('global', 'per_key'):
+                    scope_idx = i
+                    break
                     
-        except (ValueError, IndexError) as e:
-            _log("[ERROR] Invalid oscillator path: {}".format(path))
+            if scope_idx == -1:
+                _log(f"[ERROR] No scope found in path: {path}")
+                continue
 
-    def _process_filter_path(self, path, parts):
-        """Process filter category paths"""
+            # Split path into sections
+            route_parts = parts[:scope_idx]    # Everything before scope
+            scope = parts[scope_idx]           # The scope itself
+            value_parts = parts[scope_idx+1:-1]  # Everything after scope except MIDI type
+            midi_type = parts[-1]              # MIDI type is always last
+
+            # Build template
+            template = '/'.join(route_parts) + '/{}'
+            if value_parts:
+                template += '/' + '/'.join(value_parts)
+            _log(f"Built template: {template}")
+
+            try:
+                # Store route info
+                _log(f"Adding route info - MIDI type: {midi_type}, Template: {template}, Scope: {scope}")
+                self._add_route_info(midi_type, template, scope)
+            except Exception as e:
+                _log(f"[ERROR] Failed to add route info: {str(e)}")
+                raise
+
+    def _add_route_info(self, midi_type, template, scope):
+        """Store route info with consistent structure"""
+        _log(f"Adding route info for MIDI type: {midi_type}")
+        _log(f"Creating route_info dict...")
+        route_info = {
+            'template': template,
+            'scope': scope
+        }
+        _log(f"Created route_info: {route_info}")
+
         try:
-            if 'frequency' in parts:
-                range_str = parts[parts.index('frequency') + 1]
-                cc_num = int(parts[-2][2:])
-                _log("Adding filter frequency CC route")
-                # Build path preserving filter type and scope (global/per_key)
-                filter_type = parts[1]  # e.g. 'band_pass'
-                scope = parts[2] if len(parts) > 2 else 'global'  # e.g. 'global' or 'per_key'
-                base_path = f"{parts[0]}/{filter_type}/{scope}/frequency"
-                self._store_route_info(
-                    'cc',
-                    'routes',
-                    base_path,
-                    range=range_str,
-                    cc_num=cc_num
-                )
+            # Store based on MIDI type
+            if midi_type.startswith('cc'):
+                _log(f"Processing CC MIDI type: {midi_type}")
+                cc_num = int(midi_type[2:])
+                _log(f"Extracted CC number: {cc_num}")
+                if cc_num not in self.route_info['cc']:
+                    _log(f"Creating new CC entry for number {cc_num}")
+                    self.route_info['cc'][cc_num] = {'routes': []}
+                _log(f"Appending route info for CC {cc_num}")
+                self.route_info['cc'][cc_num]['routes'].append(route_info)
+            else:
+                _log(f"Processing non-CC MIDI type: {midi_type}")
+                msg_type = None
+                if midi_type == 'note_on':
+                    msg_type = 'note_on'
+                elif midi_type == 'note_off':
+                    msg_type = 'note_off'
+                elif midi_type == 'pitch_bend':
+                    msg_type = 'pitch_bend'
+                elif midi_type == 'pressure':
+                    msg_type = 'pressure'
                 
-            if 'resonance' in parts:
-                range_str = parts[parts.index('resonance') + 1]
-                cc_num = int(parts[-2][2:])
-                _log("Adding filter resonance CC route")
-                # Build path preserving filter type and scope (global/per_key)
-                filter_type = parts[1]  # e.g. 'band_pass'
-                scope = parts[2] if len(parts) > 2 else 'global'  # e.g. 'global' or 'per_key'
-                base_path = f"{parts[0]}/{filter_type}/{scope}/resonance"
-                self._store_route_info(
-                    'cc',
-                    'routes',
-                    base_path,
-                    range=range_str,
-                    cc_num=cc_num
-                )
-        except (ValueError, IndexError) as e:
-            _log("[ERROR] Invalid filter path: {}".format(path))
+                _log(f"Determined message type: {msg_type}")
+                if msg_type:
+                    _log(f"Appending route info for {msg_type}")
+                    self.route_info[msg_type]['routes'].append(route_info)
 
-    def _process_amplifier_path(self, path, parts):
-        """Process amplifier category paths"""
-        if 'envelope' not in parts:
-            return
+            _log(f"Adding {midi_type} to accepted_midi set")
+            self.accepted_midi.add(midi_type)
+            _log(f"Successfully added route info for {midi_type}")
             
-        env_idx = parts.index('envelope')
-        if env_idx + 1 >= len(parts):
-            return
+        except Exception as e:
+            _log(f"[ERROR] Exception in _add_route_info: {str(e)}")
+            raise
+
+class ValueProcessor:
+    """Handles MIDI value processing and normalization"""
+    
+    # Filtering thresholds for continuous signals
+    PITCH_BEND_THRESHOLD = 64    # For 14-bit values (0-16383)
+    PRESSURE_THRESHOLD = 2       # For 7-bit values (0-127)
+    TIMBRE_THRESHOLD = 2        # For 7-bit values (0-127)
+    
+    def __init__(self):
+        _log("Initializing ValueProcessor")
+        # State tracking for continuous controls
+        self.last_value = {}  # channel -> {pitch_bend, pressure, timbre}
+
+    def get_route_value(self, message, range_str=None):
+        """Process MIDI message into appropriate route value"""
+        msg_type = message['type']
+        
+        # Get raw value based on message type
+        if msg_type == 'note_on':
+            raw_value = message['data'].get('velocity', 127)
+        elif msg_type == 'note_off':
+            raw_value = 0  # Note offs always generate 0 value
+        elif msg_type == 'pitch_bend':
+            raw_value = message['data'].get('value', 8192)
+        elif msg_type == 'pressure':
+            raw_value = message['data'].get('value', 0)
+        elif msg_type == 'cc':
+            raw_value = message['data'].get('value', 0)
+        else:
+            return None
+
+        # Return raw value if no range specified
+        if not range_str or range_str == 'na':
+            return raw_value
+
+        return self.normalize_value(raw_value, range_str)
+
+    def get_route_scope(self, message, scope):
+        """Generate scope value from message using template"""
+        if scope == 'global':
+            return 'global'
             
-        # Process CC paths
-        if len(parts) >= 6 and parts[-2].startswith('cc'):
-            try:
-                cc_num = int(parts[-2][2:])
-                param_idx = env_idx + 1
-                range_idx = param_idx + 1
-                
-                # Get range from path
-                range_str = parts[range_idx] if range_idx < len(parts) else 'na'
-                
-                _log("Adding envelope CC route")
-                # Create base path without range and default value
-                base_path = f"{parts[0]}/{parts[1]}/envelope/{parts[param_idx]}"
-                self._store_route_info(
-                    'cc',
-                    'routes',
-                    base_path,
-                    range=range_str,
-                    cc_num=cc_num
-                )
-            except (ValueError, IndexError) as e:
-                _log("[ERROR] Invalid CC format: {}".format(path))
-                
-        # Process trigger paths
-        elif 'trigger' in parts:
-            if parts[-1] == 'note_on':
-                _log("Adding note_on trigger route")
-                self._store_route_info(
-                    'note_on',
-                    'trigger_routes',
-                    path
-                )
-            elif parts[-1] == 'note_off':
-                _log("Adding note_off trigger route")
-                self._store_route_info(
-                    'note_off',
-                    'trigger_routes',
-                    path
-                )
-                
-        # Process level paths
-        elif 'level' in parts[-3]:
-            try:
-                range_str = parts[-2]
-                if parts[-1] == 'velocity':
-                    _log("Adding velocity level route")
-                    self._store_route_info(
-                        'note_on',
-                        'velocity_routes',
-                        path,
-                        range=range_str,
-                        parameter=parts[env_idx + 1]
-                    )
-            except (ValueError, IndexError) as e:
-                _log("[ERROR] Invalid level format: {}".format(path))
+        # For per_key scope, try to build V{note}.{channel}
+        try:
+            note = message['data']['note']
+            channel = message['channel']
+            return f"V{note}.{channel}"
+        except (KeyError, TypeError):
+            # If we can't build the scope, let it fail
+            raise ValueError("Cannot create per_key scope without note data")
 
-    def _log_routing_tables(self):
-        """Log the created routing tables"""
-        _log("\nRouting Tables Created:")
-        for msg_type, routes in self.route_info.items():
-            _log(f"  {msg_type}:")
-            if isinstance(routes, dict):
-                for key, info in routes.items():
-                    _log(f"    {key}: {info}")
-
-    def _should_process(self, message):
-        """Quick check if message should be processed based on whitelist"""
-        return message['type'] in self.accepted_midi
-
-    def _check_continuous(self, message):
-        """Check if continuous controller change exceeds threshold"""
+    def should_process_message(self, message):
+        """Check if a continuous controller message exceeds threshold"""
         msg_type = message['type']
         channel = message['channel']
         
+        # Initialize channel state if needed
         if channel not in self.last_value:
             self.last_value[channel] = {
-                'pitch_bend': 8192,
+                'pitch_bend': 8192,  # Center position
                 'pressure': 0,
-                'timbre': 64
+                'timbre': 64        # Center position
             }
         
-        current = None
-        threshold = None
-        state_key = None
-        
+        # Get threshold and value based on message type
         if msg_type == 'pitch_bend':
             current = message['data']['value']
-            threshold = PITCH_BEND_THRESHOLD
+            threshold = self.PITCH_BEND_THRESHOLD
             state_key = 'pitch_bend'
         elif msg_type == 'pressure':
             current = message['data']['value']
-            threshold = PRESSURE_THRESHOLD
+            threshold = self.PRESSURE_THRESHOLD
             state_key = 'pressure'
-        elif msg_type == 'cc' and message['data']['number'] == 74:
+        elif msg_type == 'cc' and message['data']['number'] == 74:  # Timbre
             current = message['data']['value']
-            threshold = TIMBRE_THRESHOLD
+            threshold = self.TIMBRE_THRESHOLD
             state_key = 'timbre'
+        else:
+            # Non-continuous messages always process
+            return True
             
-        if current is not None:
-            last = self.last_value[channel][state_key]
-            if abs(current - last) < threshold:
-                return False
-            self.last_value[channel][state_key] = current
+        # Check if change exceeds threshold
+        last = self.last_value[channel][state_key]
+        if abs(current - last) < threshold:
+            return False
             
+        # Update state and process message
+        self.last_value[channel][state_key] = current
         return True
 
-    def _normalize(self, value, range_str):
-        """Normalize value based on range"""
-        if range_str == 'na' or '-' not in range_str:
-            return value
-            
+    def normalize_value(self, value, range_str):
+        """Normalize value to specified range"""
         try:
             low, high = map(float, range_str.split('-'))
             
+            # Handle different value ranges
             if 0 <= value <= 127:  # Standard MIDI
                 return low + (value/127.0) * (high - low)
             elif 0 <= value <= 16383:  # Pitch bend
                 return low + ((value-8192)/8192.0) * (high - low)
             
             return value
-        except ValueError:
+            
+        except (ValueError, TypeError):
             return value
 
-    def _create_route(self, template, channel, value, note=None):
-        """Create route from template and value"""
-        parts = template.split('/')
-        
-        if 'per_key' in parts:
-            identifier = f"{channel}.{note}" if note is not None else str(channel)
-            new_parts = []
-            for part in parts:
-                new_parts.append(part)
-                if part == 'per_key':
-                    new_parts.append(identifier)
-            parts = new_parts
-        
-        if value or str(value).replace('.', '').replace('-', '').isdigit():
-            parts.append(str(value))
-        
-        return '/'.join(parts)
+class RouteBuilder:
+    """Builds routes from processed paths and MIDI values"""
+    
+    def __init__(self):
+        _log("Initializing RouteBuilder")
+    
+    def create_route(self, template, scope_value, value=None):
+        """
+        Create route string from template and values
+        template: module/interface parts from path
+        scope_value: 'global' or 'V{note}.{channel}'
+        value: final value or LFO name to be applied
+        """
+        try:
+            _log(f"Creating route with template: {template}, scope_value: {scope_value}, value: {value}")
+            
+            # Format the template with the scope value
+            formatted_path = template.format(scope_value)
+            _log(f"Formatted path: {formatted_path}")
+            
+            # Split into parts
+            parts = formatted_path.split('/')
+            
+            # Add value if provided
+            if value is not None:
+                if isinstance(value, float):
+                    # Format floats to reasonable precision
+                    parts.append(f"{value:.3f}")
+                else:
+                    parts.append(str(value))
+            
+            # Join all parts with forward slashes
+            result = '/'.join(parts)
+            _log(f"Created route: {result}")
+            return result
+            
+        except Exception as e:
+            _log(f"[ERROR] Failed to create route: {str(e)}")
+            raise
 
-    def process_message(self, message, voice_manager):
-        """Transform MIDI message to route"""
-        if not self._should_process(message):
-            _log("[REJECTED] Message type not in config: {}".format(message['type']))
+    def create_routes_for_message(self, message, path_info, value_processor):
+        """
+        Generate all routes for a given MIDI message using processed path info
+        Returns list of route strings
+        """
+        routes = []
+        msg_type = message['type']
+        
+        # Get relevant route information based on message type
+        if msg_type.startswith('cc'):
+            cc_num = message['data']['number']
+            route_infos = path_info['cc'].get(cc_num, {}).get('routes', [])
+        else:
+            route_infos = path_info[msg_type].get('routes', [])
+            
+        # Process each matching route
+        for route_info in route_infos:
+            try:
+                # Get scope value (global or voice-specific)
+                scope_value = value_processor.get_route_scope(message, route_info['scope'])
+                
+                # Get normalized value based on route range
+                value = value_processor.get_route_value(message, route_info.get('range'))
+                    
+                # Create and add route
+                route = self.create_route(route_info['template'], scope_value, value)
+                routes.append(route)
+            except Exception as e:
+                _log(f"[ERROR] Failed to create route: {str(e)}")
+                continue
+            
+        return routes
+
+class Router:
+    """MIDI to Route Transformation System"""
+    BUFFER_SIZE = 64  # Ring buffer size - adjust based on expected message rate and processing time
+
+    def __init__(self, paths):
+        """Initialize router with paths configuration"""
+        _log("Initializing Router...")
+        _log(f"Received paths type: {type(paths)}")
+        
+        try:
+            # Initialize components
+            _log("Creating PathProcessor...")
+            self.path_processor = PathProcessor()
+            
+            _log("Creating ValueProcessor...")
+            self.value_processor = ValueProcessor()
+            
+            _log("Creating RouteBuilder...")
+            self.route_builder = RouteBuilder()
+            
+            _log("Creating RingBuffer...")
+            self.message_buffer = RingBuffer(self.BUFFER_SIZE)
+            
+            # Process paths
+            _log("Processing paths...")
+            self.path_processor.process_paths(paths)
+            
+            _log("Router initialization complete")
+            self._log_routing_tables()
+            
+        except Exception as e:
+            _log(f"[ERROR] Router initialization failed: {str(e)}")
+            raise
+
+    def _log_routing_tables(self):
+        """Log the created routing tables"""
+        _log("\nRouting Tables Created:")
+        
+        # Helper function to format routes
+        def format_routes(routes):
+            return '\n'.join([f"          {route}" for route in routes])
+            
+        # Helper function to format CC routes
+        def format_cc_routes(cc_info):
+            formatted = []
+            for cc_num, info in sorted(cc_info.items()):
+                routes_str = format_routes(route['template'] + ' (' + route['scope'] + ')' 
+                                        for route in info['routes'])
+                formatted.append(f"      CC {cc_num}:\n{routes_str}")
+            return '\n'.join(formatted)
+        
+        # Format and log each message type
+        for msg_type, info in self.path_processor.route_info.items():
+            _log(f"    {msg_type.upper()}:")
+            
+            if msg_type == 'cc':
+                _log(format_cc_routes(info))
+            else:
+                routes = [route['template'] + ' (' + route['scope'] + ')' 
+                         for route in info['routes']]
+                if routes:
+                    _log(format_routes(routes))
+                else:
+                    _log("          No routes configured")
+
+    def _should_process_message(self, message):
+        """Determine if message should be processed"""
+        if message['type'] not in self.path_processor.accepted_midi:
+            _log(f"[REJECTED] Message type not in config: {message['type']}")
+            return False
+
+        return self.value_processor.should_process_message(message)
+
+    def process_message(self, message, voice_manager=None):
+        """Transform MIDI message to routes"""
+        if not self._should_process_message(message):
             return
 
-        if message['type'] in ('pitch_bend', 'pressure') or \
-        (message['type'] == 'cc' and message['data']['number'] == 74):
-            if not self._check_continuous(message):
-                _log("[REJECTED] Change below threshold: {}".format(message['type']))
-                return
-
+        # Queue message
         self.message_buffer.append((message, voice_manager))
-        _log("Message queued. Buffer size: {}/{}".format(len(self.message_buffer), BUFFER_SIZE))
+        _log(f"Message queued. Buffer size: {len(self.message_buffer)}/{self.BUFFER_SIZE}")
         
+        # Process all buffered messages
         while len(self.message_buffer):
             msg, vm = self.message_buffer.popleft()
-            routes = []
             
-            note = msg['data'].get('note', None)
+            # Generate routes from message
+            routes = self.route_builder.create_routes_for_message(
+                msg,
+                self.path_processor.route_info,
+                self.value_processor
+            )
             
-            if msg['type'] == 'note_on':
-                # Handle note number routes
-                for info in self.route_info['note_on']['note_number_routes']:
-                    routes.append(self._create_route(
-                        info['template'],
-                        msg['channel'],
-                        note,
-                        note
-                    ))
-                
-                # Handle velocity routes
-                for info in self.route_info['note_on']['velocity_routes']:
-                    value = self._normalize(msg['data']['velocity'], info['range'])
-                    routes.append(self._create_route(
-                        info['template'],
-                        msg['channel'],
-                        value,
-                        note
-                    ))
-                
-                # Handle waveform routes
-                for info in self.route_info['note_on']['waveform_routes']:
-                    routes.append(self._create_route(
-                        info['template'],
-                        msg['channel'],
-                        info['wave_type'],
-                        note
-                    ))
-                    
-                # Handle trigger routes
-                for info in self.route_info['note_on']['trigger_routes']:
-                    routes.append(self._create_route(
-                        info['template'],
-                        msg['channel'],
-                        '',
-                        note
-                    ))
-                    
-            elif msg['type'] == 'note_off':
-                # Handle trigger routes
-                for info in self.route_info['note_off']['trigger_routes']:
-                    routes.append(self._create_route(
-                        info['template'],
-                        msg['channel'],
-                        '',
-                        note
-                    ))
-                    
-            elif msg['type'] == 'pitch_bend':
-                for info in self.route_info['pitch_bend']['routes']:
-                    value = self._normalize(msg['data']['value'], info['range'])
-                    routes.append(self._create_route(info['template'], msg['channel'], value))
-                    
-            elif msg['type'] == 'pressure':
-                for info in self.route_info['pressure']['routes']:
-                    value = self._normalize(msg['data']['value'], info['range'])
-                    routes.append(self._create_route(info['template'], msg['channel'], value))
-                    
-            elif msg['type'] == 'cc':
-                cc_num = msg['data']['number']
-                if cc_num in self.route_info['cc']:
-                    for info in self.route_info['cc'][cc_num]['routes']:
-                        value = self._normalize(msg['data']['value'], info['range'])
-                        routes.append(self._create_route(info['template'], msg['channel'], value))
-
             # Send routes to voice manager
-            for route in routes:
-                _log("Sending route: {}".format(route))
-                vm.handle_route(route)
+            if vm is not None:
+                for route in routes:
+                    _log(f"Sending route: {route}")
+                    vm.handle_route(route)

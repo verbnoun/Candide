@@ -10,51 +10,31 @@ where:
 - MidiType: MIDI message type that provides the value
 """
 
-NOTE_PATHS = '''
+ALL_SYNTHIO_PATHS = '''
 note/press/per_key/note_on
 note/release/per_key/note_off
 note/bend/per_key/-12-12/pitch_bend
 note/frequency/per_key/note_number/note_on
 note/panning/per_key/-1-1/pitch_bend
-'''
 
-OSCILLATOR_PATHS = '''
 oscillator/waveform/global/saw/note_on
 oscillator/ring/frequency/global/20-2000/cc74
 oscillator/ring/waveform/global/triangle/note_on
 oscillator/ring/bend/global/-12-12/cc75
-'''
 
-# Filter
-FILTER_PATHS = '''
 filter/band_pass/resonance/global/0.1-2.0/cc71
 filter/band_pass/frequency/global/20-20000/cc70
-'''
 
-# Amplifier
-AMP_PATHS = '''
 amplifier/envelope/attack_level/global/0-1/cc74
 amplifier/envelope/attack_time/global/0.001-0.5/cc73
 amplifier/envelope/decay_time/global/0.001-0.25/cc75
 amplifier/envelope/sustain_level/global/0-1/cc85
 amplifier/envelope/release_time/global/0.001-3/cc72
-'''
 
-#LFO
-LFO_PATHS = '''
 lfo/rate/tremolo_lfo/global/0.1-10/cc71
 lfo/scale/tremolo_lfo/global/0-1/cc72
 lfo/offset/tremolo_lfo/global/-1-1/cc73
 lfo/phase_offset/tremolo_lfo/global/0-1/cc74
 lfo/once/tremolo_lfo/global/0-1/cc75
 lfo/interpolate/tremolo_lfo/global/0-1/cc76
-'''
-
-#1 second LFO timer that starts on note_on
-TIMER_LFO_PATHS = '''
-lfo/rate/timer_lfo/global/0.1-10/cc71
-lfo/once/timer_lfo/global/1/note_on
-lfo/interpolate/timer_lfo/global/1/note_on
-lfo/scale/timer_lfo/global/0.5/note_on
-lfo/offset/timer_lfo/global/0.5/note_on
 '''
