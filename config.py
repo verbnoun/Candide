@@ -13,12 +13,12 @@ where:
 ALL_SYNTHIO_PATHS = '''
 note/press/per_key/note_on
 note/release/per_key/note_off
-note/amplitude/per_key/0.001-1/velocity/note_on
-note/bend/per_key/-12-12/pitch_bend
-note/frequency/per_key/note_number/note_on
 note/panning/per_key/-1-1/pitch_bend
 
+oscilator/amplitude/per_key/0.001-1/velocity/note_on
+oscillator/frequency/per_key/note_number/note_on
 oscillator/waveform/global/saw/note_on
+oscillator/bend/per_key/-12-12/pitch_bend
 oscillator/ring/frequency/global/20-2000/cc74
 oscillator/ring/waveform/global/triangle/note_on
 oscillator/ring/bend/per_key/-12-12/pitch_bend

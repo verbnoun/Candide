@@ -9,7 +9,7 @@ import board
 
 # Debug Flags
 DEBUG = True
-HARDWARE_DEBUG = True
+HARDWARE_DEBUG = False
 MIDI_DEBUG = False
 ROUTER_DEBUG = True
 SYNTH_DEBUG = True
