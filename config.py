@@ -13,6 +13,7 @@ where:
 ALL_SYNTHIO_PATHS = '''
 note/press/per_key/note_on
 note/release/per_key/note_off
+note/amplitude/per_key/0.001-1/velocity/note_on
 note/bend/per_key/-12-12/pitch_bend
 note/frequency/per_key/note_number/note_on
 note/panning/per_key/-1-1/pitch_bend

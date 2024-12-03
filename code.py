@@ -19,12 +19,12 @@ import sys
 import audiobusio
 import audiomixer
 import busio
+import config
 from hardware import HardwareManager
-import config  # Import config module directly to inspect it
 from midi import MidiLogic
-from voices import VoiceManager
+from synthesizer import SynthEngine
 from router import Router
-from connection_manager import CandideConnectionManager
+from connection import CandideConnectionManager
 from constants import *
 
 import random
@@ -382,7 +382,7 @@ class Candide:
 
         # Initialize voice manager first since it owns synthio
         _log("Initializing voice manager...")
-        self.voice_manager = VoiceManager()
+        self.voice_manager = SynthEngine()
 
         # Initialize audio system with voice manager
         _log("Initializing audio system...")
