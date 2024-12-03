@@ -123,19 +123,9 @@ class NoteProcessor:
                 note_num = int(value[1:].split('.')[0])
                 freq = synthio.midi_to_hz(note_num)
                 
-                # Get current settings from other processors via engine
-                # (These methods don't exist yet but show the pattern)
-                current_envelope = self.engine.route_manager.amplifier.get_current_envelope()
-                current_filter = self.engine.route_manager.filter.get_current_filter() 
-                current_waveform = self.engine.route_manager.oscillator.get_current_waveform()
-                
-                # Create note with engine's synth and settings
-                note = synthio.Note(
-                    frequency=freq,
-                    envelope=current_envelope
-                )
+                # Create basic note with just frequency
+                note = synthio.Note(frequency=freq)
                 self.engine.synth.press(note)
-                # Store note in engine's active voices
                 self.engine.active_voices[value] = note
                 _log(f"Note press: MIDI {note_num} -> {freq:.2f} Hz")
                 
