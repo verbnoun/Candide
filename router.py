@@ -35,6 +35,9 @@ def _log(message, module="ROUTER"):
 
 class RingBuffer:
     """Simple ring buffer implementation for CircuitPython"""
+    
+    # note_off needs to skip the buffer 
+
     def __init__(self, size):
         _log("Initializing RingBuffer with size: " + str(size))
         self.data = []  # Use a regular list instead of deque

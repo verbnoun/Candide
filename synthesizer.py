@@ -29,14 +29,29 @@ class Voice:
         self.creation_time = time.monotonic()
         self.last_update = self.creation_time
         
+        # Parse note number from address (format: Vnote.channel)
+        try:
+            self.note_number = int(address.split('.')[0][1:])  # Extract number after 'V'
+            if not 0 <= self.note_number <= 127:
+                self.state = "error"
+                _log(f"[ERROR] Invalid MIDI note number {self.note_number} for {address}")
+                return
+        except (ValueError, IndexError):
+            self.state = "error"
+            _log(f"[ERROR] Could not parse note number from address: {address}")
+            return
+        
         # Initialize with any existing global values
         for route_path, value in engine.global_values.items():
             self.stored_values[route_path] = value
         
-        _log(f"Created voice container for {address}")
+        _log(f"Created voice container for {address} with note {self.note_number}")
 
     def receive_value(self, route_path, value):
         """Store value and check if we have minimum set for any action"""
+        if self.state in ["error", "released"]:
+            return
+            
         self.stored_values[route_path] = value
         self.last_update = time.monotonic()
         
@@ -61,7 +76,17 @@ class Voice:
             if self.state != "initializing":
                 return
 
-            freq = synthio.midi_to_hz(int(self.stored_values["oscillator/frequency"]))
+            # Validate frequency value
+            freq_value = self.stored_values["oscillator/frequency"]
+            try:
+                freq = synthio.midi_to_hz(int(freq_value))
+                if not 20 <= freq <= 20000:  # Basic frequency range check
+                    raise ValueError(f"Frequency {freq} Hz out of range")
+            except (ValueError, TypeError) as e:
+                self.state = "error"
+                _log(f"[ERROR] Invalid frequency value {freq_value}: {str(e)}")
+                return
+
             waveform = self.stored_values["oscillator/waveform"]
             
             # Get filter if available
@@ -89,11 +114,16 @@ class Voice:
                 envelope=envelope_obj
             )
             
-            # Press the note and update state
-            self.engine.synth.press(self.note)
-            self.state = "active"
-            self.last_update = time.monotonic()
-            _log(f"Pressed note for {self.address} with freq: {freq}")
+            # Press the note and update state atomically
+            try:
+                self.engine.synth.press(self.note)
+                self.state = "active"
+                self.last_update = time.monotonic()
+                _log(f"Pressed note for {self.address} with freq: {freq}")
+            except Exception as e:
+                self.note = None
+                self.state = "error"
+                _log(f"[ERROR] Failed to press note: {str(e)}")
             
         except Exception as e:
             self.note = None
@@ -102,19 +132,30 @@ class Voice:
 
     def release(self):
         """Release note if it exists"""
+        if self.state == "released":
+            return False
+            
+        success = False
         if self.note and self.state == "active":
             try:
                 self.engine.synth.release(self.note)
-                self.state = "released"
-                self.last_update = time.monotonic()
+                success = True
                 _log(f"Released note for {self.address}")
             except Exception as e:
                 _log(f"[ERROR] Failed to release note for {self.address}: {str(e)}")
             finally:
                 self.note = None
+                
+        # Always update state even if release failed
+        self.state = "released"
+        self.last_update = time.monotonic()
+        return success
 
     def get_active_filter(self):
         """Check if we have a complete filter set and return it"""
+        if self.state in ["error", "released"]:
+            return None
+            
         filter_types = ['low_pass', 'high_pass', 'band_pass', 'notch']
         
         for filter_type in filter_types:
@@ -130,6 +171,9 @@ class Voice:
 
     def get_envelope_params(self):
         """Collect all available envelope parameters"""
+        if self.state in ["error", "released"]:
+            return None
+            
         envelope_params = {}
         param_names = [
             'attack_time',
@@ -169,19 +213,21 @@ class SynthEngine:
             self.global_values[route_path] = value
             # Update all active voices with new global
             for voice in self.active_voices.values():
-                if voice.state != "released":
+                if voice.state not in ["released", "error"]:
                     voice.receive_value(route_path, value)
         else:
-            # Pass to specific voice if it exists
+            # Pass to specific voice if it exists and valid
             voice = self.active_voices.get(scope)
-            if voice and voice.state != "released":
+            if voice and voice.state not in ["released", "error"]:
                 voice.receive_value(route_path, value)
             
     def handle_route(self, route):
         """Pass route handling to RouteManager"""
-        self.route_manager.handle_route(route)
-        # Cleanup after each route processing
-        self.cleanup_voices()
+        try:
+            self.route_manager.handle_route(route)
+        finally:
+            # Always attempt cleanup after route processing
+            self.cleanup_voices()
 
     def cleanup_voices(self):
         """Clean up finished or timed out voices"""
@@ -189,29 +235,41 @@ class SynthEngine:
         to_remove = []
         
         for voice_id, voice in self.active_voices.items():
-            # Remove released voices
-            if voice.state == "released":
-                to_remove.append(voice_id)
-                continue
+            try:
+                # Always remove error state voices
+                if voice.state == "error":
+                    to_remove.append((voice_id, "error state"))
+                    continue
+                    
+                # Remove released voices
+                if voice.state == "released":
+                    to_remove.append((voice_id, "released"))
+                    continue
+                    
+                # Handle stuck voices
+                if current_time - voice.last_update > self.VOICE_TIMEOUT:
+                    _log(f"Voice {voice_id} timed out, forcing release")
+                    voice.release()
+                    to_remove.append((voice_id, "timeout"))
+                    continue
+                    
+                # Remove voices that lost their note reference
+                if voice.state == "active" and voice.note is None:
+                    _log(f"Voice {voice_id} lost note reference while active")
+                    voice.state = "error"
+                    to_remove.append((voice_id, "lost note"))
+                    
+            except Exception as e:
+                _log(f"[ERROR] Failed to check voice {voice_id}: {str(e)}")
+                to_remove.append((voice_id, "error during check"))
                 
-            # Remove error state voices
-            if voice.state == "error":
-                to_remove.append(voice_id)
-                continue
-                
-            # Remove stuck voices
-            if current_time - voice.last_update > self.VOICE_TIMEOUT:
-                voice.release()
-                to_remove.append(voice_id)
-                continue
-                
-            # Remove voices that lost their note reference
-            if voice.state == "active" and voice.note is None:
-                to_remove.append(voice_id)
-                
-        for voice_id in to_remove:
-            del self.active_voices[voice_id]
-            _log(f"Cleaned up voice: {voice_id}")
+        # Remove marked voices
+        for voice_id, reason in to_remove:
+            try:
+                del self.active_voices[voice_id]
+                _log(f"Cleaned up voice {voice_id} ({reason})")
+            except Exception as e:
+                _log(f"[ERROR] Failed to remove voice {voice_id}: {str(e)}")
 
     def test_audio_hardware(self):
         """Test audio output hardware with a simple beep"""
@@ -229,9 +287,18 @@ class SynthEngine:
     def release_all_notes(self):
         """Release all currently active notes"""
         _log("Releasing all notes")
+        failures = []
         for voice in list(self.active_voices.values()):
-            voice.release()
+            try:
+                if not voice.release():
+                    failures.append(voice.address)
+            except Exception as e:
+                _log(f"[ERROR] Failed to release voice {voice.address}: {str(e)}")
+                failures.append(voice.address)
+                
         self.active_voices.clear()
+        if failures:
+            _log(f"[ERROR] Failed to cleanly release voices: {', '.join(failures)}")
 
     def cleanup(self):
         """Clean up resources on shutdown"""
@@ -249,26 +316,53 @@ class NoteProcessor:
     def __init__(self, engine):
         self.engine = engine
         
+    def _validate_voice_id(self, voice_id):
+        """Validate voice ID format and note number"""
+        try:
+            if not voice_id.startswith('V'):
+                return False
+            note_num = int(voice_id.split('.')[0][1:])  # Get number after 'V'
+            return 0 <= note_num <= 127
+        except (ValueError, IndexError):
+            return False
+            
     def process_route(self, parts, scope, value):
         """Process note routes with priority for release"""
         try:
+            # Validate voice ID for all note operations
+            if value and not self._validate_voice_id(value):
+                _log(f"[ERROR] Invalid voice ID format or note number: {value}")
+                return
+                
             # Handle release routes first
             if parts[0] == "release":
-                if value in self.engine.active_voices:
-                    self.engine.active_voices[value].release()
+                voice = self.engine.active_voices.get(value)
+                if voice:
+                    if voice.release():
+                        _log(f"Successfully released voice {value}")
+                    else:
+                        _log(f"[ERROR] Failed to release voice {value}")
                 return
                     
             # Handle press routes
             if parts[0] == "press":
-                # Don't create new voice if one exists and is active
+                # Handle existing voice cases
                 existing_voice = self.engine.active_voices.get(value)
-                if existing_voice and existing_voice.state == "active":
-                    return
+                if existing_voice:
+                    if existing_voice.state == "active":
+                        _log(f"Voice {value} already active, ignoring press")
+                        return
+                    if existing_voice.state == "released":
+                        _log(f"Removing released voice {value} before new press")
+                        del self.engine.active_voices[value]
                     
                 # Create new voice and store press route
                 voice = Voice(value, self.engine)
-                self.engine.active_voices[value] = voice
-                self.engine.store_value(value, "note/press", True)
+                if voice.state != "error":
+                    self.engine.active_voices[value] = voice
+                    self.engine.store_value(value, "note/press", True)
+                else:
+                    _log(f"[ERROR] Not adding voice {value} due to initialization error")
                 
             else:
                 _log(f"[ERROR] Unknown note route type: {parts[0]}")
