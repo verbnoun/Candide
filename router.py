@@ -46,14 +46,42 @@ class RingBuffer:
         if len(self.data) >= self.size:
             self.data.pop(0)  # Remove oldest item if at capacity
         self.data.append(item)
+        _log(f"Buffer size: {len(self.data)}/{self.size}")
         
     def popleft(self):
         if not self.data:
             return None
-        return self.data.pop(0)
+        item = self.data.pop(0)
+        _log(f"Buffer size: {len(self.data)}/{self.size}")
+        return item
+        
+    def pop_all(self):
+        """Remove and return all messages in buffer"""
+        if not self.data:
+            return []
+        messages = self.data[:]
+        count = len(messages)
+        self.data.clear()
+        _log(f"Processed {count} messages from buffer")
+        return messages
         
     def __len__(self):
         return len(self.data)
+
+    def get_buffer_state(self):
+        """Get a summary of current buffer contents"""
+        if not self.data:
+            return "empty"
+        
+        counts = {}
+        for msg, _ in self.data:
+            msg_type = msg['type']
+            counts[msg_type] = counts.get(msg_type, 0) + 1
+            
+        state = []
+        for msg_type, count in counts.items():
+            state.append(f"{msg_type}:{count}")
+        return f"{len(self.data)}/{self.size} [{', '.join(state)}]"
 
 class PathProcessor:
     """Handles path parsing and routing table construction"""
@@ -401,6 +429,7 @@ class RouteBuilder:
 class Router:
     """MIDI to Route Transformation System"""
     BUFFER_SIZE = 64  # Ring buffer size - adjust based on expected message rate and processing time
+    BATCH_PROCESS_INTERVAL = 0.01  # Process buffer every 10ms
 
     def __init__(self, paths):
         """Initialize router with paths configuration"""
@@ -424,6 +453,9 @@ class Router:
             # Process paths
             _log("Processing paths...")
             self.path_processor.process_paths(paths)
+            
+            # Initialize batch processing state
+            self.last_process_time = time.monotonic()
             
             _log("Router initialization complete")
             self._log_routing_tables()
@@ -487,25 +519,50 @@ class Router:
         # Start timing as soon as we receive the message
         with TimingContext(timing_stats, "router", message.get('timing_id')):
             try:
-                # For high priority messages (note_off), bypass validation and buffer
-                if high_priority:
-                    self._process_single_message(message, voice_manager)
-                    return
+                msg_type = message['type']
+                channel = message.get('channel')
+                _log(f"Processing {msg_type} message from channel {channel}")
 
-                # Check if message should be processed
+                # First validate the message
                 if not self._should_process_message(message):
                     return
 
-                # Queue valid message
+                # Handle note_on, note_off and associated messages immediately
+                if msg_type in ('note_on', 'note_off') or high_priority:
+                    buffer_state = self.message_buffer.get_buffer_state()
+                    _log(f"BUFFER SKIP: {msg_type} ch:{channel} (Buffer: {buffer_state})")
+                    self._process_single_message(message, voice_manager)
+                    return
+
+                # Queue other valid messages
+                buffer_state = self.message_buffer.get_buffer_state()
+                _log(f"BUFFER ADD: {msg_type} ch:{channel} (Buffer: {buffer_state})")
                 self.message_buffer.append((message, voice_manager))
-                _log(f"Message queued. Buffer size: {len(self.message_buffer)}/{self.BUFFER_SIZE}")
                 
-                # Process only the current message
-                msg, vm = self.message_buffer.popleft()
-                self._process_single_message(msg, vm)
+                # Check if it's time to process the buffer
+                current_time = time.monotonic()
+                if current_time - self.last_process_time >= self.BATCH_PROCESS_INTERVAL:
+                    batch_start = time.monotonic()
+                    self._process_buffer(voice_manager)
+                    batch_time = (time.monotonic() - batch_start) * 1000
+                    _log(f"Batch processing took {batch_time:.3f}ms")
+                    self.last_process_time = current_time
 
             except Exception as e:
                 _log(f"[ERROR] Message processing failed: {str(e)}")
+
+    def _process_buffer(self, voice_manager):
+        """Process all messages in buffer"""
+        messages = self.message_buffer.pop_all()
+        if not messages:
+            return
+            
+        _log(f"Processing batch of {len(messages)} messages:")
+        for msg, _ in messages:
+            _log(f"- {msg['type']} from channel {msg.get('channel')}")
+        
+        for msg, vm in messages:
+            self._process_single_message(msg, vm or voice_manager)
 
     def _process_single_message(self, message, voice_manager):
         """Process a single message and generate routes"""
