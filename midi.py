@@ -187,6 +187,9 @@ class MidiLogic:
             return False
             
         try:
+            event = None
+            
+            # Process MIDI bytes into event
             with TimingContext(timing_stats, "midi", self.current_message_id):
                 status = message_bytes[0]
                 if not self._is_status_byte(status):
@@ -196,8 +199,6 @@ class MidiLogic:
                 channel = status & 0x0F
                 msg_type = status & 0xF0
                 data_bytes = message_bytes[1:]
-                
-                event = None
 
                 if msg_type == MidiMessageType.NOTE_ON:
                     if len(data_bytes) < 2:
@@ -314,24 +315,28 @@ class MidiLogic:
                     _log(f"Received from Controller: Pitch Bend")
                     _log(event)
 
-                # Route message if we created an event
-                if event:
-                    # Attach timing ID to event for tracking through the chain
-                    event['timing_id'] = self.current_message_id
-                    
-                    # Handle note_off messages with high priority
-                    if event['type'] == 'note_off':
-                        # Send directly to router, bypassing connection manager
-                        self.router.process_message(event, self.voice_manager, high_priority=True)
-                    else:
-                        self.connection_manager.handle_midi_message(event)
-                        if self.connection_manager.is_connected():
-                            self.router.process_message(event, self.voice_manager)
+            # Route message if we created an event
+            if event:
+                # Attach timing ID to event for tracking through the chain
+                event['timing_id'] = self.current_message_id
+                
+                # Handle note_off messages with high priority
+                if event['type'] == 'note_off':
+                    # Send directly to router, bypassing connection manager
+                    self.router.process_message(event, self.voice_manager, high_priority=True)
+                else:
+                    self.connection_manager.handle_midi_message(event)
+                    if self.connection_manager.is_connected():
+                        self.router.process_message(event, self.voice_manager)
+                return True
+
+            # If we get here, message processing failed
+            _log("[WARNING] Failed to process message")
+            return False
 
         except Exception as e:
             _log(f"[ERROR] Error processing message: {str(e)}")
             return False
-        return True
 
     def check_for_messages(self):
         """Check for and parse MIDI messages"""
@@ -431,19 +436,19 @@ class MidiLogic:
                 # Process the complete message
                 try:
                     message_bytes = [self.partial_message['status']] + self.partial_message['bytes_received']
-                    if not self._process_message(message_bytes):
-                        _log("[WARNING] Failed to process message")
+                    success = self._process_message(message_bytes)
+                    
+                    # Always end timing, even for failed messages
+                    timing_stats.end_message_timing(self.current_message_id)
+                    self.reset_partial_message()
+                    _log("Partial message cleared")
 
                 except Exception as e:
                     _log(f"[ERROR] Error processing message: {str(e)}")
+                    timing_stats.end_message_timing(self.current_message_id)
                     self.flush_uart_buffer()
                     self.reset_partial_message()
                     return
-
-                # Reset partial message tracking and log
-                timing_stats.end_message_timing(self.current_message_id)
-                self.reset_partial_message()
-                _log("Partial message cleared")
 
         except Exception as e:
             _log(f"[ERROR] Error reading UART: {str(e)}")

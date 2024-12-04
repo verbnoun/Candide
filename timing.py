@@ -44,9 +44,7 @@ class TimingStats:
         message_id = time.monotonic_ns()
         self.current_message_times[message_id] = {
             'uart_start': time.monotonic_ns(),
-            'midi_start': None,
-            'router_start': None,
-            'synth_start': None,
+            'last_stage_end': time.monotonic_ns(),  # Track end of last stage
             'midi_duration': 0,
             'router_duration': 0,
             'synth_duration': 0
@@ -56,16 +54,20 @@ class TimingStats:
     def start_stage(self, message_id, stage):
         """Record start time for a processing stage"""
         if message_id in self.current_message_times:
-            self.current_message_times[message_id][f'{stage}_start'] = time.monotonic_ns()
+            # Start timing from end of last stage
+            self.current_message_times[message_id][f'{stage}_start'] = self.current_message_times[message_id]['last_stage_end']
 
     def end_stage(self, message_id, stage):
         """Record end time and calculate duration for a processing stage"""
         if message_id in self.current_message_times:
+            now = time.monotonic_ns()
             stage_start = self.current_message_times[message_id].get(f'{stage}_start')
             if stage_start:
-                duration = _ns_to_ms(time.monotonic_ns() - stage_start)
+                duration = _ns_to_ms(now - stage_start)
                 self.current_message_times[message_id][f'{stage}_duration'] = duration
                 self.add_timing(f"{stage}_process", duration)
+                # Update last stage end time
+                self.current_message_times[message_id]['last_stage_end'] = now
 
     def end_message_timing(self, message_id):
         """Complete timing for a message and log results"""
@@ -148,18 +150,13 @@ class TimingContext:
         self.start_time = None
 
     def __enter__(self):
-        self.start_time = time.monotonic_ns()
         if self.message_id:
             self.stats.start_stage(self.message_id, self.category)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        if self.start_time is not None:
-            if self.message_id:
-                self.stats.end_stage(self.message_id, self.category)
-            else:
-                duration = _ns_to_ms(time.monotonic_ns() - self.start_time)
-                self.stats.add_timing(self.category, duration)
+        if self.message_id:
+            self.stats.end_stage(self.message_id, self.category)
 
 # Global timing stats instance
 timing_stats = TimingStats()

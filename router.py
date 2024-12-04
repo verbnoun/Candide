@@ -484,45 +484,44 @@ class Router:
 
     def process_message(self, message, voice_manager=None, high_priority=False):
         """Transform MIDI message to routes"""
-        if not self._should_process_message(message):
-            return
+        # Start timing as soon as we receive the message
+        with TimingContext(timing_stats, "router", message.get('timing_id')):
+            try:
+                # For high priority messages (note_off), bypass validation and buffer
+                if high_priority:
+                    self._process_single_message(message, voice_manager)
+                    return
 
-        try:
-            # For high priority messages (note_off), bypass the buffer
-            if high_priority:
-                self._process_single_message(message, voice_manager)
-            else:
-                # Queue regular messages
+                # Check if message should be processed
+                if not self._should_process_message(message):
+                    return
+
+                # Queue valid message
                 self.message_buffer.append((message, voice_manager))
                 _log(f"Message queued. Buffer size: {len(self.message_buffer)}/{self.BUFFER_SIZE}")
                 
-                # Process all buffered messages
-                while len(self.message_buffer):
-                    msg, vm = self.message_buffer.popleft()
-                    self._process_single_message(msg, vm)
+                # Process only the current message
+                msg, vm = self.message_buffer.popleft()
+                self._process_single_message(msg, vm)
 
-        except Exception as e:
-            _log(f"[ERROR] Message processing failed: {str(e)}")
+            except Exception as e:
+                _log(f"[ERROR] Message processing failed: {str(e)}")
 
     def _process_single_message(self, message, voice_manager):
         """Process a single message and generate routes"""
         try:
-            # Get timing ID from message
-            timing_id = message.get('timing_id')
+            # Generate routes from message
+            route_tuples = self.route_builder.create_routes_for_message(
+                message,
+                self.path_processor.route_info,
+                self.value_processor
+            )
             
-            with TimingContext(timing_stats, "router", timing_id):
-                # Generate routes from message
-                route_tuples = self.route_builder.create_routes_for_message(
-                    message,
-                    self.path_processor.route_info,
-                    self.value_processor
-                )
-                
-                # Send routes to voice manager
-                if voice_manager is not None:
-                    for route, timing_id in route_tuples:
-                        _log(f"Sending route: {route}")
-                        voice_manager.handle_route(route, timing_id)
+            # Send routes to voice manager
+            if voice_manager is not None:
+                for route, timing_id in route_tuples:
+                    _log(f"Sending route: {route}")
+                    voice_manager.handle_route(route, timing_id)
             
         except Exception as e:
             _log(f"[ERROR] Failed to process message: {str(e)}")

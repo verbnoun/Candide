@@ -14,6 +14,7 @@ from constants import (
     HANDSHAKE_MAX_RETRIES, RETRY_DELAY, SETUP_DELAY,
     ConnectionState  # Import ConnectionState from constants
 )
+from timing import timing_stats, TimingContext
 
 def _log(message):
     """Conditional logging with consistent formatting"""
@@ -163,15 +164,17 @@ class CandideConnectionManager:
             if (event.get('channel') == 0 and 
                 event.get('data', {}).get('number') == HANDSHAKE_CC):
                 
-                # Validate handshake value when in DETECTED state
-                if (event.get('data', {}).get('value') == HANDSHAKE_VALUE and 
-                    self.state == ConnectionState.DETECTED):
-                    _log("Handshake CC received - sending config")
-                    self.state = ConnectionState.HANDSHAKING
-                    self.handshake_start_time = time.monotonic()
-                    self.send_config()
-                    self.state = ConnectionState.CONNECTED
-                    _log("Connection established")
+                # Use the same timing context as the MIDI message
+                with TimingContext(timing_stats, "midi", event.get('timing_id')):
+                    # Validate handshake value when in DETECTED state
+                    if (event.get('data', {}).get('value') == HANDSHAKE_VALUE and 
+                        self.state == ConnectionState.DETECTED):
+                        _log("Handshake CC received - sending config")
+                        self.state = ConnectionState.HANDSHAKING
+                        self.handshake_start_time = time.monotonic()
+                        self.send_config()
+                        self.state = ConnectionState.CONNECTED
+                        _log("Connection established")
                     
         except Exception as e:
             _log(f"[ERROR] MIDI message handling error: {str(e)}")
