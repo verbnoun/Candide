@@ -1,23 +1,22 @@
 """
 synthesizer.py - Route Processing and Voice Management
-Routes are processed by type-specific processors, values stored centrally, 
-and applied by voices when minimum sets are complete.
-"""
 
-# we need to clear all routes on instrument switch
-# note off needs to skip the buffer and maybe the line too in router.py
-# we need to thin the midi in router.py on many key holds
-# do we have a route buffer? no i think, we need a small one to create some priority based on the current state
-# per key things
-# volume knob
-# multi note amplitude reduction calculation
-# MPE continuous swamps the synth, must be thinned even if used
-# what is an appropriate frequency to send MPE continuous, i think might need to update bart to lower output, we might just be doing as much as possible
+- we need to clear all routes on instrument switch
+- note off needs to skip the buffer and maybe the line too in router.py
+- volume knob
+- multi note amplitude reduction calculation
+- MPE continuous swamps the synth, must be thinned even if used
+- what is an appropriate frequency to send MPE continuous, i think might need to update bart to lower output, we might just be doing as much as possible
+- lag on envelope minimum and all paths
+- overall efficiency improvements 
+
+"""
 
 import sys
 import time
 import synthio
 from constants import SYNTH_DEBUG, SAMPLE_RATE, AUDIO_CHANNEL_COUNT
+from timing import timing_stats, TimingContext
 
 def _log(message, module="SYNTH"):
     if not SYNTH_DEBUG:
@@ -126,10 +125,11 @@ class Voice:
             
             # Press the note and update state atomically
             try:
-                self.engine.synth.press(self.note)
-                self.state = "active"
-                self.last_update = time.monotonic()
-                _log(f"Pressed note for {self.address} with freq: {freq}")
+                with TimingContext(timing_stats, "synth_process"):
+                    self.engine.synth.press(self.note)
+                    self.state = "active"
+                    self.last_update = time.monotonic()
+                    _log(f"Pressed note for {self.address} with freq: {freq}")
             except Exception as e:
                 self.note = None
                 self.state = "error"
@@ -148,9 +148,10 @@ class Voice:
         success = False
         if self.note and self.state == "active":
             try:
-                self.engine.synth.release(self.note)
-                success = True
-                _log(f"Released note for {self.address}")
+                with TimingContext(timing_stats, "synth_process"):
+                    self.engine.synth.release(self.note)
+                    success = True
+                    _log(f"Released note for {self.address}")
             except Exception as e:
                 _log(f"[ERROR] Failed to release note for {self.address}: {str(e)}")
             finally:
@@ -234,7 +235,8 @@ class SynthEngine:
     def handle_route(self, route):
         """Pass route handling to RouteManager"""
         try:
-            self.route_manager.handle_route(route)
+            with TimingContext(timing_stats, "synth_process"):
+                self.route_manager.handle_route(route)
         finally:
             # Always attempt cleanup after route processing
             self.cleanup_voices()
@@ -309,6 +311,23 @@ class SynthEngine:
         self.active_voices.clear()
         if failures:
             _log(f"[ERROR] Failed to cleanly release voices: {', '.join(failures)}")
+
+    def clear_routes(self):
+        """Clear all routes and reset state for instrument switch"""
+        _log("Clearing all routes for instrument switch")
+        try:
+            # Release all notes first
+            self.release_all_notes()
+            
+            # Clear all stored values
+            self.global_values.clear()
+            
+            # Reset voice manager state
+            self.active_voices.clear()
+            
+            _log("Routes cleared successfully")
+        except Exception as e:
+            _log(f"[ERROR] Failed to clear routes: {str(e)}")
 
     def cleanup(self):
         """Clean up resources on shutdown"""
