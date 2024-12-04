@@ -12,7 +12,7 @@ DEBUG = True
 HARDWARE_DEBUG = False
 MIDI_DEBUG = False
 ROUTER_DEBUG = True
-SYNTH_DEBUG = False
+SYNTH_DEBUG = True
 OUTPUT_DEBUG = False
 
 # ADC (Analog-to-Digital Conversion) Constants

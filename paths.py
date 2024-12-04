@@ -33,6 +33,56 @@ def _log(message, module="PATHS"):
                 LIGHT_MAGENTA
         print(f"{prefix}[{module}] {message}{RESET}", file=sys.stderr)
 
+class RouteTemplate:
+    """Pre-computed template for route generation"""
+    def __init__(self, template, scope, needs_value=False, value_type=None):
+        self.template = template
+        self.scope = scope
+        self.needs_value = needs_value
+        self.value_type = value_type
+        
+        # Pre-compute parts that don't need message data
+        parts = template.split('/')
+        self.prefix = '/'.join(p for p in parts if '-' not in p and p not in ('velocity', 'note_number'))
+        
+        # Pre-compute if this is a special route type
+        self.is_waveform = template.endswith('/saw') or template.endswith('/triangle')
+        self.is_note_number = 'note_number' in template
+        self.is_velocity = 'velocity' in template
+        
+        # Extract range if present
+        self.range_str = None
+        for part in parts:
+            if '-' in part:
+                self.range_str = part
+                break
+
+class RouteBundle:
+    """Pre-computed bundle of routes that share common MIDI data"""
+    def __init__(self):
+        self.templates = []  # List of RouteTemplates in original order
+        
+    def add_route(self, template, scope):
+        """Add route template while preserving original order"""
+        # Determine if route needs a value and what type
+        needs_value = False
+        value_type = None
+        
+        if 'note_number' in template:
+            needs_value = True
+            value_type = 'note'
+        elif 'velocity' in template:
+            needs_value = True
+            value_type = 'velocity'
+        elif not (template.endswith('/saw') or template.endswith('/triangle')):
+            for part in template.split('/'):
+                if '-' in part:  # Has a range, needs value
+                    needs_value = True
+                    break
+        
+        route_template = RouteTemplate(template, scope, needs_value, value_type)
+        self.templates.append(route_template)
+
 class PathProcessor:
     """Handles path parsing and routing table construction"""
     def __init__(self):
@@ -45,9 +95,13 @@ class PathProcessor:
             'pressure': {'routes': []}
         }
         self.accepted_midi = set()
+        
+        # New: Route bundles for optimized processing
+        self.note_on_bundle = RouteBundle()
+        self.note_off_bundle = RouteBundle()
 
     def process_paths(self, paths):
-        """Process path strings into routing tables"""
+        """Process path strings into routing tables and bundles"""
         _log("Processing paths...")
         if not isinstance(paths, str):
             _log(f"[ERROR] Expected string for paths, got: {type(paths)}")
@@ -87,7 +141,7 @@ class PathProcessor:
             _log(f"Built template: {template}")
 
             try:
-                # Store route info
+                # Store route info and update bundles
                 _log(f"Adding route info - MIDI type: {midi_type}, Template: {template}, Scope: {scope}")
                 self._add_route_info(midi_type, template, scope)
             except Exception as e:
@@ -95,7 +149,7 @@ class PathProcessor:
                 raise
 
     def _add_route_info(self, midi_type, template, scope):
-        """Store route info with consistent structure"""
+        """Store route info and update route bundles"""
         _log(f"Adding route info for MIDI type: {midi_type}")
         _log(f"Creating route_info dict...")
         route_info = {
@@ -123,16 +177,24 @@ class PathProcessor:
                 msg_type = None
                 if midi_type == 'note_on':
                     msg_type = 'note_on'
+                    # Add to note_on bundle
+                    self.note_on_bundle.add_route(template, scope)
                 elif midi_type == 'note_off':
                     msg_type = 'note_off'
+                    # Add to note_off bundle
+                    self.note_off_bundle.add_route(template, scope)
                 elif midi_type == 'pitch_bend':
                     msg_type = 'pitch_bend'
                 elif midi_type == 'pressure':
                     msg_type = 'pressure'
                 elif midi_type == 'velocity':
                     msg_type = 'note_on'  # velocity comes with note_on
+                    # Add to note_on bundle's velocity routes
+                    self.note_on_bundle.add_route(template, scope)
                 elif midi_type == 'note_number':
                     msg_type = 'note_on'  # note_number comes with note_on
+                    # Add to note_on bundle's note_number routes
+                    self.note_on_bundle.add_route(template, scope)
                 
                 _log(f"Determined message type: {msg_type}")
                 if msg_type:

@@ -130,6 +130,44 @@ class RouteBuilder:
             _log(f"[ERROR] Failed to create route: {str(e)}")
             raise
 
+    def process_note_bundle(self, message, bundle, value_processor, timing_id):
+        """Process a note message using pre-computed route templates"""
+        routes = []
+        
+        # Get common data once
+        channel = message.get('channel', 'X')
+        note = message['data'].get('note', 'XX')
+        
+        # Process templates in original order
+        for template in bundle.templates:
+            try:
+                # Get scope value
+                scope_value = 'global' if template.scope == 'global' else f"V{note}.{channel}"
+                
+                # Get value if needed
+                value = None
+                if template.needs_value:
+                    if template.is_note_number:
+                        value = note
+                    elif template.is_velocity and message['type'] == 'note_on':
+                        value = message['data'].get('velocity', 127)
+                        if template.range_str:  # Normalize if range specified
+                            value = value_processor.normalize_value(value, template.range_str, message['type'])
+                
+                # Create route using pre-computed parts
+                if value is not None:
+                    route = f"{template.prefix.format(scope_value)}/{value}"
+                else:
+                    route = template.prefix.format(scope_value)
+                
+                routes.append((route, timing_id))
+                
+            except Exception as e:
+                _log(f"[ERROR] Failed to create route: {str(e)}")
+                continue
+                
+        return routes
+
     def create_routes_for_message(self, message, path_info, value_processor):
         """
         Generate all routes for a given MIDI message using processed path info
@@ -139,12 +177,18 @@ class RouteBuilder:
         msg_type = message['type']
         timing_id = message.get('timing_id')
         
-        # Get relevant route information based on message type
+        # Use optimized bundle processing for note messages
+        if msg_type == 'note_on':
+            return self.process_note_bundle(message, path_info.note_on_bundle, value_processor, timing_id)
+        elif msg_type == 'note_off':
+            return self.process_note_bundle(message, path_info.note_off_bundle, value_processor, timing_id)
+        
+        # Use standard processing for other messages
         if msg_type.startswith('cc'):
             cc_num = message['data']['number']
-            route_infos = path_info['cc'].get(cc_num, {}).get('routes', [])
+            route_infos = path_info.route_info['cc'].get(cc_num, {}).get('routes', [])
         else:
-            route_infos = path_info[msg_type].get('routes', [])
+            route_infos = path_info.route_info[msg_type].get('routes', [])
             
         # Process each matching route
         for route_info in route_infos:
@@ -308,7 +352,7 @@ class Router:
             # Generate routes from message
             route_tuples = self.route_builder.create_routes_for_message(
                 message,
-                self.path_processor.route_info,
+                self.path_processor,  # Pass entire processor to access bundles
                 self.value_processor
             )
             

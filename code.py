@@ -273,8 +273,6 @@ class AudioSystem:
             # Store current volume
             self.current_volume = volume
             
-            _log(f"Volume set to {volume:.3f} (scaled: {log_volume:.3f})")
-            
         except Exception as e:
             _log(f"[ERROR] Volume update failed: {str(e)}")
 
