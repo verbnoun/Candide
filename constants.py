@@ -10,10 +10,11 @@ import board
 # Debug Flags
 DEBUG = True
 HARDWARE_DEBUG = False
-MIDI_DEBUG = False
+MIDI_DEBUG = True
 ROUTER_DEBUG = True
 SYNTH_DEBUG = True
 OUTPUT_DEBUG = False
+TIMER_DEBUG = True
 
 # ADC (Analog-to-Digital Conversion) Constants
 ADC_MAX = 65535

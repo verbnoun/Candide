@@ -10,11 +10,11 @@ Tracks timing across the entire MIDI processing chain:
 
 import time
 import sys
-from constants import DEBUG
+from constants import TIMER_DEBUG
 
 def _log(message):
     """Conditional logging function"""
-    if not DEBUG:
+    if not TIMER_DEBUG:
         return
     LIGHT_YELLOW = "\033[93m"
     RESET = "\033[0m"
