@@ -9,7 +9,6 @@ synthesizer.py - Route Processing and Voice Management
 - what is an appropriate frequency to send MPE continuous, i think might need to update bart to lower output, we might just be doing as much as possible
 - lag on envelope minimum and all paths
 - overall efficiency improvements 
-
 """
 
 import sys
@@ -40,11 +39,23 @@ class Voice:
         
         # Parse note number from address (format: Vnote.channel)
         try:
-            self.note_number = int(address.split('.')[0][1:])  # Extract number after 'V'
+            if not address.startswith('V'):
+                self.state = "error"
+                _log(f"[ERROR] Invalid voice ID format: {address}")
+                return
+                
+            note_channel = address[1:].split('.')
+            if len(note_channel) != 2:
+                self.state = "error"
+                _log(f"[ERROR] Invalid voice ID format: {address}")
+                return
+                
+            self.note_number = int(note_channel[0])
             if not 0 <= self.note_number <= 127:
                 self.state = "error"
                 _log(f"[ERROR] Invalid MIDI note number {self.note_number} for {address}")
                 return
+                
         except (ValueError, IndexError):
             self.state = "error"
             _log(f"[ERROR] Could not parse note number from address: {address}")
@@ -125,11 +136,10 @@ class Voice:
             
             # Press the note and update state atomically
             try:
-                with TimingContext(timing_stats, "synth_process"):
-                    self.engine.synth.press(self.note)
-                    self.state = "active"
-                    self.last_update = time.monotonic()
-                    _log(f"Pressed note for {self.address} with freq: {freq}")
+                self.engine.synth.press(self.note)
+                self.state = "active"
+                self.last_update = time.monotonic()
+                _log(f"Pressed note for {self.address} with freq: {freq}")
             except Exception as e:
                 self.note = None
                 self.state = "error"
@@ -148,10 +158,9 @@ class Voice:
         success = False
         if self.note and self.state == "active":
             try:
-                with TimingContext(timing_stats, "synth_process"):
-                    self.engine.synth.release(self.note)
-                    success = True
-                    _log(f"Released note for {self.address}")
+                self.engine.synth.release(self.note)
+                success = True
+                _log(f"Released note for {self.address}")
             except Exception as e:
                 _log(f"[ERROR] Failed to release note for {self.address}: {str(e)}")
             finally:
@@ -232,11 +241,43 @@ class SynthEngine:
             if voice and voice.state not in ["released", "error"]:
                 voice.receive_value(route_path, value)
             
-    def handle_route(self, route):
+    def handle_route(self, route, timing_id=None):
         """Pass route handling to RouteManager"""
         try:
-            with TimingContext(timing_stats, "synth_process"):
-                self.route_manager.handle_route(route)
+            with TimingContext(timing_stats, "synth", timing_id):
+                # Split route into parts
+                parts = route.strip().split('/')
+                if len(parts) < 2:
+                    _log(f"[ERROR] Invalid route format: {route}")
+                    return
+
+                # Extract scope and value
+                scope = parts[-2]
+                value = parts[-1] if len(parts) > 2 else None
+                
+                # Process route based on type
+                processed = False
+                if parts[0] == "note":
+                    self.route_manager.note.process_route(parts[1:], scope, value)
+                    processed = True
+                elif parts[0] == "oscillator":
+                    self.route_manager.oscillator.process_route(parts[1:], scope, value)
+                    processed = True
+                elif parts[0] == "filter":
+                    self.route_manager.filter.process_route(parts[1:], scope, value)
+                    processed = True
+                elif parts[0] == "amplifier":
+                    self.route_manager.amplifier.process_route(parts[1:], scope, value)
+                    processed = True
+                elif parts[0] == "lfo":
+                    self.route_manager.lfo.process_route(parts[1:], scope, value)
+                    processed = True
+                
+                if not processed:
+                    _log(f"[ERROR] No processor for route type: {parts[0]}")
+                
+        except Exception as e:
+            _log(f"[ERROR] Failed to handle route: {str(e)}")
         finally:
             # Always attempt cleanup after route processing
             self.cleanup_voices()
@@ -358,40 +399,35 @@ class NoteProcessor:
     def process_route(self, parts, scope, value):
         """Process note routes with priority for release"""
         try:
-            # Validate voice ID for all note operations
-            if value and not self._validate_voice_id(value):
-                _log(f"[ERROR] Invalid voice ID format or note number: {value}")
-                return
-                
             # Handle release routes first
             if parts[0] == "release":
-                voice = self.engine.active_voices.get(value)
+                voice = self.engine.active_voices.get(scope)
                 if voice:
                     if voice.release():
-                        _log(f"Successfully released voice {value}")
+                        _log(f"Successfully released voice {scope}")
                     else:
-                        _log(f"[ERROR] Failed to release voice {value}")
+                        _log(f"[ERROR] Failed to release voice {scope}")
                 return
                     
             # Handle press routes
             if parts[0] == "press":
                 # Handle existing voice cases
-                existing_voice = self.engine.active_voices.get(value)
+                existing_voice = self.engine.active_voices.get(scope)
                 if existing_voice:
                     if existing_voice.state == "active":
-                        _log(f"Voice {value} already active, ignoring press")
+                        _log(f"Voice {scope} already active, ignoring press")
                         return
                     if existing_voice.state == "released":
-                        _log(f"Removing released voice {value} before new press")
-                        del self.engine.active_voices[value]
+                        _log(f"Removing released voice {scope} before new press")
+                        del self.engine.active_voices[scope]
                     
                 # Create new voice and store press route
-                voice = Voice(value, self.engine)
+                voice = Voice(scope, self.engine)
                 if voice.state != "error":
-                    self.engine.active_voices[value] = voice
-                    self.engine.store_value(value, "note/press", True)
+                    self.engine.active_voices[scope] = voice
+                    self.engine.store_value(scope, "note/press", True)
                 else:
-                    _log(f"[ERROR] Not adding voice {value} due to initialization error")
+                    _log(f"[ERROR] Not adding voice {scope} due to initialization error")
                 
             else:
                 _log(f"[ERROR] Unknown note route type: {parts[0]}")
@@ -657,7 +693,7 @@ class RouteManager:
         self.lfo = LfoProcessor(engine)
         self.note = NoteProcessor(engine)
 
-    def handle_route(self, route):
+    def handle_route(self, route, timing_id=None):
         """Process incoming route string and dispatch to appropriate handler"""
         _log(f"Processing route: {route}")
         try:

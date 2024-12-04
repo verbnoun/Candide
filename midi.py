@@ -109,7 +109,7 @@ class MidiLogic:
             'expected_bytes': 0
         }
         # Reset message timing
-        self.message_start_time = None
+        self.current_message_id = None
 
     def _hex_dump(self, data):
         """Create a hex dump of the given data"""
@@ -170,8 +170,8 @@ class MidiLogic:
             if data is None or len(data) == 0:
                 return None
             # Start timing on first byte of new message
-            if self.message_start_time is None:
-                self.message_start_time = time.monotonic()
+            if self.current_message_id is None:
+                self.current_message_id = timing_stats.start_message_timing()
             return data[0]
         except Exception as e:
             _log(f"[ERROR] UART read error: {str(e)}")
@@ -187,148 +187,146 @@ class MidiLogic:
             return False
             
         try:
-            status = message_bytes[0]
-            if not self._is_status_byte(status):
-                _log(f"[WARNING] Invalid status byte: 0x{status:02X}")
-                return False
+            with TimingContext(timing_stats, "midi", self.current_message_id):
+                status = message_bytes[0]
+                if not self._is_status_byte(status):
+                    _log(f"[WARNING] Invalid status byte: 0x{status:02X}")
+                    return False
+                    
+                channel = status & 0x0F
+                msg_type = status & 0xF0
+                data_bytes = message_bytes[1:]
                 
-            channel = status & 0x0F
-            msg_type = status & 0xF0
-            data_bytes = message_bytes[1:]
-            
-            event = None
+                event = None
 
-            if msg_type == MidiMessageType.NOTE_ON:
-                if len(data_bytes) < 2:
-                    _log("[WARNING] Incomplete note on message")
-                    return False
+                if msg_type == MidiMessageType.NOTE_ON:
+                    if len(data_bytes) < 2:
+                        _log("[WARNING] Incomplete note on message")
+                        return False
+                        
+                    note = data_bytes[0]
+                    if not self._validate_channel(channel, note):
+                        return False
+                        
+                    self.channel_state[channel]['active_notes'].add(note)
+                    self.active_mpe_channels.add(channel)
                     
-                note = data_bytes[0]
-                if not self._validate_channel(channel, note):
-                    return False
-                    
-                self.channel_state[channel]['active_notes'].add(note)
-                self.active_mpe_channels.add(channel)
-                
-                event = {
-                    'type': 'note_on',
-                    'channel': channel,
-                    'data': {
-                        'note': note,
-                        'velocity': data_bytes[1],
-                        'initial_pitch_bend': self.channel_state[channel]['pitch_bend'],
-                        'initial_pressure': self.channel_state[channel]['pressure'],
-                        'initial_timbre': self.channel_state[channel]['cc74']
+                    event = {
+                        'type': 'note_on',
+                        'channel': channel,
+                        'data': {
+                            'note': note,
+                            'velocity': data_bytes[1],
+                            'initial_pitch_bend': self.channel_state[channel]['pitch_bend'],
+                            'initial_pressure': self.channel_state[channel]['pressure'],
+                            'initial_timbre': self.channel_state[channel]['cc74']
+                        }
                     }
-                }
-                _log(f"Received from Controller: Note On")
-                _log(event)
-                self.channel_state[channel]['in_mpe_setup'] = False
+                    _log(f"Received from Controller: Note On")
+                    _log(event)
+                    self.channel_state[channel]['in_mpe_setup'] = False
 
-            elif msg_type == MidiMessageType.NOTE_OFF:
-                if len(data_bytes) < 2:
-                    _log("[WARNING] Incomplete note off message")
-                    return False
+                elif msg_type == MidiMessageType.NOTE_OFF:
+                    if len(data_bytes) < 2:
+                        _log("[WARNING] Incomplete note off message")
+                        return False
+                        
+                    note = data_bytes[0]
+                    if note < MIDI_NOTE_MIN or note > MIDI_NOTE_MAX:
+                        _log(f"[WARNING] Note off number {note} out of valid range (0-127)")
+                        return False
+                        
+                    if note in self.channel_state[channel]['active_notes']:
+                        self.channel_state[channel]['active_notes'].remove(note)
                     
-                note = data_bytes[0]
-                if note < MIDI_NOTE_MIN or note > MIDI_NOTE_MAX:
-                    _log(f"[WARNING] Note off number {note} out of valid range (0-127)")
-                    return False
+                    if not self.channel_state[channel]['active_notes']:
+                        self.active_mpe_channels.discard(channel)
                     
-                if note in self.channel_state[channel]['active_notes']:
-                    self.channel_state[channel]['active_notes'].remove(note)
-                
-                if not self.channel_state[channel]['active_notes']:
-                    self.active_mpe_channels.discard(channel)
-                
-                event = {
-                    'type': 'note_off',
-                    'channel': channel,
-                    'data': {
-                        'note': note,
-                        'velocity': data_bytes[1]
+                    event = {
+                        'type': 'note_off',
+                        'channel': channel,
+                        'data': {
+                            'note': note,
+                            'velocity': data_bytes[1]
+                        }
                     }
-                }
-                _log(f"Received from Controller: Note Off")
-                _log(event)
+                    _log(f"Received from Controller: Note Off")
+                    _log(event)
 
-            elif msg_type == MidiMessageType.CONTROL_CHANGE:
-                if len(data_bytes) < 2:
-                    _log("[WARNING] Incomplete control change message")
-                    return False
+                elif msg_type == MidiMessageType.CONTROL_CHANGE:
+                    if len(data_bytes) < 2:
+                        _log("[WARNING] Incomplete control change message")
+                        return False
+                        
+                    if not self._should_process_mpec(channel):
+                        return False
+                        
+                    if data_bytes[0] == 74:  # CC74 (timbre)
+                        self.channel_state[channel]['cc74'] = data_bytes[1]
                     
-                if not self._should_process_mpec(channel):
-                    return False
-                    
-                if data_bytes[0] == 74:  # CC74 (timbre)
-                    self.channel_state[channel]['cc74'] = data_bytes[1]
-                
-                event = {
-                    'type': 'cc',
-                    'channel': channel,
-                    'data': {
-                        'number': data_bytes[0],
-                        'value': data_bytes[1]
+                    event = {
+                        'type': 'cc',
+                        'channel': channel,
+                        'data': {
+                            'number': data_bytes[0],
+                            'value': data_bytes[1]
+                        }
                     }
-                }
-                _log(f"Received from Controller: CC")
-                _log(event)
+                    _log(f"Received from Controller: CC")
+                    _log(event)
 
-            elif msg_type == MidiMessageType.CHANNEL_PRESSURE:
-                if len(data_bytes) < 1:
-                    _log("[WARNING] Incomplete channel pressure message")
-                    return False
-                    
-                if not self._should_process_mpec(channel):
-                    return False
-                    
-                self.channel_state[channel]['pressure'] = data_bytes[0]
-                event = {
-                    'type': 'pressure',
-                    'channel': channel,
-                    'data': {
-                        'value': data_bytes[0]
+                elif msg_type == MidiMessageType.CHANNEL_PRESSURE:
+                    if len(data_bytes) < 1:
+                        _log("[WARNING] Incomplete channel pressure message")
+                        return False
+                        
+                    if not self._should_process_mpec(channel):
+                        return False
+                        
+                    self.channel_state[channel]['pressure'] = data_bytes[0]
+                    event = {
+                        'type': 'pressure',
+                        'channel': channel,
+                        'data': {
+                            'value': data_bytes[0]
+                        }
                     }
-                }
-                _log(f"Received from Controller: Channel Pressure")
-                _log(event)
+                    _log(f"Received from Controller: Channel Pressure")
+                    _log(event)
 
-            elif msg_type == MidiMessageType.PITCH_BEND:
-                if len(data_bytes) < 2:
-                    _log("[WARNING] Incomplete pitch bend message")
-                    return False
-                    
-                if not self._should_process_mpec(channel):
-                    return False
-                    
-                bend_value = (data_bytes[1] << 7) | data_bytes[0]
-                self.channel_state[channel]['pitch_bend'] = bend_value
-                event = {
-                    'type': 'pitch_bend',
-                    'channel': channel,
-                    'data': {
-                        'value': bend_value
+                elif msg_type == MidiMessageType.PITCH_BEND:
+                    if len(data_bytes) < 2:
+                        _log("[WARNING] Incomplete pitch bend message")
+                        return False
+                        
+                    if not self._should_process_mpec(channel):
+                        return False
+                        
+                    bend_value = (data_bytes[1] << 7) | data_bytes[0]
+                    self.channel_state[channel]['pitch_bend'] = bend_value
+                    event = {
+                        'type': 'pitch_bend',
+                        'channel': channel,
+                        'data': {
+                            'value': bend_value
+                        }
                     }
-                }
-                _log(f"Received from Controller: Pitch Bend")
-                _log(event)
+                    _log(f"Received from Controller: Pitch Bend")
+                    _log(event)
 
-            # Route message if we created an event
-            if event:
-                # Calculate MIDI receive time
-                if self.message_start_time is not None:
-                    receive_time = (time.monotonic() - self.message_start_time) * 1000  # Convert to ms
-                    timing_stats.add_timing("midi_receive", receive_time)
-                    _log(f"MIDI receive time: {receive_time:.2f}ms")
-
-                # Handle note_off messages with high priority
-                if event['type'] == 'note_off':
-                    # Send directly to router, bypassing connection manager
-                    self.router.process_message(event, self.voice_manager, high_priority=True)
-                else:
-                    self.connection_manager.handle_midi_message(event)
-                    if self.connection_manager.is_connected():
-                        self.router.process_message(event, self.voice_manager)
+                # Route message if we created an event
+                if event:
+                    # Attach timing ID to event for tracking through the chain
+                    event['timing_id'] = self.current_message_id
+                    
+                    # Handle note_off messages with high priority
+                    if event['type'] == 'note_off':
+                        # Send directly to router, bypassing connection manager
+                        self.router.process_message(event, self.voice_manager, high_priority=True)
+                    else:
+                        self.connection_manager.handle_midi_message(event)
+                        if self.connection_manager.is_connected():
+                            self.router.process_message(event, self.voice_manager)
 
         except Exception as e:
             _log(f"[ERROR] Error processing message: {str(e)}")
@@ -443,6 +441,7 @@ class MidiLogic:
                     return
 
                 # Reset partial message tracking and log
+                timing_stats.end_message_timing(self.current_message_id)
                 self.reset_partial_message()
                 _log("Partial message cleared")
 

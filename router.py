@@ -206,11 +206,10 @@ class ValueProcessor:
             return None
         elif msg_type == 'pitch_bend':
             raw_value = message['data'].get('value', 8192)
-            _log(f"[PITCH BEND] Got raw value: {raw_value}")
-            _log(f"[PITCH BEND] Template range: {range_str}")
+            _log(f"[NORMALIZE] Input: value={raw_value}, range={range_str}, type={msg_type}")
             if range_str:
                 normalized = self.normalize_value(raw_value, range_str, msg_type)
-                _log(f"[PITCH BEND] Normalized value: {normalized}")
+                _log(f"[NORMALIZE] Normalized value: {normalized}")
                 return normalized
             return raw_value
         elif msg_type == 'pressure':
@@ -325,12 +324,13 @@ class RouteBuilder:
     def __init__(self):
         _log("Initializing RouteBuilder")
     
-    def create_route(self, template, scope_value, value=None):
+    def create_route(self, template, scope_value, value=None, timing_id=None):
         """
         Create route string from template and values
         template: module/interface parts from path
         scope_value: 'global' or 'V{note}.{channel}'
         value: final value or LFO name to be applied
+        timing_id: optional timing ID to track through the chain
         """
         try:
             _log(f"Creating route with template: {template}, scope_value: {scope_value}, value: {value}")
@@ -356,7 +356,9 @@ class RouteBuilder:
             # Join all parts with forward slashes
             result = '/'.join(parts)
             _log(f"Created route: {result}")
-            return result
+            
+            # For CircuitPython compatibility, return route and timing_id separately
+            return (result, timing_id)
             
         except Exception as e:
             _log(f"[ERROR] Failed to create route: {str(e)}")
@@ -365,10 +367,11 @@ class RouteBuilder:
     def create_routes_for_message(self, message, path_info, value_processor):
         """
         Generate all routes for a given MIDI message using processed path info
-        Returns list of route strings
+        Returns list of (route, timing_id) tuples
         """
         routes = []
         msg_type = message['type']
+        timing_id = message.get('timing_id')
         
         # Get relevant route information based on message type
         if msg_type.startswith('cc'):
@@ -387,8 +390,8 @@ class RouteBuilder:
                 value = value_processor.get_route_value(message, route_info['template'])
                     
                 # Create and add route
-                route = self.create_route(route_info['template'], scope_value, value)
-                routes.append(route)
+                route_tuple = self.create_route(route_info['template'], scope_value, value, timing_id)
+                routes.append(route_tuple)
             except Exception as e:
                 _log(f"[ERROR] Failed to create route: {str(e)}")
                 continue
@@ -481,59 +484,45 @@ class Router:
 
     def process_message(self, message, voice_manager=None, high_priority=False):
         """Transform MIDI message to routes"""
-        process_start = time.monotonic()
-
         if not self._should_process_message(message):
             return
 
         try:
-            with TimingContext(timing_stats, "router_process"):
-                # For high priority messages (note_off), bypass the buffer
-                if high_priority:
-                    self._process_single_message(message, voice_manager, process_start)
-                else:
-                    # Queue regular messages
-                    self.message_buffer.append((message, voice_manager))
-                    _log(f"Message queued. Buffer size: {len(self.message_buffer)}/{self.BUFFER_SIZE}")
-                    
-                    # Process all buffered messages
-                    while len(self.message_buffer):
-                        msg, vm = self.message_buffer.popleft()
-                        self._process_single_message(msg, vm, process_start)
+            # For high priority messages (note_off), bypass the buffer
+            if high_priority:
+                self._process_single_message(message, voice_manager)
+            else:
+                # Queue regular messages
+                self.message_buffer.append((message, voice_manager))
+                _log(f"Message queued. Buffer size: {len(self.message_buffer)}/{self.BUFFER_SIZE}")
+                
+                # Process all buffered messages
+                while len(self.message_buffer):
+                    msg, vm = self.message_buffer.popleft()
+                    self._process_single_message(msg, vm)
 
         except Exception as e:
             _log(f"[ERROR] Message processing failed: {str(e)}")
 
-    def _process_single_message(self, message, voice_manager, process_start):
+    def _process_single_message(self, message, voice_manager):
         """Process a single message and generate routes"""
         try:
-            # Generate routes from message
-            routes = self.route_builder.create_routes_for_message(
-                message,
-                self.path_processor.route_info,
-                self.value_processor
-            )
+            # Get timing ID from message
+            timing_id = message.get('timing_id')
             
-            # Send routes to voice manager
-            if voice_manager is not None:
-                for route in routes:
-                    _log(f"Sending route: {route}")
-                    
-                    # Start timing this specific route
-                    route_start = time.monotonic()
-                    
-                    # Handle the route
-                    voice_manager.handle_route(route)
-                    
-                    # Calculate timings
-                    route_end = time.monotonic()
-                    route_duration = (route_end - route_start) * 1000  # Convert to ms
-                    total_duration = (route_end - process_start) * 1000  # Convert to ms
-                    
-                    _log(f"Route timing - Individual: {route_duration:.2f}ms, Total from MIDI: {total_duration:.2f}ms")
-                    
-                    # Add total latency timing
-                    timing_stats.add_timing("total_latency", total_duration)
-
+            with TimingContext(timing_stats, "router", timing_id):
+                # Generate routes from message
+                route_tuples = self.route_builder.create_routes_for_message(
+                    message,
+                    self.path_processor.route_info,
+                    self.value_processor
+                )
+                
+                # Send routes to voice manager
+                if voice_manager is not None:
+                    for route, timing_id in route_tuples:
+                        _log(f"Sending route: {route}")
+                        voice_manager.handle_route(route, timing_id)
+            
         except Exception as e:
             _log(f"[ERROR] Failed to process message: {str(e)}")
