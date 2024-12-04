@@ -13,7 +13,7 @@ NOTE_MINIMUM_PATHS = '''
 note/press/per_key/note_on
 note/release/per_key/note_off
 oscillator/frequency/per_key/note_number/note_on
-oscillator/waveform/global/sine/note_on
+oscillator/waveform/global/triangle/note_on
 '''
 
 FILTER_MINIMUM_PATHS = '''
@@ -30,7 +30,7 @@ ENVELOPE_MINIMUM_PATHS = '''
 note/press/per_key/note_on
 note/release/per_key/note_off
 oscillator/frequency/per_key/note_number/note_on
-oscillator/waveform/global/triangle/note_on
+oscillator/waveform/global/sine/note_on
 
 amplifier/envelope/attack_level/global/0.001-1/cc85
 amplifier/envelope/attack_time/global/0.001-0.5/cc73

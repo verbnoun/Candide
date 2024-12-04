@@ -4,6 +4,16 @@ Routes are processed by type-specific processors, values stored centrally,
 and applied by voices when minimum sets are complete.
 """
 
+# we need to clear all routes on instrument switch
+# note off needs to skip the buffer and maybe the line too in router.py
+# we need to thin the midi in router.py on many key holds
+# do we have a route buffer? no i think, we need a small one to create some priority based on the current state
+# per key things
+# volume knob
+# multi note amplitude reduction calculation
+# MPE continuous swamps the synth, must be thinned even if used
+# what is an appropriate frequency to send MPE continuous, i think might need to update bart to lower output, we might just be doing as much as possible
+
 import sys
 import time
 import synthio
