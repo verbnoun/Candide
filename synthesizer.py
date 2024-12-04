@@ -1,10 +1,5 @@
 """
 synthesizer.py - Route Processing and Voice Management
-
-- we need to clear all routes on instrument switch
-- multi note amplitude reduction calculation
-- lag on envelope minimum and all paths
-- overall efficiency improvements 
 """
 
 import sys
