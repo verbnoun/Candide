@@ -4,6 +4,19 @@ MIDI Message Processing Module
 Handles MIDI communication, message parsing, and routing.
 Supports full MPE by accepting all MIDI channels (0-15).
 Routes MIDI messages to router and connection manager.
+
+Update Goals:
+
+- Implement message priority in midi.py to ensure critical messages note_off and note_on are not lost 
+
+- Add rate limiting for MPE continuous controller messages, with the rate:
+    Being user configurable
+    If MPEC messages are more frequent that rate limit: divided evenly among per key channels
+        eg. at rate max 2 active channels at limit would drop every other message, 3 would drop every second and third.
+    Does not affect other channles
+    Maintain inclusion of MPE pre-note_on MPEC in note_on message, do not send as individual midi messages
+
+
 """
 
 import time
