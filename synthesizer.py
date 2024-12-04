@@ -2,11 +2,7 @@
 synthesizer.py - Route Processing and Voice Management
 
 - we need to clear all routes on instrument switch
-- note off needs to skip the buffer and maybe the line too in router.py
-- volume knob
 - multi note amplitude reduction calculation
-- MPE continuous swamps the synth, must be thinned even if used
-- what is an appropriate frequency to send MPE continuous, i think might need to update bart to lower output, we might just be doing as much as possible
 - lag on envelope minimum and all paths
 - overall efficiency improvements 
 """
@@ -126,12 +122,21 @@ class Voice:
                     envelope_params
                 )
             
+            # Calculate amplitude based on number of active notes
+            active_notes_count = len([v for v in self.engine.active_voices.values() if v.state == "active"])
+            # If this is a new note being pressed, include it in the count
+            if self.state == "initializing":
+                active_notes_count += 1
+            # Calculate amplitude scaling factor (1/sqrt(n) gives good perceptual balance)
+            amplitude = 1.0 / (active_notes_count ** 0.5) if active_notes_count > 0 else 1.0
+            
             # Create new note instance
             self.note = synthio.Note(
                 frequency=freq,
                 waveform=waveform,
                 filter=filter_obj,
-                envelope=envelope_obj
+                envelope=envelope_obj,
+                amplitude=amplitude
             )
             
             # Press the note and update state atomically
@@ -139,7 +144,10 @@ class Voice:
                 self.engine.synth.press(self.note)
                 self.state = "active"
                 self.last_update = time.monotonic()
-                _log(f"Pressed note for {self.address} with freq: {freq}")
+                _log(f"Pressed note for {self.address} with freq: {freq} and amplitude: {amplitude}")
+                
+                # Update amplitudes of other active notes
+                self.engine.update_note_amplitudes()
             except Exception as e:
                 self.note = None
                 self.state = "error"
@@ -169,6 +177,11 @@ class Voice:
         # Always update state even if release failed
         self.state = "released"
         self.last_update = time.monotonic()
+        
+        # Update amplitudes of remaining notes after release
+        if success:
+            self.engine.update_note_amplitudes()
+            
         return success
 
     def get_active_filter(self):
@@ -287,6 +300,28 @@ class SynthEngine:
             # Always attempt cleanup after route processing
             self.cleanup_voices()
 
+    def update_note_amplitudes(self):
+        """Update amplitudes of all active notes based on total count"""
+        try:
+            active_notes = [v for v in self.active_voices.values() if v.state == "active" and v.note]
+            active_count = len(active_notes)
+            
+            if active_count == 0:
+                return
+                
+            # Calculate new amplitude (1/sqrt(n) gives good perceptual balance)
+            new_amplitude = 1.0 / (active_count ** 0.5)
+            
+            # Update amplitude for all active notes
+            for voice in active_notes:
+                if voice.note:
+                    voice.note.amplitude = new_amplitude
+                    
+            _log(f"Updated {active_count} notes to amplitude: {new_amplitude:.3f}")
+            
+        except Exception as e:
+            _log(f"[ERROR] Failed to update note amplitudes: {str(e)}")
+
     def cleanup_voices(self):
         """Clean up finished or timed out voices"""
         current_time = time.monotonic()
@@ -364,16 +399,45 @@ class SynthEngine:
         try:
             # Release all notes first
             self.release_all_notes()
+            _log("Released all notes")
             
-            # Clear all stored values
+            # Clear all stored values in engine
             self.global_values.clear()
+            _log("Cleared global values")
             
             # Reset voice manager state
             self.active_voices.clear()
+            _log("Cleared active voices")
             
-            _log("Routes cleared successfully")
+            # Tell synthesizer to clear all routes in holding
+            self.synth.release_all()
+            _log("Released all synthio notes")
+            
+            # Clear stored values in each processor
+            for voice in list(self.active_voices.values()):
+                voice.stored_values.clear()
+            _log("Cleared voice stored values")
+            
+            # Clear waveform cache
+            if hasattr(self.route_manager.oscillator, '_waveforms'):
+                self.route_manager.oscillator._waveforms.clear()
+                _log("Cleared waveform cache")
+            
+            # Ensure any remaining voices are fully cleaned up
+            self.cleanup_voices()
+            _log("Final voice cleanup complete")
+            
+            _log("Routes and all stored values cleared successfully")
         except Exception as e:
             _log(f"[ERROR] Failed to clear routes: {str(e)}")
+            # Even if we hit an error, try to ensure basic state is cleared
+            try:
+                self.global_values.clear()
+                self.active_voices.clear()
+                self.synth.release_all()
+                _log("Emergency cleanup completed")
+            except Exception as cleanup_error:
+                _log(f"[ERROR] Emergency cleanup also failed: {str(cleanup_error)}")
 
     def cleanup(self):
         """Clean up resources on shutdown"""

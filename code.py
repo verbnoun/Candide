@@ -350,6 +350,8 @@ class RouterManager:
             
             # Release all currently held notes before switching
             self.voice_manager.release_all_notes()
+            # Clear all routes and state in voice manager before switching
+            self.voice_manager.clear_routes()
             
             # Create new Router with selected instrument
             paths = self.instruments[instrument_name]
