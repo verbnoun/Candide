@@ -251,9 +251,14 @@ class SynthEngine:
                     _log(f"[ERROR] Invalid route format: {route}")
                     return
 
-                # Extract scope and value
-                scope = parts[-2]
-                value = parts[-1] if len(parts) > 2 else None
+                # For note/press and note/release routes, the scope is the last part
+                if parts[0] == "note" and parts[1] in ["press", "release"]:
+                    scope = parts[-1]
+                    value = None
+                else:
+                    # For other routes, extract scope and value normally
+                    scope = parts[-2]
+                    value = parts[-1] if len(parts) > 2 else None
                 
                 # Process route based on type
                 processed = False

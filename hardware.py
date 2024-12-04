@@ -45,7 +45,6 @@ class BootBeep:
     """Simple audio hardware test that runs independently"""
     
     def play(self):
-
         if not HARDWARE_DEBUG:
             return
 
@@ -87,7 +86,8 @@ class VolumeManager(HardwareComponent):
     def __init__(self, pin):
         super().__init__()
         self.pot = analogio.AnalogIn(pin)
-        self.last_value = 0
+        self.last_value = self.pot.value  # Initialize with current value
+        self.last_normalized = self.normalize_value(self.last_value)  # Track normalized value
     
     def normalize_value(self, value):
         """Convert ADC value to normalized range (0.0-1.0)"""
@@ -104,24 +104,28 @@ class VolumeManager(HardwareComponent):
         return round(normalized, 5)
 
     def read(self):
-        """Read and process potentiometer value"""
-        raw_value = self.pot.value
-        change = abs(raw_value - self.last_value)
-
-        if self.is_active:
-            if change != 0:
-                normalized_new = self.normalize_value(raw_value)
-                self.last_value = raw_value
-                return normalized_new
-            elif change < POT_THRESHOLD:
-                self.is_active = False
-        elif change > POT_THRESHOLD:
-            self.is_active = True
-            normalized_new = self.normalize_value(raw_value)
-            self.last_value = raw_value
-            return normalized_new
+        """Read and process potentiometer value with improved noise handling"""
+        try:
+            raw_value = self.pot.value
+            change = abs(raw_value - self.last_value)
             
-        return None
+            # Only process if change exceeds threshold
+            if change > POT_THRESHOLD:
+                normalized_new = self.normalize_value(raw_value)
+                
+                # Only update if normalized value actually changed
+                if normalized_new != self.last_normalized:
+                    self.last_value = raw_value
+                    self.last_normalized = normalized_new
+                    self.is_active = True
+                    return normalized_new
+                    
+            # Return None if no significant change
+            return None
+            
+        except Exception as e:
+            _log(f"[ERROR] Volume read failed: {str(e)}")
+            return None
         
     def cleanup(self):
         """Clean shutdown of potentiometer"""

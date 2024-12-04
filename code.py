@@ -210,6 +210,7 @@ class AudioSystem:
         self.audio_out = None
         self.mixer = None
         self.voice_manager = voice_manager
+        self.current_volume = 0.5  # Initialize current_volume first
         self._setup_audio()
 
     def _setup_audio(self):
@@ -238,15 +239,11 @@ class AudioSystem:
             self.audio_out.play(self.mixer)
             self.mixer.voice[0].play(self.voice_manager.get_synth())
             
-            # Set initial low volume for test
-            original_volume = self.mixer.voice[0].level
-            self.mixer.voice[0].level = 0.5
+            # Set initial volume
+            self.set_volume(self.current_volume)
             
             # Test audio path
             self.voice_manager.test_audio_hardware()
-            
-            # Restore volume
-            self.mixer.voice[0].level = original_volume
 
             _log("Audio system initialized successfully")
 
@@ -256,11 +253,28 @@ class AudioSystem:
             raise
 
     def set_volume(self, normalized_volume):
-        """Set volume for the primary mixer channel"""
+        """Set volume for all mixer voices with logarithmic scaling"""
         try:
+            # Ensure volume is in valid range
             volume = max(0.0, min(1.0, normalized_volume))
+            
+            # Apply logarithmic scaling for more natural volume control
+            # Using a modified log scale that gives better control in the low range
+            if volume > 0:
+                log_volume = (2 ** (volume * 2) - 1) / 3  # Gives range 0.0 to 1.0
+            else:
+                log_volume = 0.0
+                
+            # Apply volume to all mixer voices
             if self.mixer:
-                self.mixer.voice[0].level = volume
+                for i in range(len(self.mixer.voice)):
+                    self.mixer.voice[i].level = log_volume
+                
+            # Store current volume
+            self.current_volume = volume
+            
+            _log(f"Volume set to {volume:.3f} (scaled: {log_volume:.3f})")
+            
         except Exception as e:
             _log(f"[ERROR] Volume update failed: {str(e)}")
 
@@ -269,7 +283,9 @@ class AudioSystem:
         _log("Starting audio system cleanup")
         try:
             if self.mixer:
-                self.mixer.voice[0].level = 0
+                # Fade out all voices
+                for voice in self.mixer.voice:
+                    voice.level = 0
                 time.sleep(0.01)  # Brief pause to let audio settle
             if self.audio_out:
                 self.audio_out.stop()
@@ -411,23 +427,28 @@ class Candide:
         
         self.last_encoder_scan = 0
         self.last_volume_scan = 0
+        self.last_volume = None  # Track last volume for change detection
 
         try:
             _log("Setting initial volume...")
             initial_volume = self.hardware_manager.get_initial_volume()
             _log(f"Initial volume: {initial_volume:.3f}")
             self.audio_system.set_volume(initial_volume)
+            self.last_volume = initial_volume
             _log("\nCandide (v1.0) is awake!... ( ◔◡◔)♬\n", effect='cycle')
         except Exception as e:
             _log(f"[ERROR] Initialization error: {str(e)}")
             raise
 
     def _check_volume(self):
+        """Check and update volume with change detection and logging"""
         current_time = time.monotonic()
         if current_time - self.last_volume_scan >= UPDATE_INTERVAL:
             new_volume = self.hardware_manager.read_volume()
-            if new_volume is not None:
+            if new_volume is not None and new_volume != self.last_volume:
+                _log(f"Volume changed: {new_volume:.3f}")
                 self.audio_system.set_volume(new_volume)
+                self.last_volume = new_volume
             self.last_volume_scan = current_time
 
     def _check_encoder(self):
