@@ -1,14 +1,5 @@
-"""
-Paths are authoritative - no defaults or validation needed.
-Path Schema: Module/Interface/Property/Scope/Range/MidiType
-where:
-- Module: The main synthio class (note, oscillator, filter, lfo)
-- Interface: The actual property or method on that class
-- Property: The specific parameter being controlled (if applicable)
-- Scope: per_key or global (describes how the value is applied)
-- Range: Valid input range or options
-- MidiType: MIDI message type that provides the value
-"""
+"""Instrument configuration management system defining synthesizer paths and parameter mappings."""
+
 NOTE_MINIMUM_PATHS = '''
 note/press/per_key/note_on
 note/release/per_key/note_off
@@ -68,3 +59,44 @@ lfo/phase_offset/tremolo_lfo/global/0-1/cc105
 lfo/once/tremolo_lfo/global/0-1/cc106
 lfo/interpolate/tremolo_lfo/global/0-1/cc107
 '''
+
+class InstrumentManager:
+    def __init__(self):
+        self.instruments = {}
+        self.current_instrument = None
+        self._discover_instruments()
+
+    def _discover_instruments(self):
+        self.instruments.clear()
+        
+        import sys
+        current_module = sys.modules[__name__]
+        for name in dir(current_module):
+            if name.endswith('_PATHS'):
+                instrument_name = name[:-6].lower()
+                paths = getattr(current_module, name)
+                if isinstance(paths, str):
+                    self.instruments[instrument_name] = paths
+        
+        if not self.instruments:
+            raise RuntimeError("No instruments found in config")
+            
+        if not self.current_instrument:
+            self.current_instrument = next(iter(self.instruments))
+
+    def set_instrument(self, instrument_name):
+        try:
+            if instrument_name not in self.instruments:
+                return False
+            
+            self.current_instrument = instrument_name
+            return True
+            
+        except Exception as e:
+            return False
+
+    def get_current_config(self):
+        return self.instruments.get(self.current_instrument)
+
+    def get_available_instruments(self):
+        return list(self.instruments.keys())

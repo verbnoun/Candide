@@ -1,30 +1,17 @@
-"""
-Hardware Interface Management Module
-
-This module provides essential hardware interaction capabilities 
-for the Candide Synthesizer, enabling direct interface with 
-physical input components.
-
-Key Responsibilities:
-- Manage analog input from potentiometers
-- Handle rotary encoder interactions
-- Provide normalized hardware input processing
-- Support hardware-level configuration and constants
-- Enable precise input reading and filtering
-- Test audio output hardware on boot
-"""
+"""Hardware interface management system for Candide synthesizer providing direct control of physical components."""
 
 import board
 import analogio
 import rotaryio
+import digitalio
 import time
 import synthio
 import sys
 import audiobusio
+import audiomixer
 from constants import *
 
 def _log(message):
-    """Conditional logging function"""
     if not HARDWARE_DEBUG:
         return
         
@@ -41,9 +28,74 @@ def _log(message):
             color = RESET
         print(f"{color}[HARD  ] {message}{RESET}", file=sys.stderr)
 
+class AudioSystem:
+    def __init__(self):
+        _log("Initializing AudioSystem")
+        self.audio_out = None
+        self.mixer = None
+        self.current_volume = 0.5
+        self._setup_audio()
+
+    def _setup_audio(self):
+        try:
+            audiobusio.I2SOut(I2S_BIT_CLOCK, I2S_WORD_SELECT, I2S_DATA).deinit()
+
+            self.audio_out = audiobusio.I2SOut(
+                bit_clock=I2S_BIT_CLOCK,
+                word_select=I2S_WORD_SELECT,
+                data=I2S_DATA
+            )
+
+            self.mixer = audiomixer.Mixer(
+                sample_rate=SAMPLE_RATE,
+                buffer_size=AUDIO_BUFFER_SIZE,
+                channel_count=AUDIO_CHANNEL_COUNT
+            )
+
+            self.audio_out.play(self.mixer)
+            
+            self.set_volume(self.current_volume)
+            
+            _log("Audio system initialized successfully")
+
+        except Exception as e:
+            _log(f"[ERROR] Audio setup failed: {str(e)}")
+            self.cleanup()
+            raise
+
+    def set_volume(self, normalized_volume):
+        try:
+            volume = max(0.0, min(1.0, normalized_volume))
+            
+            if volume > 0:
+                log_volume = (2 ** (volume * 2) - 1) / 3
+            else:
+                log_volume = 0.0
+                
+            if self.mixer:
+                for i in range(len(self.mixer.voice)):
+                    self.mixer.voice[i].level = log_volume
+                
+            self.current_volume = volume
+            _log(f"Volume set to {volume:.3f} (log_volume: {log_volume:.3f})")
+            
+        except Exception as e:
+            _log(f"[ERROR] Volume update failed: {str(e)}")
+
+    def cleanup(self):
+        _log("Starting audio system cleanup")
+        try:
+            if self.mixer:
+                for voice in self.mixer.voice:
+                    voice.level = 0
+                time.sleep(0.01)
+            if self.audio_out:
+                self.audio_out.stop()
+                self.audio_out.deinit()
+        except Exception as e:
+            _log(f"[ERROR] Audio cleanup failed: {str(e)}")
+
 class BootBeep:
-    """Simple audio hardware test that runs independently"""
-    
     def play(self):
         if not HARDWARE_DEBUG:
             return
@@ -65,32 +117,29 @@ class BootBeep:
             time.sleep(0.05)
             _log("BootBeep: BEEP!")
             synth.deinit()
-            audio_out.deinit()  # Important: free up I2S pins
+            audio_out.deinit()
             
         except Exception as e:
             print(f"[BOOTBEEP] error: {str(e)}")
             if audio_out:
-                audio_out.deinit()  # Ensure pins are freed even on error
+                audio_out.deinit()
 
 class HardwareComponent:
-    """Base class for hardware components"""
     def __init__(self):
         self.is_active = False
         
     def cleanup(self):
-        """Clean shutdown of hardware component"""
         pass
 
 class VolumeManager(HardwareComponent):
-    """Manages volume potentiometer functionality"""
     def __init__(self, pin):
         super().__init__()
         self.pot = analogio.AnalogIn(pin)
-        self.last_value = self.pot.value  # Initialize with current value
-        self.last_normalized = self.normalize_value(self.last_value)  # Track normalized value
+        self.last_value = self.pot.value
+        self.last_normalized = self.normalize_value(self.last_value)
+        _log(f"Volume pot initialized. Initial raw value: {self.last_value}, normalized: {self.last_normalized:.3f}")
     
     def normalize_value(self, value):
-        """Convert ADC value to normalized range (0.0-1.0)"""
         clamped_value = max(min(value, ADC_MAX), ADC_MIN)
         normalized = (clamped_value - ADC_MIN) / (ADC_MAX - ADC_MIN)
         
@@ -104,23 +153,20 @@ class VolumeManager(HardwareComponent):
         return round(normalized, 5)
 
     def read(self):
-        """Read and process potentiometer value with improved noise handling"""
         try:
             raw_value = self.pot.value
             change = abs(raw_value - self.last_value)
             
-            # Only process if change exceeds threshold
             if change > POT_THRESHOLD:
                 normalized_new = self.normalize_value(raw_value)
                 
-                # Only update if normalized value actually changed
                 if normalized_new != self.last_normalized:
+                    _log(f"Volume change detected - Raw: {raw_value} (Δ{change}), Normalized: {normalized_new:.3f}")
                     self.last_value = raw_value
                     self.last_normalized = normalized_new
                     self.is_active = True
                     return normalized_new
                     
-            # Return None if no significant change
             return None
             
         except Exception as e:
@@ -128,12 +174,10 @@ class VolumeManager(HardwareComponent):
             return None
         
     def cleanup(self):
-        """Clean shutdown of potentiometer"""
         if self.pot:
             self.pot.deinit()
 
 class EncoderManager(HardwareComponent):
-    """Manages instrument selection encoder functionality"""
     def __init__(self, clk_pin, dt_pin):
         super().__init__()
         self.encoder = rotaryio.IncrementalEncoder(clk_pin, dt_pin, divisor=2)
@@ -142,13 +186,11 @@ class EncoderManager(HardwareComponent):
         self.reset_position()
 
     def reset_position(self):
-        """Reset encoder to initial state"""
         self.encoder.position = 0
         self.last_position = 0
         self.current_position = 0
 
     def read(self):
-        """Read encoder and return events if position changed"""
         events = []
         current_raw_position = self.encoder.position
         
@@ -163,27 +205,52 @@ class EncoderManager(HardwareComponent):
         
         return events
 
+class DetectPinManager(HardwareComponent):
+    def __init__(self, pin):
+        super().__init__()
+        _log("Initializing detection pin...")
+        self.detect_pin = digitalio.DigitalInOut(pin)
+        self.detect_pin.direction = digitalio.Direction.INPUT
+        self.detect_pin.pull = digitalio.Pull.DOWN
+        self.last_state = self.detect_pin.value
+        _log(f"Detection pin initialized (initial state: {'HIGH' if self.last_state else 'LOW'})")
+
+    def is_detected(self):
+        current_state = self.detect_pin.value
+        if current_state != self.last_state:
+            _log(f"Detect pin state change: {'HIGH' if current_state else 'LOW'}")
+            self.last_state = current_state
+        return current_state
+
+    def cleanup(self):
+        if self.detect_pin:
+            self.detect_pin.deinit()
+
 class HardwareManager:
-    """Coordinates hardware component interactions"""
     def __init__(self):
         _log("Starting HardwareManager initialization...")
         
-        # Test audio hardware first
         _log("Running BootBeep test...")
         BootBeep().play()
         
         self.volume = None
         self.encoder = None
+        self.detect = None
+        self.last_encoder_scan = 0
+        self.last_volume_scan = 0
+        self.last_volume = None
         self._initialize_components()
 
     def _initialize_components(self):
-        """Initialize all hardware components"""
         try:
             _log("Initializing volume manager...")
             self.volume = VolumeManager(VOLUME_POT)
             
             _log("Initializing encoder manager...")
             self.encoder = EncoderManager(INSTRUMENT_ENC_CLK, INSTRUMENT_ENC_DT)
+            
+            _log("Initializing detect pin manager...")
+            self.detect = DetectPinManager(DETECT_PIN)
             
             _log("Hardware components initialized successfully")
         except Exception as e:
@@ -192,25 +259,59 @@ class HardwareManager:
             raise
 
     def get_initial_volume(self):
-        """Get initial normalized volume setting"""
         if self.volume:
-            return self.volume.normalize_value(self.volume.pot.value)
+            initial_volume = self.volume.normalize_value(self.volume.pot.value)
+            _log(f"Getting initial volume: {initial_volume:.3f}")
+            return initial_volume
         return 0.0
 
     def read_encoder(self):
-        """Read encoder state"""
         if self.encoder:
             return self.encoder.read()
         return []
 
     def read_volume(self):
-        """Read volume potentiometer state"""
         if self.volume:
             return self.volume.read()
         return None
+
+    def is_base_station_detected(self):
+        if self.detect:
+            return self.detect.is_detected()
+        return False
+
+    def check_volume(self, audio_system):
+        current_time = time.monotonic()
+        if current_time - self.last_volume_scan >= UPDATE_INTERVAL:
+            new_volume = self.read_volume()
+            if new_volume is not None and new_volume != self.last_volume:
+                _log(f"Volume update - Previous: {self.last_volume:.3f}, New: {new_volume:.3f}")
+                audio_system.set_volume(new_volume)
+                self.last_volume = new_volume
+            self.last_volume_scan = current_time
+
+    def check_encoder(self, connection_manager, router_manager):
+        current_time = time.monotonic()
+        if current_time - self.last_encoder_scan >= ENCODER_SCAN_INTERVAL:
+            events = self.read_encoder()
+            valid_states = [ConnectionState.STANDALONE, ConnectionState.CONNECTED]
+            current_state = connection_manager.state
+            
+            if current_state in valid_states and events:
+                for event_type, direction in events:
+                    if event_type == 'instrument_change':
+                        instruments = router_manager.get_available_instruments()
+                        current_idx = instruments.index(router_manager.current_instrument)
+                        new_idx = (current_idx + direction) % len(instruments)
+                        new_instrument = instruments[new_idx]
+                        
+                        if router_manager.set_instrument(new_instrument):
+                            if current_state == ConnectionState.CONNECTED:
+                                connection_manager.send_config()
+                            
+            self.last_encoder_scan = current_time
         
     def cleanup(self):
-        """Clean shutdown of all hardware components"""
         if self.encoder:
             self.encoder.cleanup()
             self.encoder = None
@@ -218,3 +319,7 @@ class HardwareManager:
         if self.volume:
             self.volume.cleanup()
             self.volume = None
+            
+        if self.detect:
+            self.detect.cleanup()
+            self.detect = None
