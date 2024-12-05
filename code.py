@@ -48,6 +48,8 @@ class Candide:
 
         _log("Initializing UART interfaces...")
         self.transport, self.text_uart = UartManager.get_interfaces()
+        # Get MIDI interface explicitly
+        self.midi_interface = UartManager.get_midi_interface()
 
         _log("Initializing audio system...")
         self.audio_system = AudioSystem()
@@ -59,7 +61,7 @@ class Candide:
         self.connection_manager = ConnectionManager(
             self.text_uart,
             self.instrument_manager,
-            self.transport,
+            self.midi_interface,  # Pass MIDI interface instead of transport
             self.hardware_manager
         )
 
@@ -77,7 +79,7 @@ class Candide:
     def update(self):
         try:
             if self.transport.in_waiting:
-                self.transport.log_incoming_data()
+                self.transport.log_incoming_data()  # This will now handle distributing MIDI messages
             self.connection_manager.update_state()
             self.hardware_manager.check_encoder(self.connection_manager, self.instrument_manager)
             self.hardware_manager.check_volume(self.audio_system)
