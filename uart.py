@@ -202,6 +202,19 @@ class MidiInterface:
         """Remove a subscription"""
         self.transport.unsubscribe(subscription)
 
+    def send(self, message):
+        """Send a MIDI message through the transport"""
+        if hasattr(self.transport, 'midi'):
+            self.transport.midi.send(message)
+
+    def reset_input_buffer(self):
+        """Reset the input buffer"""
+        self.transport.flush_buffers()
+
+    def reset_output_buffer(self):
+        """Reset the output buffer"""
+        self.transport.flush_buffers()
+
     def cleanup(self):
         pass
 

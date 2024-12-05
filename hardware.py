@@ -205,26 +205,65 @@ class EncoderManager(HardwareComponent):
         
         return events
 
-class DetectPinManager(HardwareComponent):
-    def __init__(self, pin):
-        super().__init__()
+import time
+import digitalio
+import board
+
+def _log(message):
+    """Simple logging function."""
+    print(message)
+
+class DetectPinManager:
+    def __init__(self, pin, log_interval=5):
+        """
+        Initialize the DetectPinManager.
+        
+        :param pin: The GPIO pin to monitor.
+        :param log_interval: Time interval (in seconds) for periodic logging.
+        """
         _log("Initializing detection pin...")
+        
+        # Set up the pin
         self.detect_pin = digitalio.DigitalInOut(pin)
         self.detect_pin.direction = digitalio.Direction.INPUT
-        self.detect_pin.pull = digitalio.Pull.DOWN
+        self.detect_pin.pull = digitalio.Pull.DOWN  # Use internal pull-down resistor
+        
+        # Initialize state tracking
         self.last_state = self.detect_pin.value
+        self.last_log_time = time.monotonic()
+        self.log_interval = log_interval  # Log periodically
+        
+        # Initial log for verification
         _log(f"Detection pin initialized (initial state: {'HIGH' if self.last_state else 'LOW'})")
 
     def is_detected(self):
+        """
+        Check the pin state (HIGH or LOW) and log changes.
+        
+        :return: True if HIGH (connected), False if LOW (disconnected).
+        """
         current_state = self.detect_pin.value
+        
+        # Log state changes
         if current_state != self.last_state:
-            _log(f"Detect pin state change: {'HIGH' if current_state else 'LOW'}")
+            _log(f"State changed: {'HIGH' if current_state else 'LOW'}")
             self.last_state = current_state
+        
+        # Periodic logging for monitoring
+        current_time = time.monotonic()
+        if current_time - self.last_log_time >= self.log_interval:
+            self.last_log_time = current_time
+        
         return current_state
 
     def cleanup(self):
+        """
+        Deinitialize the pin safely.
+        """
         if self.detect_pin:
             self.detect_pin.deinit()
+            _log("Detection pin deinitialized.")
+
 
 class HardwareManager:
     def __init__(self):
