@@ -23,7 +23,6 @@ class Synthesizer:
         self.enabled_messages = set()
         self.enabled_ccs = set()
         self.ready_callback = None
-        self.is_ready = False
         _log("Synthesizer initialized")
 
     def register_ready_callback(self, callback):
@@ -32,25 +31,24 @@ class Synthesizer:
         Args:
             callback: Function to call when synth is ready
         """
-        _log("Ready callback registered")
         self.ready_callback = callback
-        # If we're already configured, signal ready immediately
-        if self.is_ready and self.ready_callback:
-            _log("Already configured - signaling ready immediately")
-            self.ready_callback()
+        _log("Ready callback registered")
 
     def _parse_paths(self, paths):
         """Parse paths to determine which MIDI messages to handle.
         
         Args:
             paths: String containing instrument paths
-        """
-        if not paths:
-            return set(), set()
             
+        Returns:
+            Tuple of (message_types, cc_numbers) sets
+        """
         message_types = set()
         cc_numbers = set()
         
+        if not paths:
+            return message_types, cc_numbers
+            
         for line in paths.strip().split('\n'):
             if not line:
                 continue
@@ -70,26 +68,26 @@ class Synthesizer:
                 message_types.add('pressure')
                 
             # Check for CC numbers
-            last_part = parts[-1]
-            if last_part.startswith('cc'):
-                try:
-                    cc_num = int(last_part[2:])
-                    cc_numbers.add(cc_num)
-                    message_types.add('cc')
-                except ValueError:
-                    continue
+            for part in parts:
+                if part.startswith('cc'):
+                    try:
+                        cc_num = int(part[2:])
+                        cc_numbers.add(cc_num)
+                        message_types.add('cc')
+                    except ValueError:
+                        continue
 
         return message_types, cc_numbers
 
     def _setup_midi_handlers(self):
         """Set up MIDI message handlers based on current paths."""
-        _log("Setting up MIDI handlers...")
-        self.is_ready = False
-        
         # Clear any existing subscription
         if self.current_subscription:
             self.midi_interface.unsubscribe(self.current_subscription)
+            self.current_subscription = None
             
+        _log("Setting up MIDI handlers...")
+        
         # Determine which message types to subscribe to
         message_types = []
         if 'note_on' in self.enabled_messages:
@@ -105,7 +103,6 @@ class Synthesizer:
             
         # Create new subscription if we have message types to handle
         if message_types:
-            # Pass enabled_ccs to subscription for CC filtering
             self.current_subscription = self.midi_interface.subscribe(
                 self._handle_midi_message,
                 message_types=message_types,
@@ -115,8 +112,7 @@ class Synthesizer:
             if self.enabled_ccs:
                 _log(f"Listening for CCs: {sorted(list(self.enabled_ccs))}")
 
-        # Mark as ready and signal if callback registered
-        self.is_ready = True
+        # Signal ready state
         if self.ready_callback:
             _log("Configuration complete - signaling ready")
             self.ready_callback()
@@ -128,8 +124,12 @@ class Synthesizer:
             paths: String containing new instrument paths
         """
         _log("Updating instrument configuration...")
+        
+        # Update paths and parse new configuration
         self.current_paths = paths
         self.enabled_messages, self.enabled_ccs = self._parse_paths(paths)
+        
+        # Immediately reconfigure MIDI handlers
         self._setup_midi_handlers()
 
     def _handle_midi_message(self, msg):
@@ -138,7 +138,6 @@ class Synthesizer:
         Args:
             msg: MIDI message object
         """
-        # Filter messages based on current configuration
         if isinstance(msg, NoteOn) and 'note_on' in self.enabled_messages:
             _log(f"Note On received - note={msg.note}, velocity={msg.velocity}, channel={msg.channel+1}")
             
@@ -160,5 +159,5 @@ class Synthesizer:
         """Clean up synthesizer resources."""
         if self.current_subscription:
             self.midi_interface.unsubscribe(self.current_subscription)
-        self.is_ready = False
+            self.current_subscription = None
         _log("Cleaning up synthesizer")

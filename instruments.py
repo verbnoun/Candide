@@ -75,22 +75,21 @@ class InstrumentManager:
 
     def register_components(self, connection_manager=None, synthesizer=None):
         """Register ConnectionManager and Synthesizer components."""
-        _log("Registering components...")
-        
         if connection_manager:
-            _log("Registering connection manager")
             self.connection_manager = connection_manager
+            _log("Registered connection manager")
             
         if synthesizer:
-            _log("Registering synthesizer")
             self.synthesizer = synthesizer
-        
+            _log("Registered synthesizer")
+            
         # Register connection manager's callback with synthesizer
         if self.synthesizer and self.connection_manager:
-            _log("Wiring up synth ready callback")
             self.synthesizer.register_ready_callback(self.connection_manager.on_synth_ready)
+            _log("Connected synth ready callback")
 
     def _discover_instruments(self):
+        """Discover available instruments from module constants."""
         self.instruments.clear()
         
         import sys
@@ -111,11 +110,7 @@ class InstrumentManager:
         _log(f"Discovered instruments: {', '.join(self.instruments.keys())}")
 
     def get_current_cc_configs(self):
-        """Get all CC numbers and parameter names for the current instrument.
-        
-        Returns:
-            List of tuples (cc_number, parameter_name) for all CC mappings in current instrument.
-        """
+        """Get all CC numbers and parameter names for the current instrument."""
         paths = self.get_current_config()
         if not paths:
             return []
@@ -124,14 +119,14 @@ class InstrumentManager:
         seen_ccs = set()
         
         for line in paths.strip().split('\n'):
-            if not line or 'cc' not in line:
+            if not line:
                 continue
                 
             parts = line.strip().split('/')
             
-            # Find the last part that contains 'cc'
+            # Check all parts for CC numbers
             cc_part = None
-            for part in reversed(parts):
+            for part in parts:
                 if part.startswith('cc'):
                     cc_part = part
                     break
@@ -159,34 +154,30 @@ class InstrumentManager:
         return cc_configs
 
     def set_instrument(self, instrument_name):
-        """Set current instrument and notify registered components."""
-        try:
-            if instrument_name not in self.instruments:
-                _log(f"Invalid instrument name: {instrument_name}")
-                return False
+        """Set current instrument and update components."""
+        if instrument_name not in self.instruments:
+            _log(f"Invalid instrument name: {instrument_name}")
+            return False
             
-            _log(f"Setting instrument to: {instrument_name}")
-            self.current_instrument = instrument_name
-            paths = self.get_current_config()
+        _log(f"Setting instrument to: {instrument_name}")
+        self.current_instrument = instrument_name
+        paths = self.get_current_config()
 
-            # Update synthesizer first - it will signal when ready
-            if self.synthesizer:
-                _log("Updating synthesizer configuration")
-                self.synthesizer.update_instrument(paths)
-                
-            # Connection manager will wait for synth ready signal
-            # before sending config
-
+        # Update synthesizer configuration
+        if self.synthesizer:
+            _log("Updating synthesizer configuration")
+            self.synthesizer.update_instrument(paths)
+            # Synthesizer will signal ready to connection manager
             return True
             
-        except Exception as e:
-            _log(f"Error setting instrument: {str(e)}")
-            return False
+        return False
 
     def get_current_config(self):
+        """Get the current instrument's configuration paths."""
         return self.instruments.get(self.current_instrument)
 
     def get_available_instruments(self):
+        """Get list of available instrument names."""
         return list(self.instruments.keys())
 
     def cleanup(self):
