@@ -7,6 +7,7 @@ from adafruit_midi.note_off import NoteOff
 from adafruit_midi.control_change import ControlChange
 from adafruit_midi.pitch_bend import PitchBend
 from adafruit_midi.channel_pressure import ChannelPressure
+from constants import SAMPLE_RATE, AUDIO_CHANNEL_COUNT
 
 def _log(message, is_error=False, is_debug=False):
     """Enhanced logging with error and debug support."""
@@ -161,37 +162,64 @@ class NotePool:
     
     def get_note(self, note_number):
         """Get next available note or release oldest if pool exhausted."""
-        if self.available:
-            note = self.available.pop()
-        elif len(self.pressed) >= self.size:
-            # Release oldest note
-            oldest_number = self.order[0]
-            note = self.pressed[oldest_number]
-            self.order.remove(oldest_number)
-            del self.pressed[oldest_number]
-            _log(f"Pool full - releasing oldest note {oldest_number}", is_debug=True)
-        else:
-            _log("Error: Note pool in invalid state", is_error=True)
-            return None
+        try:
+            # If note is already pressed, release it first
+            if note_number in self.pressed:
+                self.release_note(note_number)
+                _log(f"Released already pressed note {note_number}", is_debug=True)
             
-        self.pressed[note_number] = note
-        self.order.append(note_number)
-        return note
+            if self.available:
+                note = self.available.pop()
+            elif len(self.pressed) >= self.size:
+                # Release oldest note if pool is full
+                oldest_number = self.order[0]
+                note = self.pressed[oldest_number]
+                self.order.remove(oldest_number)
+                del self.pressed[oldest_number]
+                _log(f"Pool full - released oldest note {oldest_number}", is_debug=True)
+            else:
+                _log("Error: Note pool in invalid state", is_error=True)
+                return None
+                
+            self.pressed[note_number] = note
+            self.order.append(note_number)
+            _log(f"Note {note_number} allocated from pool", is_debug=True)
+            return note
+            
+        except Exception as e:
+            _log(f"Error in get_note: {str(e)}", is_error=True)
+            return None
         
     def release_note(self, note_number):
         """Release a note back to the pool."""
-        if note_number in self.pressed:
-            note = self.pressed[note_number]
-            del self.pressed[note_number]
-            self.order.remove(note_number)
-            self.available.append(note)
-            return note
-        return None
+        try:
+            if note_number in self.pressed:
+                note = self.pressed[note_number]
+                del self.pressed[note_number]
+                self.order.remove(note_number)
+                self.available.append(note)
+                _log(f"Note {note_number} released back to pool", is_debug=True)
+                return note
+            return None
+            
+        except Exception as e:
+            _log(f"Error in release_note: {str(e)}", is_error=True)
+            return None
+    
+    def release_all(self):
+        """Release all notes back to the pool."""
+        try:
+            for note_number in list(self.pressed.keys()):
+                self.release_note(note_number)
+            _log("All notes released", is_debug=True)
+        except Exception as e:
+            _log(f"Error in release_all: {str(e)}", is_error=True)
 
 class Synthesizer:
-    def __init__(self, midi_interface):
+    def __init__(self, midi_interface, audio_system=None):
         """Initialize the synthesizer with a MIDI interface."""
         self.midi_interface = midi_interface
+        self.audio_system = audio_system
         self.synth = None
         self.note_pool = NotePool(5)
         self.path_parser = PathParser()
@@ -211,7 +239,12 @@ class Synthesizer:
             waveform = array.array('h', range(-32767, 32767, 32767 * 2 // 100))
             
             _log(f"Creating synthio synthesizer with {waveform_type} waveform")
-            self.synth = synthio.Synthesizer(sample_rate=22050, channel_count=1, waveform=waveform)
+            self.synth = synthio.Synthesizer(sample_rate=SAMPLE_RATE, channel_count=AUDIO_CHANNEL_COUNT, waveform=waveform)
+            
+            # Connect synthesizer to audio system's mixer if available
+            if self.audio_system and self.audio_system.mixer:
+                self.audio_system.mixer.voice[0].play(self.synth)
+                _log("Connected synthesizer to audio mixer")
             
             # Pre-allocate notes
             for _ in range(5):
@@ -267,6 +300,10 @@ class Synthesizer:
         _log("----------------------------------------")
         
         try:
+            # Release all notes before reconfiguring
+            if self.note_pool:
+                self.note_pool.release_all()
+            
             # Parse paths using PathParser
             self.path_parser.parse_paths(paths)
             
@@ -286,7 +323,8 @@ class Synthesizer:
     def _handle_midi_message(self, msg):
         """Handle incoming MIDI messages."""
         try:
-            if isinstance(msg, NoteOn) and 'noteon' in self.path_parser.enabled_messages:
+            if isinstance(msg, NoteOn) and msg.velocity > 0 and 'noteon' in self.path_parser.enabled_messages:
+                # Handle note on with velocity > 0
                 note = self.note_pool.get_note(msg.note)
                 if note:
                     freq = synthio.midi_to_hz(msg.note)
@@ -298,14 +336,22 @@ class Synthesizer:
                             value = range_obj.convert(msg.velocity)
                             _log(f"Applied {param_name} = {value} for note {msg.note}")
                             
-                    self.synth.press([note])
-                _log(f"Note {msg.note} pressed (f={freq:.1f}Hz)")
+                    # Use atomic change for note press
+                    self.synth.change(press=[note])
+                    _log(f"Note {msg.note} pressed (f={freq:.1f}Hz)")
                 
-            elif isinstance(msg, NoteOff) and 'noteoff' in self.path_parser.enabled_messages:
+            elif (isinstance(msg, NoteOff) or 
+                  (isinstance(msg, NoteOn) and msg.velocity == 0)) and 'noteoff' in self.path_parser.enabled_messages:
+                # Handle both note off messages and note on with velocity 0 (note off)
                 note = self.note_pool.release_note(msg.note)
                 if note:
-                    self.synth.release([note])
-                _log(f"Note {msg.note} released")
+                    # Use atomic change for note release
+                    self.synth.change(release=[note])
+                    # Verify release completed
+                    state, _ = self.synth.note_info(note)
+                    while state is not None:
+                        state, _ = self.synth.note_info(note)
+                    _log(f"Note {msg.note} released")
                 
             elif isinstance(msg, ControlChange) and 'cc' in self.path_parser.enabled_messages:
                 cc_trigger = f"cc{msg.control}"
@@ -331,15 +377,37 @@ class Synthesizer:
                 
         except Exception as e:
             _log(f"Error handling MIDI message: {str(e)}", is_error=True)
+            # On error, release all notes atomically
+            if self.synth:
+                self.synth.release_all()
+            if self.note_pool:
+                self.note_pool.release_all()
 
     def cleanup(self):
-        """Clean up resources."""
+        """Clean up resources and ensure all notes are released."""
         _log("Cleaning up synthesizer...")
-        if self.current_subscription:
-            self.midi_interface.unsubscribe(self.current_subscription)
-            self.current_subscription = None
-        if self.synth:
-            self.synth.release_all()
-            self.synth.deinit()
-            self.synth = None
-        _log("Cleanup complete")
+        try:
+            # Release all notes atomically
+            if self.synth:
+                self.synth.release_all()
+                # Verify all notes are released
+                for note in self.note_pool.pressed.values():
+                    state, _ = self.synth.note_info(note)
+                    while state is not None:
+                        state, _ = self.synth.note_info(note)
+            
+            if self.note_pool:
+                self.note_pool.release_all()
+            
+            if self.current_subscription:
+                self.midi_interface.unsubscribe(self.current_subscription)
+                self.current_subscription = None
+                
+            if self.synth:
+                self.synth.deinit()
+                self.synth = None
+                
+            _log("Cleanup complete")
+            
+        except Exception as e:
+            _log(f"Error during cleanup: {str(e)}", is_error=True)

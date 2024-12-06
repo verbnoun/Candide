@@ -52,11 +52,11 @@ class Candide:
         # Get MIDI interface explicitly
         self.midi_interface = UartManager.get_midi_interface()
 
-        _log("Initializing synthesizer...")
-        self.synthesizer = Synthesizer(self.midi_interface)
-
         _log("Initializing audio system...")
         self.audio_system = AudioSystem()
+
+        _log("Initializing synthesizer...")
+        self.synthesizer = Synthesizer(self.midi_interface, self.audio_system)
 
         _log("Initializing instrument manager...")
         self.instrument_manager = InstrumentManager()
