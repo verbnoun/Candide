@@ -1,5 +1,16 @@
 """Instrument configuration management system defining synthesizer paths and parameter mappings."""
 
+import sys
+from constants import LOG_INST, LOG_LIGHT_YELLOW, LOG_RED, LOG_RESET
+
+def _log(message, is_error=False):
+    """Simple logging function for instrument events."""
+    color = LOG_RED if is_error else LOG_LIGHT_YELLOW
+    if is_error:
+        print(f"{color}{LOG_INST} [ERROR] {message}{LOG_RESET}", file=sys.stderr)
+    else:
+        print(f"{color}{LOG_INST} {message}{LOG_RESET}", file=sys.stderr)
+
 NOTE_MINIMUM_PATHS = '''
 note/press/per_key/note_on
 note/release/per_key/note_off
@@ -59,10 +70,6 @@ lfo/phase_offset/tremolo_lfo/global/0-1/cc105
 lfo/once/tremolo_lfo/global/0-1/cc106
 lfo/interpolate/tremolo_lfo/global/0-1/cc107
 '''
-
-def _log(message):
-    """Simple logging function for instrument events."""
-    print(f"[INSTR ] {message}")
 
 class InstrumentManager:
     def __init__(self):
@@ -156,7 +163,7 @@ class InstrumentManager:
     def set_instrument(self, instrument_name):
         """Set current instrument and update components."""
         if instrument_name not in self.instruments:
-            _log(f"Invalid instrument name: {instrument_name}")
+            _log(f"Invalid instrument name: {instrument_name}", is_error=True)
             return False
             
         _log(f"Setting instrument to: {instrument_name}")

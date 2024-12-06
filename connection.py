@@ -6,28 +6,22 @@ from constants import (
     HEARTBEAT_INTERVAL,
     HEARTBEAT_DEBUG,
     ConnectionState,
-    DETECT_PIN
+    DETECT_PIN,
+    LOG_CONNECT,
+    LOG_LIGHT_CYAN,
+    LOG_RED,
+    LOG_RESET
 )
 
-def _log(message, state=None):
-    RED = "\033[31m"
-    WHITE = "\033[37m"
-    GREEN = "\033[32m"
-    RESET = "\033[0m"
-    
+def _log(message, state=None, is_error=False):
     if state:
-        color = GREEN
-        message = f"[STATE] {state}: {message}"
+        print(f"{LOG_LIGHT_CYAN}{LOG_CONNECT} [STATE] {state}: {message}{LOG_RESET}", file=sys.stderr)
     else:
-        color = RED if "[ERROR]" in message else WHITE
-        message = f"[CONNCT] {message}"
-    
-    print(f"{color}{message}{RESET}", file=sys.stderr)
-
-# Timing constants
-CONFIG_RETRY_INTERVAL = 1.0  # Send config every 1s until we get pot data
-POT_WAIT_TIMEOUT = 5.0  # Wait up to 5s for pot data response
-DETECTION_RETRY_INTERVAL = 2.0  # Wait between detection attempts
+        color = LOG_RED if is_error else LOG_LIGHT_CYAN
+        if is_error:
+            print(f"{color}{LOG_CONNECT} [ERROR] {message}{LOG_RESET}", file=sys.stderr)
+        else:
+            print(f"{color}{LOG_CONNECT} {message}{LOG_RESET}", file=sys.stderr)
 
 class ConnectionManager:
     def __init__(self, text_uart, midi_interface, hardware_manager, instrument_manager):
@@ -116,7 +110,7 @@ class ConnectionManager:
             return True
                 
         except Exception as e:
-            _log(f"[ERROR] Failed to send config: {str(e)}")
+            _log(f"Failed to send config: {str(e)}", is_error=True)
         return False
 
     def _transition_to_connected(self):
@@ -151,7 +145,7 @@ class ConnectionManager:
                 if HEARTBEAT_DEBUG:
                     _log("♡", "CONNECTED")
         except Exception as e:
-            _log(f"[ERROR] Failed to send heartbeat: {str(e)}")
+            _log(f"Failed to send heartbeat: {str(e)}", is_error=True)
 
     def is_connected(self):
         return self.state == ConnectionState.CONNECTED
@@ -166,4 +160,4 @@ class ConnectionManager:
             self.hardware = None
             self.instrument_manager = None
         except Exception as e:
-            _log(f"[ERROR] Connection manager cleanup error: {str(e)}")
+            _log(f"Connection manager cleanup error: {str(e)}", is_error=True)

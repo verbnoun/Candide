@@ -11,38 +11,33 @@ from connection import ConnectionManager
 from instruments import InstrumentManager
 from synthesizer import Synthesizer
 
-def _log(message, effect=None):
-    COLORS = [
-        "\033[96m",
-        "\033[94m",
-        "\033[95m",
-        "\033[92m",
-        "\033[93m",
-    ]
-    RESET = "\033[0m"
-    RED = "\033[31m"
-    WHITE = "\033[37m"
-    
-    if effect == 'cycle':
-        print("\033[s", end='', file=sys.stderr)
-        
-        for i in range(10):
-            colored_text = ""
-            for char in message:
-                colored_text += random.choice(COLORS) + char
-            
-            if i == 0:
-                print(f"{colored_text}{RESET}", file=sys.stderr)
-            else:
-                print(f"\033[u\033[K{colored_text}{RESET}", file=sys.stderr)
-            time.sleep(0.1)
+def _log(message, prefix=LOG_CANDIDE, color=LOG_WHITE, is_error=False):
+    """Centralized logging function with consistent formatting."""
+    if is_error:
+        print(f"{color}{prefix} [ERROR] {message}{LOG_RESET}", file=sys.stderr)
     else:
-        color = RED if "[ERROR]" in message else WHITE
-        print(f"{color}[CANDID] {message}{RESET}", file=sys.stderr)
+        print(f"{color}{prefix} {message}{LOG_RESET}", file=sys.stderr)
+
+def _cycle_log(message):
+    """Special logging effect for startup messages."""
+    COLORS = [LOG_LIGHT_CYAN, LOG_LIGHT_BLUE, LOG_LIGHT_MAGENTA, LOG_LIGHT_GREEN, LOG_LIGHT_YELLOW]
+    
+    print("\033[s", end='', file=sys.stderr)
+    
+    for i in range(10):
+        colored_text = ""
+        for char in message:
+            colored_text += random.choice(COLORS) + char
+        
+        if i == 0:
+            print(f"{colored_text}{LOG_RESET}", file=sys.stderr)
+        else:
+            print(f"\033[u\033[K{colored_text}{LOG_RESET}", file=sys.stderr)
+        time.sleep(0.1)
 
 class Candide:
     def __init__(self):
-        _log("\nWakeup Candide!\n", effect='cycle')
+        _cycle_log("\nWakeup Candide!\n")
         
         _log("Initializing hardware manager...")
         self.hardware_manager = HardwareManager()
@@ -89,7 +84,7 @@ class Candide:
             _log(f"Initial volume: {initial_volume:.3f}")
             self.audio_system.set_volume(initial_volume)
             self.hardware_manager.last_volume = initial_volume
-            _log("\nCandide (v1.0) is awake!... ( ◔◡◔)♬\n", effect='cycle')
+            _cycle_log("\nCandide (v1.0) is awake!... ( ◔◡◔)♬\n")
 
             # Check for base station after all initialization is complete
             _log("Checking for base station...")
@@ -100,13 +95,13 @@ class Candide:
                 self.connection_manager.update_state()
 
         except Exception as e:
-            _log(f"[ERROR] Initialization error: {str(e)}")
+            _log(f"Initialization error: {str(e)}", is_error=True)
             raise
 
     def update(self):
         try:
             if self.transport.in_waiting:
-                self.transport.log_incoming_data()  # This will now handle distributing MIDI messages
+                self.transport.process_midi_messages()  # Process all available MIDI messages
             self.connection_manager.update_state()
             self.hardware_manager.check_encoder(self.instrument_manager)
             self.hardware_manager.check_volume(self.audio_system)
@@ -114,7 +109,7 @@ class Candide:
             return True
             
         except Exception as e:
-            _log(f"[ERROR] Update error: {str(e)}")
+            _log(f"Update error: {str(e)}", is_error=True)
             return False
 
     def run(self):
@@ -126,7 +121,7 @@ class Candide:
             _log("Keyboard interrupt received")
             pass
         except Exception as e:
-            _log(f"[ERROR] Error in run loop: {str(e)}")
+            _log(f"Error in run loop: {str(e)}", is_error=True)
         finally:
             _log("Cleaning up...")
             self.cleanup()
@@ -150,14 +145,14 @@ class Candide:
         if self.audio_system:
             _log("Cleaning up audio...")
             self.audio_system.cleanup()
-        _log("\nCandide goes to sleep... ( ◡_◡)ᶻ 𝗓 𐰁\n")
+        _cycle_log("\nCandide goes to sleep... ( ◡_◡)ᶻ 𝗓 𐰁\n")
 
 def main():
     try:
         candide = Candide()
         candide.run()
     except Exception as e:
-        _log(f"[ERROR] Fatal error: {str(e)}")
+        _log(f"Fatal error: {str(e)}", is_error=True)
 
 if __name__ == "__main__":
     main()

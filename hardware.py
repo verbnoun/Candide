@@ -11,22 +11,19 @@ import audiobusio
 import audiomixer
 from constants import *
 
-def _log(message):
+def _log(message, is_error=False):
     if not HARDWARE_DEBUG:
         return
         
-    RED = "\033[31m"
-    RESET = "\033[0m"
-    
     if isinstance(message, dict):
         formatted_message = _format_log_message(message)
-        print(f"{RESET}{formatted_message}{RESET}", file=sys.stderr)
+        print(f"{LOG_LIGHT_MAGENTA}{LOG_HARD} {formatted_message}{LOG_RESET}", file=sys.stderr)
     else:
-        if "[ERROR]" in str(message):
-            color = RED
+        color = LOG_RED if is_error else LOG_LIGHT_MAGENTA
+        if is_error:
+            print(f"{color}{LOG_HARD} [ERROR] {message}{LOG_RESET}", file=sys.stderr)
         else:
-            color = RESET
-        print(f"{color}[HARD  ] {message}{RESET}", file=sys.stderr)
+            print(f"{color}{LOG_HARD} {message}{LOG_RESET}", file=sys.stderr)
 
 class AudioSystem:
     def __init__(self):
@@ -59,7 +56,7 @@ class AudioSystem:
             _log("Audio system initialized successfully")
 
         except Exception as e:
-            _log(f"[ERROR] Audio setup failed: {str(e)}")
+            _log(f"Audio setup failed: {str(e)}", is_error=True)
             self.cleanup()
             raise
 
@@ -79,7 +76,7 @@ class AudioSystem:
             self.current_volume = volume
             
         except Exception as e:
-            _log(f"[ERROR] Volume update failed: {str(e)}")
+            _log(f"Volume update failed: {str(e)}", is_error=True)
 
     def cleanup(self):
         _log("Starting audio system cleanup")
@@ -92,7 +89,7 @@ class AudioSystem:
                 self.audio_out.stop()
                 self.audio_out.deinit()
         except Exception as e:
-            _log(f"[ERROR] Audio cleanup failed: {str(e)}")
+            _log(f"Audio cleanup failed: {str(e)}", is_error=True)
 
 class BootBeep:
     def play(self):
@@ -119,7 +116,7 @@ class BootBeep:
             audio_out.deinit()
             
         except Exception as e:
-            print(f"[BOOTBEEP] error: {str(e)}")
+            _log(f"BootBeep error: {str(e)}", is_error=True)
             if audio_out:
                 audio_out.deinit()
 

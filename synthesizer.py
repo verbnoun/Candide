@@ -2,17 +2,28 @@
 
 import array
 import synthio
+import sys
 from adafruit_midi.note_on import NoteOn 
 from adafruit_midi.note_off import NoteOff
 from adafruit_midi.control_change import ControlChange
 from adafruit_midi.pitch_bend import PitchBend
 from adafruit_midi.channel_pressure import ChannelPressure
-from constants import SAMPLE_RATE, AUDIO_CHANNEL_COUNT
+from constants import (
+    SAMPLE_RATE, 
+    AUDIO_CHANNEL_COUNT,
+    LOG_SYNTH,
+    LOG_LIGHT_GREEN,
+    LOG_RED,
+    LOG_RESET
+)
 
 def _log(message, is_error=False, is_debug=False):
     """Enhanced logging with error and debug support."""
-    prefix = "[ERROR ]" if is_error else "[DEBUG ]" if is_debug else "[SYNTH ]"
-    print(f"{prefix} {message}")
+    color = LOG_RED if is_error else LOG_LIGHT_GREEN
+    if is_error:
+        print(f"{color}{LOG_SYNTH} [ERROR] {message}{LOG_RESET}", file=sys.stderr)
+    else:
+        print(f"{color}{LOG_SYNTH} {message}{LOG_RESET}", file=sys.stderr)
 
 class MidiRange:
     """Handles parameter range conversion and lookup table generation."""
@@ -23,7 +34,7 @@ class MidiRange:
         self.is_integer = is_integer
         self.lookup_table = array.array('f', [0] * 128)
         self._build_lookup()
-        _log(f"Created MIDI range: {name} [{min_val} to {max_val}] {'(integer)' if is_integer else ''}", is_debug=True)
+        _log(f"Created MIDI range: {name} [{min_val} to {max_val}] {'(integer)' if is_integer else ''}")
         
     def _build_lookup(self):
         """Build MIDI value lookup table for fast conversion."""
@@ -32,10 +43,10 @@ class MidiRange:
             value = self.min_val + normalized * (self.max_val - self.min_val)
             self.lookup_table[i] = int(value) if self.is_integer else value
             
-        _log(f"Lookup table for {self.name} (sample values):", is_debug=True)
-        _log(f"  0: {self.lookup_table[0]}", is_debug=True)
-        _log(f" 64: {self.lookup_table[64]}", is_debug=True)
-        _log(f"127: {self.lookup_table[127]}", is_debug=True)
+        _log(f"Lookup table for {self.name} (sample values):")
+        _log(f"  0: {self.lookup_table[0]}")
+        _log(f" 64: {self.lookup_table[64]}")
+        _log(f"127: {self.lookup_table[127]}")
     
     def convert(self, midi_value):
         """Convert MIDI value (0-127) to parameter value using lookup table."""
@@ -43,7 +54,7 @@ class MidiRange:
             _log(f"Invalid MIDI value {midi_value} for {self.name}", is_error=True)
             return self.min_val
         value = self.lookup_table[midi_value]
-        _log(f"Converted {self.name}: MIDI {midi_value} -> {value}", is_debug=True)
+        _log(f"Converted {self.name}: MIDI {midi_value} -> {value}")
         return value
 
 class PathParser:
@@ -58,7 +69,7 @@ class PathParser:
         
     def parse_paths(self, paths):
         """Parse instrument paths to extract parameters and mappings."""
-        _log("Parsing instrument paths...", is_debug=True)
+        _log("Parsing instrument paths...")
         self._reset()
         
         if not paths:
@@ -74,12 +85,12 @@ class PathParser:
             except Exception as e:
                 _log(f"Error parsing path: {line} - {str(e)}", is_error=True)
                 
-        _log("Path parsing complete:", is_debug=True)
-        _log(f"Global parameters: {list(self.global_ranges.keys())}", is_debug=True)
-        _log(f"Per-key parameters: {list(self.key_ranges.keys())}", is_debug=True)
-        _log(f"Fixed values: {self.fixed_values}", is_debug=True)
-        _log(f"Enabled messages: {self.enabled_messages}", is_debug=True)
-        _log(f"Enabled CCs: {self.enabled_ccs}", is_debug=True)
+        _log("Path parsing complete:")
+        _log(f"Global parameters: {list(self.global_ranges.keys())}")
+        _log(f"Per-key parameters: {list(self.key_ranges.keys())}")
+        _log(f"Fixed values: {self.fixed_values}")
+        _log(f"Enabled messages: {self.enabled_messages}")
+        _log(f"Enabled CCs: {self.enabled_ccs}")
     
     def _reset(self):
         """Reset all collections before parsing new paths."""
@@ -158,7 +169,7 @@ class NotePool:
         self.available = list(range(size))  # Available note indices
         self.pressed = {}    # note_number -> index mapping
         self.order = []      # Tracks note age (oldest first)
-        _log(f"Note pool initialized with size {size}", is_debug=True)
+        _log(f"Note pool initialized with size {size}")
     
     def get_note(self, note_number):
         """Get next available note or release oldest if pool exhausted."""
@@ -166,7 +177,7 @@ class NotePool:
             # If note is already pressed, release it first
             if note_number in self.pressed:
                 self.release_note(note_number)
-                _log(f"Released already pressed note {note_number}", is_debug=True)
+                _log(f"Released already pressed note {note_number}")
             
             if self.available:
                 index = self.available.pop()
@@ -176,14 +187,14 @@ class NotePool:
                 index = self.pressed[oldest_number]
                 self.order.remove(oldest_number)
                 del self.pressed[oldest_number]
-                _log(f"Pool full - released oldest note {oldest_number}", is_debug=True)
+                _log(f"Pool full - released oldest note {oldest_number}")
             else:
                 _log("Error: Note pool in invalid state", is_error=True)
                 return None
                 
             self.pressed[note_number] = index
             self.order.append(note_number)
-            _log(f"Note {note_number} allocated from pool (index {index})", is_debug=True)
+            _log(f"Note {note_number} allocated from pool (index {index})")
             return index
             
         except Exception as e:
@@ -198,7 +209,7 @@ class NotePool:
                 del self.pressed[note_number]
                 self.order.remove(note_number)
                 self.available.append(index)
-                _log(f"Note {note_number} (index {index}) released back to pool", is_debug=True)
+                _log(f"Note {note_number} (index {index}) released back to pool")
                 return index
             return None
             
@@ -211,7 +222,7 @@ class NotePool:
         try:
             for note_number in list(self.pressed.keys()):
                 self.release_note(note_number)
-            _log("All notes released", is_debug=True)
+            _log("All notes released")
         except Exception as e:
             _log(f"Error in release_all: {str(e)}", is_error=True)
 
@@ -289,7 +300,7 @@ class Synthesizer:
 
     def update_instrument(self, paths):
         """Update instrument configuration."""
-        _log("\nUpdating instrument configuration...")
+        _log("Updating instrument configuration...")
         _log("----------------------------------------")
         
         try:

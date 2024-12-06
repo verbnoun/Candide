@@ -2,6 +2,24 @@
 
 import board
 
+# Logging colors
+LOG_WHITE = "\033[37m"
+LOG_LIGHT_CYAN = "\033[96m"
+LOG_LIGHT_MAGENTA = "\033[95m"
+LOG_LIGHT_YELLOW = "\033[93m"
+LOG_LIGHT_GREEN = "\033[92m"
+LOG_LIGHT_BLUE = "\033[94m"
+LOG_RED = "\033[31m"
+LOG_RESET = "\033[0m"
+
+# Logging prefixes
+LOG_CANDIDE = "[CANDIDE]"
+LOG_CONNECT = "[CONECT ]"
+LOG_HARD = "[HARD   ]"
+LOG_INST = "[INST   ]"
+LOG_SYNTH = "[SYNTH  ]"
+LOG_UART = "[UART   ]"
+
 DEBUG = True
 HARDWARE_DEBUG = True
 HEARTBEAT_DEBUG = False
