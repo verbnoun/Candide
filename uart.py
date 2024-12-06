@@ -127,17 +127,20 @@ class UartTransport:
                     bend_value = msg.pitch_bend - 8192
                     _log(f"[UART  ]🎵 MIDI: Pitch Bend - value={bend_value} (raw={msg.pitch_bend}), channel={msg.channel+1}")
                 elif isinstance(msg, MIDIBadEvent):
-                    _log(f"[UART  ]MIDI Error: Bad MIDI event: {msg.msg_bytes}", is_error=True)
+                    # Skip logging bad events - they're just filtered messages
+                    pass
                 elif isinstance(msg, MIDIUnknownEvent):
                     _log(f"[UART  ]MIDI Warning: Unknown status: {msg.status}", is_error=True)
                 
-                # Distribute to matching subscribers
-                for subscription in self.subscribers:
-                    if subscription.matches(msg):
-                        try:
-                            subscription.callback(msg)
-                        except Exception as e:
-                            _log(f"[UART  ] Error in MIDI subscriber callback: {e}", is_error=True)
+                # Only distribute valid MIDI messages that match subscriptions
+                if not isinstance(msg, (MIDIBadEvent, MIDIUnknownEvent)):
+                    # Distribute to matching subscribers
+                    for subscription in self.subscribers:
+                        if subscription.matches(msg):
+                            try:
+                                subscription.callback(msg)
+                            except Exception as e:
+                                _log(f"[UART  ] Error in MIDI subscriber callback: {e}", is_error=True)
 
     def flush_buffers(self):
         """Flush input/output buffers"""

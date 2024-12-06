@@ -105,9 +105,11 @@ class Synthesizer:
             
         # Create new subscription if we have message types to handle
         if message_types:
+            # Pass enabled_ccs to subscription for CC filtering
             self.current_subscription = self.midi_interface.subscribe(
                 self._handle_midi_message,
-                message_types=message_types
+                message_types=message_types,
+                cc_numbers=self.enabled_ccs if 'cc' in self.enabled_messages else None
             )
             _log(f"MIDI handlers configured for: {self.enabled_messages}")
             if self.enabled_ccs:
