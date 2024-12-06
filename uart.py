@@ -62,7 +62,7 @@ class UartTransport:
             in_channel=None,     # Listen on all channels
             out_channel=0,
             in_buf_size=128,     # Larger buffer for SysEx
-            debug=True           # Can be set to False in production
+            debug=False           # Can be set to False in production
         )
 
     def _initialize_uart(self):
