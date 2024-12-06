@@ -2,7 +2,7 @@
 
 import sys
 from constants import (
-    LOG_UART, LOG_LIGHT_BLUE, LOG_RED, LOG_RESET,
+    LOG_MIDI, LOG_LIGHT_ORANGE, LOG_RED, LOG_RESET,
     MidiMessageType
 )
 from uart import UartManager
@@ -33,12 +33,12 @@ RPN_PITCH_BEND_RANGE = 0x0000
 RPN_MPE_CONFIGURATION = 0x0006
 
 def _log(message, is_error=False):
-    """Log messages with UART prefix"""
-    color = LOG_RED if is_error else LOG_LIGHT_BLUE
+    """Log messages with MIDI prefix"""
+    color = LOG_RED if is_error else LOG_LIGHT_ORANGE
     if is_error:
-        print(f"{color}{LOG_UART} [ERROR] {message}{LOG_RESET}", file=sys.stderr)
+        print(f"{color}{LOG_MIDI} [ERROR] {message}{LOG_RESET}", file=sys.stderr)
     else:
-        print(f"{color}{LOG_UART} {message}{LOG_RESET}", file=sys.stderr)
+        print(f"{color}{LOG_MIDI} {message}{LOG_RESET}", file=sys.stderr)
 
 def _log_midi_bytes(prefix, data):
     """Log MIDI bytes in hex format"""
@@ -48,32 +48,50 @@ def _log_midi_bytes(prefix, data):
 def _log_midi_message(msg):
     """Log interpreted MIDI message"""
     if msg.type == 'noteon':
-        _log(f"🎵 MIDI: Note On - note={msg.note}, velocity={msg.velocity}, channel={msg.channel+1}")
+        _log(f"Note On Message:")
+        _log(f"  type: {msg.type}")
+        _log(f"  channel: {msg.channel}")  # Remove +1 to match actual MIDI channel
+        _log(f"  note: {msg.note} (0x{msg.note:02x})")
+        _log(f"  velocity: {msg.velocity} (0x{msg.velocity:02x})")
     elif msg.type == 'noteoff':
-        _log(f"🎵 MIDI: Note Off - note={msg.note}, velocity={msg.velocity}, channel={msg.channel+1}")
+        _log(f"Note Off Message:")
+        _log(f"  type: {msg.type}")
+        _log(f"  channel: {msg.channel}")  # Remove +1 to match actual MIDI channel
+        _log(f"  note: {msg.note} (0x{msg.note:02x})")
+        _log(f"  velocity: {msg.velocity} (0x{msg.velocity:02x})")
     elif msg.type == 'cc':
-        _log(f"🎵 MIDI: CC{msg.control} - value={msg.value}, channel={msg.channel+1}")
+        _log(f"Control Change Message:")
+        _log(f"  type: {msg.type}")
+        _log(f"  channel: {msg.channel}")  # Remove +1 to match actual MIDI channel
+        _log(f"  control: {msg.control} (0x{msg.control:02x})")
+        _log(f"  value: {msg.value} (0x{msg.value:02x})")
     elif msg.type == 'channelpressure':
-        _log(f"🎵 MIDI: Channel Pressure - pressure={msg.pressure}, channel={msg.channel+1}")
+        _log(f"Channel Pressure Message:")
+        _log(f"  type: {msg.type}")
+        _log(f"  channel: {msg.channel}")  # Remove +1 to match actual MIDI channel
+        _log(f"  pressure: {msg.pressure} (0x{msg.pressure:02x})")
     elif msg.type == 'pitchbend':
-        _log(f"🎵 MIDI: Pitch Bend - value={msg.pitch_bend-8192} (raw={msg.pitch_bend}), channel={msg.channel+1}")
+        _log(f"Pitch Bend Message:")
+        _log(f"  type: {msg.type}")
+        _log(f"  channel: {msg.channel}")  # Remove +1 to match actual MIDI channel
+        _log(f"  value: {msg.pitch_bend} (0x{msg.pitch_bend:04x})")
 
 class MidiMessage:
-    """Represents a MIDI message compatible with synthesizer.py expectations"""
+    """Base MIDI message class compatible with synthesizer expectations"""
     def __init__(self, status, data=None):
         self.status = status
         self.data = data if data else []
-        self.channel = status & 0x0F if status < 0xF0 else None
+        self.channel = status & 0x0F if status < 0xF0 else None  # Keep 0-based channel internally
         self.message_type = status & 0xF0 if status < 0xF0 else status
         
         # Initialize properties with defaults
         self.type = 'unknown'
-        self.note = 0
-        self.velocity = 0
-        self.control = 0
-        self.value = 0
-        self.pressure = 0
-        self.pitch_bend = 8192
+        self._note = 0
+        self._velocity = 0
+        self._control = 0
+        self._value = 0
+        self._pressure = 0
+        self._pitch_bend = 8192
         
         # Update properties based on message type
         self._update_type()
@@ -98,18 +116,49 @@ class MidiMessage:
         """Update compatibility properties based on message type"""
         if self.type in ('noteon', 'noteoff'):
             if len(self.data) >= 2:
-                self.note = self.data[0]
-                self.velocity = self.data[1]
+                self._note = self.data[0]
+                self._velocity = self.data[1]
         elif self.type == 'cc':
             if len(self.data) >= 2:
-                self.control = self.data[0]
-                self.value = self.data[1]
+                self._control = self.data[0]
+                self._value = self.data[1]
         elif self.type == 'channelpressure':
             if len(self.data) >= 1:
-                self.pressure = self.data[0]
+                self._pressure = self.data[0]
         elif self.type == 'pitchbend':
             if len(self.data) >= 2:
-                self.pitch_bend = (self.data[1] << 7) | self.data[0]
+                # LSB first, then MSB
+                self._pitch_bend = (self.data[1] << 7) | self.data[0]
+
+    @property
+    def note(self):
+        """Note number (0-127)"""
+        return self._note
+
+    @property
+    def velocity(self):
+        """Note velocity (0-127)"""
+        return self._velocity
+
+    @property
+    def control(self):
+        """CC controller number (0-127)"""
+        return self._control
+
+    @property
+    def value(self):
+        """CC value (0-127)"""
+        return self._value
+
+    @property
+    def pressure(self):
+        """Channel pressure value (0-127)"""
+        return self._pressure
+
+    @property
+    def pitch_bend(self):
+        """Pitch bend value (0-16383, centered at 8192)"""
+        return self._pitch_bend
 
     @property
     def length(self):
@@ -124,10 +173,16 @@ class MidiMessage:
         """Check if message has all required bytes"""
         return len(self.data) + 1 >= self.length
 
+    def __eq__(self, other):
+        """Enable isinstance() checks with string types"""
+        if isinstance(other, str):
+            return self.type == other
+        return NotImplemented
+
 class MPEZone:
     """Represents an MPE zone configuration"""
     def __init__(self, manager_channel: int, num_member_channels: int):
-        self.manager_channel = manager_channel
+        self.manager_channel = manager_channel  # 0 for lower zone, 15 for upper zone
         self.member_channels = set()
         if num_member_channels > 0:
             if manager_channel == 0:  # Lower zone
@@ -189,11 +244,16 @@ class MidiSubscription:
 
     def matches(self, message):
         """Check if message matches subscription criteria"""
-        if not self.message_types or type(message) in self.message_types:
-            if self.channels is None or message.channel in self.channels:
-                if message.type == 'cc' and self.cc_numbers is not None:
-                    return message.control in self.cc_numbers
-                return True
+        if not self.message_types:
+            return True
+        
+        for msg_type in self.message_types:
+            if isinstance(msg_type, str):
+                if message == msg_type:  # Uses __eq__ to compare with string
+                    if self.channels is None or message.channel in self.channels:
+                        if message.type == 'cc' and self.cc_numbers is not None:
+                            return message.control in self.cc_numbers
+                        return True
         return False
 
 class MidiInterface:
@@ -203,17 +263,17 @@ class MidiInterface:
         self.subscribers = []
         self.parser = MidiParser()
         
-        # MPE state
-        self.lower_zone = None
+        # MPE state - initialize lower zone by default
+        self.lower_zone = MPEZone(0, 14)  # Use channels 1-14 for notes
         self.upper_zone = None
         
-        # RPN state tracking
+        # RPN state tracking (0-based channels)
         self.rpn_state = {ch: {'msb': None, 'lsb': None} for ch in range(16)}
         
-        # Note tracking
+        # Note tracking (0-based channels)
         self.active_notes = {ch: set() for ch in range(16)}
         
-        # Controller state
+        # Controller state (0-based channels)
         self.controller_state = {
             ch: {
                 'pitch_bend': 8192,
@@ -229,8 +289,6 @@ class MidiInterface:
             if not byte:
                 break
                 
-            _log_midi_bytes("Receiving", byte)
-            
             msg = self.parser.process_byte(byte[0])
             if msg:
                 self._distribute_message(msg)

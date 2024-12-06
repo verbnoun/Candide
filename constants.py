@@ -10,6 +10,7 @@ LOG_LIGHT_YELLOW = "\033[93m"
 LOG_LIGHT_GREEN = "\033[92m"
 LOG_LIGHT_BLUE = "\033[94m"
 LOG_RED = "\033[31m"
+LOG_LIGHT_ORANGE = "\033[38;5;215m"
 LOG_RESET = "\033[0m"
 
 # Logging prefixes
@@ -19,6 +20,7 @@ LOG_HARD = "[HARD   ]"
 LOG_INST = "[INST   ]"
 LOG_SYNTH = "[SYNTH  ]"
 LOG_UART = "[UART   ]"
+LOG_MIDI = "[MIDI   ]"
 
 DEBUG = True
 HARDWARE_DEBUG = True

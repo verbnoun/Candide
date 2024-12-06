@@ -3,11 +3,6 @@
 import array
 import synthio
 import sys
-from adafruit_midi.note_on import NoteOn 
-from adafruit_midi.note_off import NoteOff
-from adafruit_midi.control_change import ControlChange
-from adafruit_midi.pitch_bend import PitchBend
-from adafruit_midi.channel_pressure import ChannelPressure
 from constants import (
     SAMPLE_RATE, 
     AUDIO_CHANNEL_COUNT,
@@ -276,15 +271,15 @@ class Synthesizer:
         
         message_types = []
         if 'noteon' in self.path_parser.enabled_messages:
-            message_types.append(NoteOn)
+            message_types.append('noteon')
         if 'noteoff' in self.path_parser.enabled_messages:
-            message_types.append(NoteOff)
+            message_types.append('noteoff')
         if 'cc' in self.path_parser.enabled_messages:
-            message_types.append(ControlChange)
+            message_types.append('cc')
         if 'pitchbend' in self.path_parser.enabled_messages:
-            message_types.append(PitchBend)
+            message_types.append('pitchbend')
         if 'pressure' in self.path_parser.enabled_messages:
-            message_types.append(ChannelPressure)
+            message_types.append('channelpressure')
             
         if message_types:
             self.current_subscription = self.midi_interface.subscribe(
@@ -327,7 +322,7 @@ class Synthesizer:
     def _handle_midi_message(self, msg):
         """Handle incoming MIDI messages."""
         try:
-            if isinstance(msg, NoteOn) and msg.velocity > 0 and 'noteon' in self.path_parser.enabled_messages:
+            if msg == 'noteon' and msg.velocity > 0 and 'noteon' in self.path_parser.enabled_messages:
                 # Handle note on with velocity > 0
                 index = self.note_pool.get_note(msg.note)
                 if index is not None:
@@ -340,14 +335,14 @@ class Synthesizer:
                             value = range_obj.convert(msg.velocity)
                             _log(f"Would apply {param_name} = {value} for note {msg.note}")
                 
-            elif (isinstance(msg, NoteOff) or 
-                  (isinstance(msg, NoteOn) and msg.velocity == 0)) and 'noteoff' in self.path_parser.enabled_messages:
+            elif (msg == 'noteoff' or 
+                  (msg == 'noteon' and msg.velocity == 0)) and 'noteoff' in self.path_parser.enabled_messages:
                 # Handle both note off messages and note on with velocity 0 (note off)
                 index = self.note_pool.release_note(msg.note)
                 if index is not None:
                     _log(f"Would release note {msg.note} (index {index})")
                 
-            elif isinstance(msg, ControlChange) and 'cc' in self.path_parser.enabled_messages:
+            elif msg == 'cc' and 'cc' in self.path_parser.enabled_messages:
                 cc_trigger = f"cc{msg.control}"
                 if msg.control in self.path_parser.enabled_ccs:
                     param_name = self.path_parser.midi_mappings.get(cc_trigger)
@@ -355,7 +350,7 @@ class Synthesizer:
                         value = self.path_parser.convert_value(param_name, msg.value, True)
                         _log(f"Would apply CC {msg.control} ({param_name}) = {value}")
                 
-            elif isinstance(msg, PitchBend) and 'pitchbend' in self.path_parser.enabled_messages:
+            elif msg == 'pitchbend' and 'pitchbend' in self.path_parser.enabled_messages:
                 # Convert 14-bit pitch bend to 7-bit MIDI value
                 midi_value = (msg.pitch_bend >> 7) & 0x7F
                 for param_name, range_obj in self.path_parser.key_ranges.items():
@@ -363,7 +358,7 @@ class Synthesizer:
                         value = range_obj.convert(midi_value)
                         _log(f"Would apply Pitch Bend ({param_name}) = {value}")
                 
-            elif isinstance(msg, ChannelPressure) and 'pressure' in self.path_parser.enabled_messages:
+            elif msg == 'channelpressure' and 'pressure' in self.path_parser.enabled_messages:
                 for param_name, range_obj in self.path_parser.key_ranges.items():
                     if 'pressure' in self.path_parser.midi_mappings:
                         value = range_obj.convert(msg.pressure)
