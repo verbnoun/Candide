@@ -155,8 +155,8 @@ class NotePool:
     """Manages a fixed pool of pre-allocated notes."""
     def __init__(self, size=5):
         self.size = size
-        self.available = []  # Notes ready for use
-        self.pressed = {}    # note_number -> Note mapping
+        self.available = list(range(size))  # Available note indices
+        self.pressed = {}    # note_number -> index mapping
         self.order = []      # Tracks note age (oldest first)
         _log(f"Note pool initialized with size {size}", is_debug=True)
     
@@ -169,11 +169,11 @@ class NotePool:
                 _log(f"Released already pressed note {note_number}", is_debug=True)
             
             if self.available:
-                note = self.available.pop()
+                index = self.available.pop()
             elif len(self.pressed) >= self.size:
                 # Release oldest note if pool is full
                 oldest_number = self.order[0]
-                note = self.pressed[oldest_number]
+                index = self.pressed[oldest_number]
                 self.order.remove(oldest_number)
                 del self.pressed[oldest_number]
                 _log(f"Pool full - released oldest note {oldest_number}", is_debug=True)
@@ -181,10 +181,10 @@ class NotePool:
                 _log("Error: Note pool in invalid state", is_error=True)
                 return None
                 
-            self.pressed[note_number] = note
+            self.pressed[note_number] = index
             self.order.append(note_number)
-            _log(f"Note {note_number} allocated from pool", is_debug=True)
-            return note
+            _log(f"Note {note_number} allocated from pool (index {index})", is_debug=True)
+            return index
             
         except Exception as e:
             _log(f"Error in get_note: {str(e)}", is_error=True)
@@ -194,12 +194,12 @@ class NotePool:
         """Release a note back to the pool."""
         try:
             if note_number in self.pressed:
-                note = self.pressed[note_number]
+                index = self.pressed[note_number]
                 del self.pressed[note_number]
                 self.order.remove(note_number)
-                self.available.append(note)
-                _log(f"Note {note_number} released back to pool", is_debug=True)
-                return note
+                self.available.append(index)
+                _log(f"Note {note_number} (index {index}) released back to pool", is_debug=True)
+                return index
             return None
             
         except Exception as e:
@@ -234,8 +234,6 @@ class Synthesizer:
             waveform_type = self.path_parser.fixed_values.get('waveform', 'triangle')
             
             # Create waveform buffer
-            # In real implementation, we'd create proper waveform data here
-            # This is just a placeholder triangle wave
             waveform = array.array('h', range(-32767, 32767, 32767 * 2 // 100))
             
             _log(f"Creating synthio synthesizer with {waveform_type} waveform")
@@ -245,11 +243,6 @@ class Synthesizer:
             if self.audio_system and self.audio_system.mixer:
                 self.audio_system.mixer.voice[0].play(self.synth)
                 _log("Connected synthesizer to audio mixer")
-            
-            # Pre-allocate notes
-            for _ in range(5):
-                note = synthio.Note(frequency=440)  # Default to A4
-                self.note_pool.available.append(note)
                 
             _log("Synthio initialization complete")
             
@@ -325,33 +318,23 @@ class Synthesizer:
         try:
             if isinstance(msg, NoteOn) and msg.velocity > 0 and 'noteon' in self.path_parser.enabled_messages:
                 # Handle note on with velocity > 0
-                note = self.note_pool.get_note(msg.note)
-                if note:
+                index = self.note_pool.get_note(msg.note)
+                if index is not None:
                     freq = synthio.midi_to_hz(msg.note)
-                    note.frequency = freq
+                    _log(f"Would press note {msg.note} (index {index}) at f={freq:.1f}Hz")
                     
-                    # Apply any per-key parameters
+                    # Log any per-key parameters
                     for param_name, range_obj in self.path_parser.key_ranges.items():
                         if 'note_on' in self.path_parser.midi_mappings:
                             value = range_obj.convert(msg.velocity)
-                            _log(f"Applied {param_name} = {value} for note {msg.note}")
-                            
-                    # Use atomic change for note press
-                    self.synth.change(press=[note])
-                    _log(f"Note {msg.note} pressed (f={freq:.1f}Hz)")
+                            _log(f"Would apply {param_name} = {value} for note {msg.note}")
                 
             elif (isinstance(msg, NoteOff) or 
                   (isinstance(msg, NoteOn) and msg.velocity == 0)) and 'noteoff' in self.path_parser.enabled_messages:
                 # Handle both note off messages and note on with velocity 0 (note off)
-                note = self.note_pool.release_note(msg.note)
-                if note:
-                    # Use atomic change for note release
-                    self.synth.change(release=[note])
-                    # Verify release completed
-                    state, _ = self.synth.note_info(note)
-                    while state is not None:
-                        state, _ = self.synth.note_info(note)
-                    _log(f"Note {msg.note} released")
+                index = self.note_pool.release_note(msg.note)
+                if index is not None:
+                    _log(f"Would release note {msg.note} (index {index})")
                 
             elif isinstance(msg, ControlChange) and 'cc' in self.path_parser.enabled_messages:
                 cc_trigger = f"cc{msg.control}"
@@ -359,7 +342,7 @@ class Synthesizer:
                     param_name = self.path_parser.midi_mappings.get(cc_trigger)
                     if param_name:
                         value = self.path_parser.convert_value(param_name, msg.value, True)
-                        _log(f"CC {msg.control} ({param_name}) = {value}")
+                        _log(f"Would apply CC {msg.control} ({param_name}) = {value}")
                 
             elif isinstance(msg, PitchBend) and 'pitchbend' in self.path_parser.enabled_messages:
                 # Convert 14-bit pitch bend to 7-bit MIDI value
@@ -367,35 +350,23 @@ class Synthesizer:
                 for param_name, range_obj in self.path_parser.key_ranges.items():
                     if 'pitch_bend' in self.path_parser.midi_mappings:
                         value = range_obj.convert(midi_value)
-                        _log(f"Pitch Bend ({param_name}) = {value}")
+                        _log(f"Would apply Pitch Bend ({param_name}) = {value}")
                 
             elif isinstance(msg, ChannelPressure) and 'pressure' in self.path_parser.enabled_messages:
                 for param_name, range_obj in self.path_parser.key_ranges.items():
                     if 'pressure' in self.path_parser.midi_mappings:
                         value = range_obj.convert(msg.pressure)
-                        _log(f"Channel Pressure ({param_name}) = {value}")
+                        _log(f"Would apply Channel Pressure ({param_name}) = {value}")
                 
         except Exception as e:
             _log(f"Error handling MIDI message: {str(e)}", is_error=True)
-            # On error, release all notes atomically
-            if self.synth:
-                self.synth.release_all()
             if self.note_pool:
                 self.note_pool.release_all()
 
     def cleanup(self):
-        """Clean up resources and ensure all notes are released."""
+        """Clean up resources."""
         _log("Cleaning up synthesizer...")
         try:
-            # Release all notes atomically
-            if self.synth:
-                self.synth.release_all()
-                # Verify all notes are released
-                for note in self.note_pool.pressed.values():
-                    state, _ = self.synth.note_info(note)
-                    while state is not None:
-                        state, _ = self.synth.note_info(note)
-            
             if self.note_pool:
                 self.note_pool.release_all()
             
