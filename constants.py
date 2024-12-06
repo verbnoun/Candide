@@ -4,7 +4,7 @@ import board
 
 DEBUG = True
 HARDWARE_DEBUG = True
-
+HEARTBEAT_DEBUG = False
 ADC_MAX = 65535
 ADC_MIN = 1
 

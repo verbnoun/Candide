@@ -2,21 +2,31 @@
 
 import time
 import sys
-from adafruit_midi.control_change import ControlChange
 from constants import (
-    HANDSHAKE_CC, HANDSHAKE_VALUE,
-    HELLO_INTERVAL, HANDSHAKE_TIMEOUT, HEARTBEAT_INTERVAL,
-    HANDSHAKE_MAX_RETRIES, RETRY_DELAY, SETUP_DELAY,
-    ConnectionState, MidiMessageType
+    HEARTBEAT_INTERVAL,
+    HEARTBEAT_DEBUG,
+    ConnectionState,
+    DETECT_PIN
 )
 
-def _log(message):
+def _log(message, state=None):
     RED = "\033[31m"
     WHITE = "\033[37m"
+    GREEN = "\033[32m"
     RESET = "\033[0m"
     
-    color = RED if "[ERROR]" in message else WHITE
-    print(f"{color}[CONNCT] {message}{RESET}", file=sys.stderr)
+    if state:
+        color = GREEN
+        message = f"[STATE] {state}: {message}"
+    else:
+        color = RED if "[ERROR]" in message else WHITE
+        message = f"[CONNCT] {message}"
+    
+    print(f"{color}{message}{RESET}", file=sys.stderr)
+
+# Timing constants
+CONFIG_RETRY_INTERVAL = 1.0  # Send config every 1s until we get pot data
+POT_WAIT_TIMEOUT = 5.0  # Wait up to 5s for pot data response
 
 class ConnectionManager:
     def __init__(self, text_uart, router_manager, midi_interface, hardware_manager):
@@ -26,20 +36,12 @@ class ConnectionManager:
         _log("Setting uart, router_manager, midi_interface")
         self.uart = text_uart
         self.router_manager = router_manager
-        self.midi = midi_interface  # Store MIDI interface directly
+        self.midi = midi_interface
         self.hardware = hardware_manager
         
         _log("Initializing state variables ...")
-        self.state = ConnectionState.STANDALONE  # Start in standalone state
-        self.last_hello_time = 0
+        self.state = ConnectionState.STANDALONE
         self.last_heartbeat_time = 0
-        self.handshake_start_time = 0
-        self.hello_count = 0
-        self.retry_start_time = 0
-        self._last_b0_time = 0
-        self._received_b0 = False
-        self.midi_subscription = None
-        self.last_subscription_attempt = 0
         
         # Set initial instrument to envelope_minimum for CC controls
         if hasattr(self.router_manager, 'set_instrument'):
@@ -49,111 +51,35 @@ class ConnectionManager:
             else:
                 _log("[ERROR] Failed to set instrument to envelope_minimum")
         
-        # Start listening for handshake CC
-        self._subscribe_to_handshake()
         _log("Candide connection manager initialized")
 
-    def _handle_handshake_cc(self, msg):
-        """Callback for handshake CC messages"""
-        try:
-            _log(f"MIDI message received - Type: {type(msg).__name__}")
-            
-            # Immediately check pin state
-            is_connected = self.hardware.is_base_station_detected()
-            if not is_connected:
-                _log("[ERROR] Cannot handle handshake - GP22 is LOW")
-                return
-            
-            # Validate message type
-            if not isinstance(msg, ControlChange):
-                _log(f"[ERROR] Expected ControlChange message, got {type(msg).__name__}")
-                return
-                
-            _log(f"CC details - Number: {msg.control}, Value: {msg.value}, Current State: {self.state}")
-            
-            # Double check we're still connected before proceeding with handshake
-            if not self.hardware.is_base_station_detected():
-                _log("[ERROR] Lost connection during handshake - GP22 went LOW")
-                return
-                
-            # Validate CC number and value
-            if msg.control != HANDSHAKE_CC:
-                _log(f"[ERROR] Wrong CC number - Expected {HANDSHAKE_CC}, got {msg.control}")
-                return
-                
-            if msg.value != HANDSHAKE_VALUE:
-                _log(f"[ERROR] Wrong CC value - Expected {HANDSHAKE_VALUE}, got {msg.value}")
-                return
-                
-            _log(f"Valid handshake CC received (cc:{msg.control}:{msg.value})")
-            
-            # Final connection check before state change
-            if not self.hardware.is_base_station_detected():
-                _log("[ERROR] Lost connection before state change - GP22 went LOW")
-                return
-                
-            if self.state == ConnectionState.DETECTED:
-                _log("Starting handshake sequence")
-                self.state = ConnectionState.HANDSHAKING
-                self.handshake_start_time = time.monotonic()
-                
-                # Send handshake response only if still connected
-                if self.midi and self.hardware.is_base_station_detected():
-                    self.midi.send(ControlChange(HANDSHAKE_CC, HANDSHAKE_VALUE))
-                    _log("Handshake response sent")
-                    
-                    # Send config only if still connected
-                    if self.hardware.is_base_station_detected():
-                        _log("Sending config after handshake")
-                        if self.send_config():
-                            self.state = ConnectionState.CONNECTED
-                            _log("Connection established")
-                        else:
-                            _log("[ERROR] Config send failed - returning to DETECTED")
-                            self.state = ConnectionState.DETECTED
-                            self.hello_count = 0
-            elif self.state == ConnectionState.HANDSHAKING:
-                _log("Already in handshaking state, ignoring duplicate handshake")
-                
-        except Exception as e:
-            _log(f"[ERROR] Exception in handshake handler: {str(e)}")
-
-    def _subscribe_to_handshake(self):
-        """Subscribe to handshake CC messages"""
+    def update_state(self):
+        is_detected = self.hardware.is_base_station_detected()  # Checks GP22
         current_time = time.monotonic()
         
-        # Only attempt subscription if enough time has passed since last attempt
-        if current_time - self.last_subscription_attempt < 1.0:
+        # Handle disconnection in any state
+        if not is_detected and self.state != ConnectionState.STANDALONE:
+            self._handle_disconnection()
             return
             
-        self.last_subscription_attempt = current_time
-        
-        if self.midi_subscription is None:
-            if self.midi:
-                try:
-                    self.midi_subscription = self.midi.subscribe(
-                        callback=self._handle_handshake_cc,
-                        message_types=[ControlChange],
-                        cc_numbers=[HANDSHAKE_CC]
-                    )
-                    _log(f"Successfully subscribed to CC {HANDSHAKE_CC} messages")
-                except Exception as e:
-                    _log(f"[ERROR] Failed to subscribe to MIDI messages: {str(e)}")
+        # Handle connection and config sending
+        if self.state == ConnectionState.STANDALONE:
+            if is_detected:
+                self._handle_initial_detection()
+                
+        elif self.state == ConnectionState.CONNECTED:
+            # Only send heartbeat if GP22 is still high
+            if is_detected:
+                if current_time - self.last_heartbeat_time >= HEARTBEAT_INTERVAL:
+                    self._send_heartbeat()
+                    self.last_heartbeat_time = current_time
             else:
-                _log("[ERROR] No MIDI interface available for subscription")
+                self._handle_disconnection()
 
     def send_config(self):
-        """
-        Send current CC configuration to Bartleby.
-        Can be called at any time to update pot mappings, not just during handshake.
-        Bartleby will reset its pots when receiving this config.
-        """
+        """Send CC configuration to Bartleby."""
         try:
-            # Verify GP22 is still high before sending config
-            if not self.hardware.is_base_station_detected():
-                _log("[ERROR] Cannot send config - GP22 is LOW")
-                return False
-                
+            # Get current config from router manager
             _log("Getting current config from router manager")
             paths = self.router_manager.get_current_config()
             if not paths:
@@ -164,6 +90,7 @@ class ConnectionManager:
             cc_configs = []
             seen_ccs = set()
             
+            # Parse config paths for CC mappings
             for line in paths.strip().split('\n'):
                 if not line:
                     continue
@@ -191,18 +118,23 @@ class ConnectionManager:
                         continue
 
             if cc_configs:
+                # Build config string: cc|pot=cc|pot=cc|...
                 config_parts = []
                 for pot_num, (cc_num, param_name) in enumerate(cc_configs):
-                    # Remove spaces to match Bartleby's expected format
-                    config_parts.append(f"{pot_num}={cc_num}:{param_name}")
+                    config_parts.append(f"{pot_num}={cc_num}")
                 
-                # Join with commas but no spaces
-                config_string = "cc:" + ",".join(config_parts)
+                config_string = "cc|" + "|".join(config_parts)
                 _log(f"Sending config string: {config_string}")
                 
-                # Send the config string using TextProtocol's write method
+                # Send config
                 self.uart.write(config_string)
                 _log("Config sent successfully")
+                
+                # Immediately transition to CONNECTED and start heartbeat
+                _log("Starting heartbeat", "STANDALONE -> CONNECTED")
+                self.state = ConnectionState.CONNECTED
+                self._send_heartbeat()
+                self.last_heartbeat_time = time.monotonic()
                 return True
             else:
                 _log("[ERROR] No CC configurations generated")
@@ -212,116 +144,22 @@ class ConnectionManager:
             _log(f"[ERROR] Failed to send config: {str(e)}")
         return False
 
-    def update_state(self):
-        current_time = time.monotonic()
-        is_detected = self.hardware.is_base_station_detected()
-        
-        # Retry subscription if needed
-        if self.midi_subscription is None:
-            self._subscribe_to_handshake()
-        
-        # Handle disconnection in any state
-        if not is_detected and self.state != ConnectionState.STANDALONE:
-            self._handle_disconnection()
-            return
-            
-        # Only proceed with state updates if GP22 is high
-        if self.state == ConnectionState.STANDALONE:
-            if is_detected:
-                self._handle_initial_detection()
-                
-        elif self.state == ConnectionState.DETECTED:
-            if not is_detected:
-                _log("GP22 went LOW while in DETECTED state - returning to STANDALONE")
-                self._handle_disconnection()
-                return
-                
-            if current_time - self.last_hello_time >= HELLO_INTERVAL:
-                if self.hello_count < HANDSHAKE_MAX_RETRIES:
-                    self._send_hello()
-                    self.hello_count += 1
-                else:
-                    _log("Max hello retries reached - entering retry delay")
-                    self.state = ConnectionState.RETRY_DELAY
-                    self.retry_start_time = current_time
-                    self.hello_count = 0
-                    
-        elif self.state == ConnectionState.RETRY_DELAY:
-            if not is_detected:
-                _log("GP22 went LOW while in RETRY_DELAY state - returning to STANDALONE")
-                self._handle_disconnection()
-                return
-                
-            if current_time - self.retry_start_time >= RETRY_DELAY:
-                _log("Retry delay complete - returning to DETECTED state")
-                self.state = ConnectionState.DETECTED
-                
-        elif self.state == ConnectionState.HANDSHAKING:
-            if not is_detected:
-                _log("GP22 went LOW during handshake - aborting")
-                self._handle_disconnection()
-                return
-                
-            if current_time - self.handshake_start_time >= HANDSHAKE_TIMEOUT:
-                _log("Handshake timeout - returning to standalone")
-                self.state = ConnectionState.STANDALONE
-                self.hello_count = 0
-                
-        elif self.state == ConnectionState.CONNECTED:
-            if not is_detected:
-                _log("GP22 went LOW while connected - disconnecting")
-                self._handle_disconnection()
-                return
-                
-            if current_time - self.last_heartbeat_time >= HEARTBEAT_INTERVAL:
-                self._send_heartbeat()
-
     def _handle_initial_detection(self):
-        _log("Base station detected (GP22 HIGH) - initializing connection")
-        if hasattr(self, 'midi') and self.midi is not None:
-            try:
-                self.midi.reset_input_buffer()
-                self.midi.reset_output_buffer()
-            except:
-                pass
-        time.sleep(SETUP_DELAY)
-        self.state = ConnectionState.DETECTED
-        self.hello_count = 0
-        self._send_hello()
+        _log("Base station detected (GP22 HIGH) - initializing connection", "STANDALONE -> DETECTED")
+        self.send_config()
         
     def _handle_disconnection(self):
         _log("Base station disconnected (GP22 LOW)")
-        if hasattr(self, 'midi') and self.midi is not None:
-            try:
-                self.midi.reset_input_buffer()
-                self.midi.reset_output_buffer()
-            except:
-                pass
         self.state = ConnectionState.STANDALONE
-        self.hello_count = 0
-        self._received_b0 = False
-            
-    def _send_hello(self):
-        try:
-            # Verify GP22 is still high before sending hello
-            if not self.hardware.is_base_station_detected():
-                _log("[ERROR] Cannot send hello - GP22 is LOW")
-                return
-                
-            self.uart.write("hello")
-            self.last_hello_time = time.monotonic()
-        except Exception as e:
-            _log(f"[ERROR] Failed to send hello: {str(e)}")
+        self.last_heartbeat_time = 0
             
     def _send_heartbeat(self):
         try:
-            # Verify GP22 is still high before sending heartbeat
-            if not self.hardware.is_base_station_detected():
-                _log("[ERROR] Cannot send heartbeat - GP22 is LOW")
-                return
-                
-            self.uart.write("♥︎")
-            self.last_heartbeat_time = time.monotonic()
+            # Only send heartbeat if still detected
+            if self.hardware.is_base_station_detected():
+                self.uart.write("♡")
+                if HEARTBEAT_DEBUG:
+                    _log("♡", "CONNECTED")
         except Exception as e:
             _log(f"[ERROR] Failed to send heartbeat: {str(e)}")
 
@@ -332,28 +170,10 @@ class ConnectionManager:
         """Clean up resources when shutting down."""
         _log("Cleaning up connection manager resources")
         try:
-            # Unsubscribe from MIDI messages
-            if self.midi_subscription is None:
-                if self.midi:
-                    self.midi.unsubscribe(self.midi_subscription)
-                self.midi_subscription = None
-            
-            # Set state to STANDALONE first to prevent any ongoing operations
             self.state = ConnectionState.STANDALONE
-            
-            # Clean up MIDI interface if it exists
-            if hasattr(self, 'midi') and self.midi is not None:
-                try:
-                    self.midi.reset_input_buffer()
-                    self.midi.reset_output_buffer()
-                except:
-                    pass
-            
-            # Clear all references
             self.uart = None
             self.router_manager = None
             self.midi = None
             self.hardware = None
-            
         except Exception as e:
             _log(f"[ERROR] Connection manager cleanup error: {str(e)}")
