@@ -11,6 +11,22 @@ def _log(message, is_error=False):
     else:
         print(f"{color}{LOG_INST} {message}{LOG_RESET}", file=sys.stderr)
 
+BASIC_PATHS = '''
+note/press/per_key/note_on
+note/release/per_key/note_off
+oscillator/frequency/per_key/note_number/note_on
+oscillator/waveform/global/sine/note_on
+
+filter/band_pass/resonance/global/0.1-2.0/cc71
+filter/band_pass/frequency/global/20-20000/cc70
+
+amplifier/envelope/attack_level/global/0.001-1/cc85
+amplifier/envelope/attack_time/global/0.001-0.5/cc73
+amplifier/envelope/decay_time/global/0.001-0.25/cc75
+amplifier/envelope/sustain_level/global/0.001-1/cc66
+amplifier/envelope/release_time/global/0.001-1/cc72
+'''
+
 NOTE_MINIMUM_PATHS = '''
 note/press/per_key/note_on
 note/release/per_key/note_off

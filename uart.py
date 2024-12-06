@@ -52,9 +52,12 @@ class UartTransport:
 
     def read(self, size=None):
         """Read from UART"""
-        if size is None:
-            return self.uart.read()
-        return self.uart.read(size)
+        data = self.uart.read(size) if size is not None else self.uart.read()
+        if data:
+            # Convert bytes to hex representation for logging
+            hex_data = ' '.join([f'0x{b:02x}' for b in data])
+            _log(f"Received bytes: {hex_data}")
+        return data
 
     @property
     def in_waiting(self):
