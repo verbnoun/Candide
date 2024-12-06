@@ -76,10 +76,10 @@ class UartTransport:
                 parity=None,
                 stop=1
             )
-            _log("UART initialized: baudrate={}, timeout={}".format(
+            _log("[UART  ] UART initialized: baudrate={}, timeout={}".format(
                 self.baudrate, self.timeout), is_error=True)
         except Exception as e:
-            _log("UART initialization failed: " + str(e), is_error=True)
+            _log("[UART  ] UART initialization failed: " + str(e), is_error=True)
             raise
 
     def subscribe(self, callback, message_types=None, channels=None, cc_numbers=None):
@@ -116,20 +116,20 @@ class UartTransport:
             if msg is not None:
                 # Log the message if in debug mode
                 if isinstance(msg, NoteOn):
-                    _log(f"🎵 MIDI: Note On - note={msg.note}, velocity={msg.velocity}, channel={msg.channel+1}")
+                    _log(f"[UART  ] 🎵 MIDI: Note On - note={msg.note}, velocity={msg.velocity}, channel={msg.channel+1}")
                 elif isinstance(msg, NoteOff):
-                    _log(f"🎵 MIDI: Note Off - note={msg.note}, velocity={msg.velocity}, channel={msg.channel+1}")
+                    _log(f"[UART  ]🎵 MIDI: Note Off - note={msg.note}, velocity={msg.velocity}, channel={msg.channel+1}")
                 elif isinstance(msg, ControlChange):
-                    _log(f"🎵 MIDI: CC - control={msg.control}, value={msg.value}, channel={msg.channel+1}")
+                    _log(f"[UART  ]🎵 MIDI: CC - control={msg.control}, value={msg.value}, channel={msg.channel+1}")
                 elif isinstance(msg, ChannelPressure):
-                    _log(f"🎵 MIDI: Channel Pressure - pressure={msg.pressure}, channel={msg.channel+1}")
+                    _log(f"[UART  ]🎵 MIDI: Channel Pressure - pressure={msg.pressure}, channel={msg.channel+1}")
                 elif isinstance(msg, PitchBend):
                     bend_value = msg.pitch_bend - 8192
-                    _log(f"🎵 MIDI: Pitch Bend - value={bend_value} (raw={msg.pitch_bend}), channel={msg.channel+1}")
+                    _log(f"[UART  ]🎵 MIDI: Pitch Bend - value={bend_value} (raw={msg.pitch_bend}), channel={msg.channel+1}")
                 elif isinstance(msg, MIDIBadEvent):
-                    _log(f"MIDI Error: Bad MIDI event: {msg.msg_bytes}", is_error=True)
+                    _log(f"[UART  ]MIDI Error: Bad MIDI event: {msg.msg_bytes}", is_error=True)
                 elif isinstance(msg, MIDIUnknownEvent):
-                    _log(f"MIDI Warning: Unknown status: {msg.status}", is_error=True)
+                    _log(f"[UART  ]MIDI Warning: Unknown status: {msg.status}", is_error=True)
                 
                 # Distribute to matching subscribers
                 for subscription in self.subscribers:
@@ -137,7 +137,7 @@ class UartTransport:
                         try:
                             subscription.callback(msg)
                         except Exception as e:
-                            _log(f"Error in MIDI subscriber callback: {e}", is_error=True)
+                            _log(f"[UART  ] Error in MIDI subscriber callback: {e}", is_error=True)
 
     def flush_buffers(self):
         """Flush input/output buffers"""
@@ -147,7 +147,7 @@ class UartTransport:
     def cleanup(self):
         """Clean up resources"""
         if hasattr(self, 'uart'):
-            _log("Cleaning up UART", is_error=True)
+            _log("[UART  ] Cleaning up UART", is_error=True)
             self.flush_buffers()
             self.uart.deinit()
         self.subscribers.clear()
@@ -227,7 +227,7 @@ class UartManager:
     @classmethod
     def initialize(cls):
         if cls._instance is None:
-            _log("Initializing UART Manager", is_error=True)
+            _log("[UART  ] Initializing UART Manager", is_error=True)
             cls._instance = cls()
             cls._transport = UartTransport(
                 tx_pin=UART_TX,
@@ -237,7 +237,7 @@ class UartManager:
             )
             cls._text_protocol = TextProtocol(cls._transport)
             cls._midi = MidiInterface(cls._transport)
-            _log("UART Manager initialized", is_error=True)
+            _log("[UART  ] UART Manager initialized", is_error=True)
         return cls._instance
 
     @classmethod
@@ -254,11 +254,11 @@ class UartManager:
 
     @classmethod
     def cleanup(cls):
-        _log("Cleaning up UART Manager", is_error=True)
+        _log("[UART  ] Cleaning up UART Manager", is_error=True)
         if cls._transport:
             cls._transport.cleanup()
         cls._transport = None
         cls._text_protocol = None
         cls._midi = None
         cls._instance = None
-        _log("UART Manager cleanup complete", is_error=True)
+        _log("[UART  ] UART Manager cleanup complete", is_error=True)

@@ -77,7 +77,6 @@ class AudioSystem:
                     self.mixer.voice[i].level = log_volume
                 
             self.current_volume = volume
-            _log(f"Volume set to {volume:.3f} (log_volume: {log_volume:.3f})")
             
         except Exception as e:
             _log(f"[ERROR] Volume update failed: {str(e)}")
@@ -137,7 +136,7 @@ class VolumeManager(HardwareComponent):
         self.pot = analogio.AnalogIn(pin)
         self.last_value = self.pot.value
         self.last_normalized = self.normalize_value(self.last_value)
-        _log(f"Volume pot initialized. Initial raw value: {self.last_value}, normalized: {self.last_normalized:.3f}")
+        _log(f"Volume pot initialized. Initial raw value: {self.last_value}, normalized: {self.last_normalized:.2f}")
     
     def normalize_value(self, value):
         clamped_value = max(min(value, ADC_MAX), ADC_MIN)
@@ -161,7 +160,7 @@ class VolumeManager(HardwareComponent):
                 normalized_new = self.normalize_value(raw_value)
                 
                 if normalized_new != self.last_normalized:
-                    _log(f"Volume change detected - Raw: {raw_value} (Δ{change}), Normalized: {normalized_new:.3f}")
+                    
                     self.last_value = raw_value
                     self.last_normalized = normalized_new
                     self.is_active = True
@@ -204,14 +203,6 @@ class EncoderManager(HardwareComponent):
             self.last_position = current_raw_position
         
         return events
-
-import time
-import digitalio
-import board
-
-def _log(message):
-    """Simple logging function."""
-    print(message)
 
 class DetectPinManager:
     def __init__(self, pin, log_interval=5):
@@ -264,7 +255,6 @@ class DetectPinManager:
             self.detect_pin.deinit()
             _log("Detection pin deinitialized.")
 
-
 class HardwareManager:
     def __init__(self):
         _log("Starting HardwareManager initialization...")
@@ -300,7 +290,7 @@ class HardwareManager:
     def get_initial_volume(self):
         if self.volume:
             initial_volume = self.volume.normalize_value(self.volume.pot.value)
-            _log(f"Getting initial volume: {initial_volume:.3f}")
+            _log(f"Getting initial volume: {initial_volume:.2f}")
             return initial_volume
         return 0.0
 
@@ -324,32 +314,29 @@ class HardwareManager:
         if current_time - self.last_volume_scan >= UPDATE_INTERVAL:
             new_volume = self.read_volume()
             if new_volume is not None and new_volume != self.last_volume:
-                _log(f"Volume update - Previous: {self.last_volume:.3f}, New: {new_volume:.3f}")
+                # Only log if volume changed by 0.05 or more
+                if abs(new_volume - (self.last_volume or 0)) >= 0.05:
+                    _log(f"Volume update - Previous: {self.last_volume:.2f}, New: {new_volume:.2f}")
                 audio_system.set_volume(new_volume)
                 self.last_volume = new_volume
             self.last_volume_scan = current_time
 
-    def check_encoder(self, connection_manager, router_manager):
+    def check_encoder(self, instrument_manager):
         current_time = time.monotonic()
         if current_time - self.last_encoder_scan >= ENCODER_SCAN_INTERVAL:
             events = self.read_encoder()
-            valid_states = [ConnectionState.STANDALONE, ConnectionState.CONNECTED]
-            current_state = connection_manager.state
             
-            if current_state in valid_states and events:
+            if events:
                 for event_type, direction in events:
                     if event_type == 'instrument_change':
-                        instruments = router_manager.get_available_instruments()
-                        current_idx = instruments.index(router_manager.current_instrument)
+                        instruments = instrument_manager.get_available_instruments()
+                        current_idx = instruments.index(instrument_manager.current_instrument)
                         new_idx = (current_idx + direction) % len(instruments)
                         new_instrument = instruments[new_idx]
-                        
-                        if router_manager.set_instrument(new_instrument):
-                            if current_state == ConnectionState.CONNECTED:
-                                connection_manager.send_config()
-                            
+                        instrument_manager.set_instrument(new_instrument)
+            
             self.last_encoder_scan = current_time
-        
+
     def cleanup(self):
         if self.encoder:
             self.encoder.cleanup()

@@ -60,11 +60,35 @@ lfo/once/tremolo_lfo/global/0-1/cc106
 lfo/interpolate/tremolo_lfo/global/0-1/cc107
 '''
 
+def _log(message):
+    """Simple logging function for instrument events."""
+    print(f"[INSTR ] {message}")
+
 class InstrumentManager:
     def __init__(self):
         self.instruments = {}
         self.current_instrument = None
+        self.connection_manager = None
+        self.synthesizer = None
         self._discover_instruments()
+        _log("Instrument manager initialized")
+
+    def register_components(self, connection_manager=None, synthesizer=None):
+        """Register ConnectionManager and Synthesizer components."""
+        _log("Registering components...")
+        
+        if connection_manager:
+            _log("Registering connection manager")
+            self.connection_manager = connection_manager
+            
+        if synthesizer:
+            _log("Registering synthesizer")
+            self.synthesizer = synthesizer
+        
+        # Register connection manager's callback with synthesizer
+        if self.synthesizer and self.connection_manager:
+            _log("Wiring up synth ready callback")
+            self.synthesizer.register_ready_callback(self.connection_manager.on_synth_ready)
 
     def _discover_instruments(self):
         self.instruments.clear()
@@ -83,16 +107,80 @@ class InstrumentManager:
             
         if not self.current_instrument:
             self.current_instrument = next(iter(self.instruments))
+            
+        _log(f"Discovered instruments: {', '.join(self.instruments.keys())}")
+
+    def get_current_cc_configs(self):
+        """Get all CC numbers and parameter names for the current instrument.
+        
+        Returns:
+            List of tuples (cc_number, parameter_name) for all CC mappings in current instrument.
+        """
+        paths = self.get_current_config()
+        if not paths:
+            return []
+            
+        cc_configs = []
+        seen_ccs = set()
+        
+        for line in paths.strip().split('\n'):
+            if not line or 'cc' not in line:
+                continue
+                
+            parts = line.strip().split('/')
+            
+            # Find the last part that contains 'cc'
+            cc_part = None
+            for part in reversed(parts):
+                if part.startswith('cc'):
+                    cc_part = part
+                    break
+                    
+            if not cc_part:
+                continue
+                
+            try:
+                cc_num = int(cc_part[2:])  # Extract number after 'cc'
+                if cc_num not in seen_ccs:
+                    # Find parameter name (part before global/per_key)
+                    param_name = None
+                    for i, part in enumerate(parts):
+                        if part in ('global', 'per_key'):
+                            if i > 0:
+                                param_name = parts[i-1]
+                            break
+                    
+                    if param_name:
+                        cc_configs.append((cc_num, param_name))
+                        seen_ccs.add(cc_num)
+            except ValueError:
+                continue
+                
+        return cc_configs
 
     def set_instrument(self, instrument_name):
+        """Set current instrument and notify registered components."""
         try:
             if instrument_name not in self.instruments:
+                _log(f"Invalid instrument name: {instrument_name}")
                 return False
             
+            _log(f"Setting instrument to: {instrument_name}")
             self.current_instrument = instrument_name
+            paths = self.get_current_config()
+
+            # Update synthesizer first - it will signal when ready
+            if self.synthesizer:
+                _log("Updating synthesizer configuration")
+                self.synthesizer.update_instrument(paths)
+                
+            # Connection manager will wait for synth ready signal
+            # before sending config
+
             return True
             
         except Exception as e:
+            _log(f"Error setting instrument: {str(e)}")
             return False
 
     def get_current_config(self):
@@ -100,3 +188,9 @@ class InstrumentManager:
 
     def get_available_instruments(self):
         return list(self.instruments.keys())
+
+    def cleanup(self):
+        """Clean up component references."""
+        _log("Cleaning up instrument manager")
+        self.connection_manager = None
+        self.synthesizer = None

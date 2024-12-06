@@ -9,6 +9,7 @@ from hardware import HardwareManager, AudioSystem
 from uart import UartManager
 from connection import ConnectionManager
 from instruments import InstrumentManager
+from synthesizer import Synthesizer
 
 def _log(message, effect=None):
     COLORS = [
@@ -51,6 +52,9 @@ class Candide:
         # Get MIDI interface explicitly
         self.midi_interface = UartManager.get_midi_interface()
 
+        _log("Initializing synthesizer...")
+        self.synthesizer = Synthesizer(self.midi_interface)
+
         _log("Initializing audio system...")
         self.audio_system = AudioSystem()
 
@@ -60,10 +64,24 @@ class Candide:
         _log("Initializing connection manager...")
         self.connection_manager = ConnectionManager(
             self.text_uart,
-            self.instrument_manager,
-            self.midi_interface,  # Pass MIDI interface instead of transport
-            self.hardware_manager
+            self.midi_interface,
+            self.hardware_manager,
+            self.instrument_manager
         )
+
+        _log("Registering components with instrument manager...")
+        self.instrument_manager.register_components(
+            connection_manager=self.connection_manager,
+            synthesizer=self.synthesizer
+        )
+
+        _log("Setting initial instrument...")
+        # Get first available instrument
+        initial_instrument = self.instrument_manager.get_available_instruments()[0]
+        # Register connection callback before setting instrument
+        self.synthesizer.register_ready_callback(self.connection_manager.on_synth_ready)
+        # Set initial instrument to trigger ready flow
+        self.instrument_manager.set_instrument(initial_instrument)
 
         try:
             _log("Setting initial volume...")
@@ -72,6 +90,15 @@ class Candide:
             self.audio_system.set_volume(initial_volume)
             self.hardware_manager.last_volume = initial_volume
             _log("\nCandide (v1.0) is awake!... ( ◔◡◔)♬\n", effect='cycle')
+
+            # Check for base station after all initialization is complete
+            _log("Checking for base station...")
+            if self.hardware_manager.is_base_station_detected():
+                self.connection_manager._handle_initial_detection()
+                # Give time for synth to become ready and config to be sent
+                time.sleep(0.1)
+                self.connection_manager.update_state()
+
         except Exception as e:
             _log(f"[ERROR] Initialization error: {str(e)}")
             raise
@@ -81,7 +108,7 @@ class Candide:
             if self.transport.in_waiting:
                 self.transport.log_incoming_data()  # This will now handle distributing MIDI messages
             self.connection_manager.update_state()
-            self.hardware_manager.check_encoder(self.connection_manager, self.instrument_manager)
+            self.hardware_manager.check_encoder(self.instrument_manager)
             self.hardware_manager.check_volume(self.audio_system)
                 
             return True
@@ -108,6 +135,12 @@ class Candide:
         if hasattr(self, 'transport'):
             _log("Cleaning up transport...")
             UartManager.cleanup()
+        if self.instrument_manager:
+            _log("Cleaning up instrument manager...")
+            self.instrument_manager.cleanup()
+        if self.synthesizer:
+            _log("Cleaning up synthesizer...")
+            self.synthesizer.cleanup()
         if self.connection_manager:
             _log("Cleaning up connection manager...")
             self.connection_manager.cleanup()
