@@ -7,6 +7,7 @@ import random
 from constants import *
 from hardware import HardwareManager, AudioSystem
 from uart import UartManager
+from midi import initialize_midi  # Add this import
 from connection import ConnectionManager
 from instruments import InstrumentManager
 from synthesizer import Synthesizer
@@ -43,9 +44,10 @@ class Candide:
         self.hardware_manager = HardwareManager()
 
         _log("Initializing UART interfaces...")
+        # Initialize UART and MIDI in correct order
         self.transport, self.text_uart = UartManager.get_interfaces()
-        # Get MIDI interface explicitly
-        self.midi_interface = UartManager.get_midi_interface()
+        # Initialize MIDI interface
+        self.midi_interface = initialize_midi()
 
         _log("Initializing audio system...")
         self.audio_system = AudioSystem()
@@ -101,7 +103,7 @@ class Candide:
     def update(self):
         try:
             if self.transport.in_waiting:
-                self.transport.process_midi_messages()  # Process all available MIDI messages
+                self.midi_interface.process_midi_messages()  # Updated to use midi_interface directly
             self.connection_manager.update_state()
             self.hardware_manager.check_encoder(self.instrument_manager)
             self.hardware_manager.check_volume(self.audio_system)
