@@ -17,6 +17,15 @@ def _log(message, is_error=False):
     else:
         print("{}{} {}{}".format(color, LOG_MODU, message, LOG_RESET), file=sys.stderr)
 
+# Cache for pre-computed waveforms
+_waveform_cache = {}
+
+def get_cached_waveform(waveform_type):
+    """Get or create a waveform from cache."""
+    if waveform_type not in _waveform_cache:
+        _waveform_cache[waveform_type] = create_waveform(waveform_type)
+    return _waveform_cache[waveform_type]
+
 def create_waveform(waveform_type):
     """Create a waveform buffer based on type."""
     samples = 100
@@ -49,6 +58,47 @@ def create_waveform(waveform_type):
         raise ValueError("Invalid waveform type: " + waveform_type)
     
     return buffer
+
+def create_morphed_waveform(morph_position, waveform_sequence=None):
+    """
+    Create a morphed waveform based on position and sequence.
+    
+    Args:
+        morph_position: Value 0-1 representing position in morph sequence
+        waveform_sequence: List of waveform types to morph between.
+                         Defaults to ['sine', 'triangle', 'square', 'saw']
+    """
+    if waveform_sequence is None:
+        waveform_sequence = ['sine', 'triangle', 'square', 'saw']
+    
+    # Calculate which waveforms to blend between
+    num_transitions = len(waveform_sequence) - 1
+    if num_transitions == 0:
+        return get_cached_waveform(waveform_sequence[0])
+        
+    # Scale position to total number of transitions
+    scaled_pos = morph_position * num_transitions
+    transition_index = int(scaled_pos)
+    
+    # Clamp to valid range
+    if transition_index >= num_transitions:
+        return get_cached_waveform(waveform_sequence[-1])
+    
+    # Get the two waveforms to blend
+    waveform1 = get_cached_waveform(waveform_sequence[transition_index])
+    waveform2 = get_cached_waveform(waveform_sequence[transition_index + 1])
+    
+    # Calculate blend amount within this transition
+    t = scaled_pos - transition_index
+    
+    # Create morphed buffer
+    morphed = array.array('h')
+    for i in range(len(waveform1)):
+        value = int(waveform1[i] * (1-t) + waveform2[i] * t)
+        morphed.append(value)
+    
+    _log(f"Created morphed waveform at position {morph_position} between {waveform_sequence[transition_index]} and {waveform_sequence[transition_index + 1]}")
+    return morphed
 
 class Voice:
     """A voice that can be targeted by MIDI address."""
