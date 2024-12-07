@@ -95,6 +95,18 @@ class Voice:
             action,
             ", ".join(state) if state else "no notes"
         ))
+
+    def _create_filter(self, synth, filter_type, frequency, resonance):
+        """Create a filter based on type with current parameters."""
+        if filter_type == 'low_pass':
+            return synth.low_pass_filter(frequency, resonance)
+        elif filter_type == 'high_pass':
+            return synth.high_pass_filter(frequency, resonance)
+        elif filter_type == 'band_pass':
+            return synth.band_pass_filter(frequency, resonance)
+        elif filter_type == 'notch':
+            return synth.notch_filter(frequency, resonance)
+        return None
         
     def press_note(self, note_number, channel, synth, **note_params):
         """Target this voice with a note-on."""
@@ -104,6 +116,17 @@ class Voice:
         # Set new address
         self.note_number = note_number
         self.channel = channel
+        
+        # Create filter if parameters provided
+        if 'filter_type' in note_params and 'filter_frequency' in note_params and 'filter_resonance' in note_params:
+            filter = self._create_filter(
+                synth,
+                note_params.pop('filter_type'),
+                note_params.pop('filter_frequency'),
+                note_params.pop('filter_resonance')
+            )
+            if filter:
+                note_params['filter'] = filter
         
         # Create new active note
         self.active_note = synthio.Note(**note_params)
@@ -134,6 +157,19 @@ class Voice:
     def update_active_note(self, synth, **params):
         """Update parameters of active note."""
         if self.active_note:
+            # Handle filter updates
+            if ('filter_type' in params and 'filter_frequency' in params and 
+                'filter_resonance' in params):
+                filter = self._create_filter(
+                    synth,
+                    params.pop('filter_type'),
+                    params.pop('filter_frequency'),
+                    params.pop('filter_resonance')
+                )
+                if filter:
+                    params['filter'] = filter
+            
+            # Update note parameters
             for param, value in params.items():
                 if hasattr(self.active_note, param):
                     setattr(self.active_note, param, value)

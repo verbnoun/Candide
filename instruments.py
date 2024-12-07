@@ -1,4 +1,33 @@
-"""Instrument configuration management system defining synthesizer paths and parameter mappings."""
+"""Instrument configuration management system defining synthesizer paths and parameter mappings.
+
+Available Filter Path Configurations:
+
+Low Pass Filter:
+    filter/low_pass/frequency/global/20-20000/cc70
+    filter/low_pass/resonance/global/0.1-2.0/cc71
+    Description: Allows frequencies below cutoff to pass through. Higher resonance creates a peak at cutoff.
+
+High Pass Filter:
+    filter/high_pass/frequency/global/20-20000/cc70
+    filter/high_pass/resonance/global/0.1-2.0/cc71
+    Description: Allows frequencies above cutoff to pass through. Higher resonance creates a peak at cutoff.
+
+Band Pass Filter:
+    filter/band_pass/frequency/global/20-20000/cc70
+    filter/band_pass/resonance/global/0.1-2.0/cc71
+    Description: Allows frequencies near center frequency to pass through. Higher resonance narrows the band.
+
+Notch Filter:
+    filter/notch/frequency/global/20-20000/cc70
+    filter/notch/resonance/global/0.1-2.0/cc71
+    Description: Blocks frequencies near center frequency. Higher resonance narrows the notch.
+
+Filter parameters:
+- frequency: Center/cutoff frequency in Hz (20-20000 Hz range)
+- resonance: Filter resonance/Q factor (0.1-2.0 range)
+- Both parameters are global, affecting all active notes
+- CC70 controls frequency, CC71 controls resonance
+"""
 
 import sys
 from constants import LOG_INST, LOG_LIGHT_YELLOW, LOG_RED, LOG_RESET, INSTRUMENTS_LOG
@@ -14,15 +43,6 @@ def _log(message, is_error=False):
     else:
         print(f"{color}{LOG_INST} {message}{LOG_RESET}", file=sys.stderr)
 
-FILTER_MINIMUM_PATHS = '''
-note/press/per_key/note_on
-note/release/per_key/note_off
-oscillator/frequency/per_key/note_number/note_on
-oscillator/waveform/global/saw/note_on
-
-filter/band_pass/resonance/global/0.1-2.0/cc71
-filter/band_pass/frequency/global/20-20000/cc70
-'''
 
 ENVELOPE_MINIMUM_PATHS = '''
 note/press/per_key/note_on
@@ -87,6 +107,16 @@ note/press/per_key/note_on
 note/release/per_key/note_off
 oscillator/frequency/per_key/note_number/note_on
 oscillator/waveform/global/triangle/note_on
+'''
+
+FILTER_MINIMUM_PATHS = '''
+note/press/per_key/note_on
+note/release/per_key/note_off
+oscillator/frequency/per_key/note_number/note_on
+oscillator/waveform/global/saw/note_on
+
+filter/band_pass/resonance/global/0.1-2.0/cc71
+filter/band_pass/frequency/global/20-20000/cc70
 '''
 
 class InstrumentManager:

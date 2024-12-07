@@ -65,6 +65,11 @@ class PathParser:
         self.midi_mappings = {}  # trigger -> parameter name
         self.enabled_messages = set()
         self.enabled_ccs = set()
+        self.filter_type = None  # Current filter type
+        self.current_filter_params = {
+            'frequency': 0,
+            'resonance': 0
+        }
         
     def parse_paths(self, paths):
         """Parse instrument paths to extract parameters and mappings."""
@@ -95,6 +100,7 @@ class PathParser:
         _log(f"Fixed values: {self.fixed_values}")
         _log(f"Enabled messages: {self.enabled_messages}")
         _log(f"Enabled CCs: {self.enabled_ccs}")
+        _log(f"Filter type: {self.filter_type}")
     
     def _reset(self):
         """Reset all collections before parsing new paths."""
@@ -104,11 +110,22 @@ class PathParser:
         self.midi_mappings.clear()
         self.enabled_messages.clear()
         self.enabled_ccs.clear()
+        self.filter_type = None
+        self.current_filter_params = {
+            'frequency': 0,
+            'resonance': 0
+        }
     
     def _parse_line(self, parts):
         """Parse a single path line to extract parameter information."""
         if len(parts) < 3:
             raise ValueError(f"Invalid path format: {'/'.join(parts)}")
+            
+        # Check for filter configuration
+        if parts[0] == 'filter':
+            if len(parts) >= 2 and parts[1] in ('low_pass', 'high_pass', 'band_pass', 'notch'):
+                self.filter_type = parts[1]
+                _log(f"Found filter type: {self.filter_type}")
             
         # Find parameter scope and name
         scope = None
@@ -226,7 +243,10 @@ class Synthesizer:
                 
                 note_params = {
                     'frequency': synthio.midi_to_hz(msg.note),
-                    'waveform': self.global_waveform
+                    'waveform': self.global_waveform,
+                    'filter_type': self.path_parser.filter_type,
+                    'filter_frequency': self.path_parser.current_filter_params['frequency'],
+                    'filter_resonance': self.path_parser.current_filter_params['resonance']
                 }
                 
                 self.voice_pool.press_note(msg.note, msg.channel, self.synth, **note_params)
@@ -246,6 +266,27 @@ class Synthesizer:
                     if param_name:
                         value = self.path_parser.convert_value(param_name, msg.value, True)
                         _log("Updated global {} = {}".format(param_name, value))
+                        
+                        # Update filter parameters if this is a filter CC
+                        if param_name == 'frequency':
+                            self.path_parser.current_filter_params['frequency'] = value
+                            # Update all active voices with new filter
+                            for voice in self.voice_pool.voices:
+                                if voice.active_note:
+                                    voice.update_active_note(self.synth,
+                                        filter_type=self.path_parser.filter_type,
+                                        filter_frequency=value,
+                                        filter_resonance=self.path_parser.current_filter_params['resonance'])
+                                    
+                        elif param_name == 'resonance':
+                            self.path_parser.current_filter_params['resonance'] = value
+                            # Update all active voices with new filter
+                            for voice in self.voice_pool.voices:
+                                if voice.active_note:
+                                    voice.update_active_note(self.synth,
+                                        filter_type=self.path_parser.filter_type,
+                                        filter_frequency=self.path_parser.current_filter_params['frequency'],
+                                        filter_resonance=value)
                 
             elif msg == 'pitchbend' and 'pitchbend' in self.path_parser.enabled_messages:
                 midi_value = (msg.pitch_bend >> 7) & 0x7F
