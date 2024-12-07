@@ -19,8 +19,8 @@ MPE_TIMBRE_CC = 74
 def _log(message, is_error=False, is_debug=False):
     """Log messages with MIDI prefix"""
     color = LOG_RED if is_error else LOG_LIGHT_ORANGE
-    prefix = "[ERROR] " if is_error else "[DEBUG] " if is_debug else ""
-    print("{}{}".format(color, LOG_MIDI) + prefix + message + LOG_RESET)
+    prefix = "[ERROR] " if is_error else ""
+    print("{}{}".format(color, LOG_MIDI) + prefix + " " + message + LOG_RESET)
 
 class MidiSubscription:
     """Filtered MIDI message subscription"""
