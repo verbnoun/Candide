@@ -15,6 +15,7 @@ from modules import NotePool, create_waveform
 import synthio
 import sys
 import array
+import time
 from constants import (
     SAMPLE_RATE,
     AUDIO_CHANNEL_COUNT,
@@ -204,6 +205,8 @@ class Synthesizer:
         self.current_subscription = None
         self.ready_callback = None
         self.global_waveform = None
+        self.last_health_check = time.monotonic()
+        self.health_check_interval = 5.0  # Check every 5 seconds
         _log("Synthesizer initialized")
 
     def _setup_synthio(self):
@@ -279,9 +282,8 @@ class Synthesizer:
         try:
             # Release all notes before reconfiguring
             if self.note_pool:
-                released_notes = self.note_pool.release_all()
-                for note in released_notes:
-                    self.synth.release(note)
+                released_notes = self.note_pool.release_all(self.synth)
+                _log(f"Released {len(released_notes)} notes during reconfiguration")
             
             # Parse paths using PathParser
             self.path_parser.parse_paths(paths)
@@ -297,14 +299,70 @@ class Synthesizer:
             
         except Exception as e:
             _log(f"Failed to update instrument: {str(e)}", is_error=True)
+            self._emergency_cleanup()
             raise
+
+    def _check_health(self):
+        """Perform periodic health check of the synthesizer system."""
+        current_time = time.monotonic()
+        if current_time - self.last_health_check >= self.health_check_interval:
+            _log("Performing synthesizer health check")
+            try:
+                # Check note pool health
+                self.note_pool.check_health()
+                
+                # Verify synth state
+                if self.synth is None:
+                    _log("Synthesizer object is None", is_error=True)
+                    self._emergency_cleanup()
+                    self._setup_synthio()
+                
+                self.last_health_check = current_time
+                
+            except Exception as e:
+                _log(f"Health check failed: {str(e)}", is_error=True)
+                self._emergency_cleanup()
+
+    def _emergency_cleanup(self):
+        """Perform emergency cleanup in case of critical errors."""
+        _log("Performing emergency cleanup", is_error=True)
+        try:
+            # Release all notes
+            if self.note_pool:
+                released_notes = self.note_pool.release_all(self.synth)
+                _log(f"Emergency released {len(released_notes)} notes")
+            
+            # Reset synthesizer
+            if self.synth:
+                try:
+                    self.synth.deinit()
+                except Exception as e:
+                    _log(f"Error deinitializing synth: {str(e)}", is_error=True)
+                self.synth = None
+            
+            # Reset MIDI subscription
+            if self.current_subscription:
+                try:
+                    self.midi_interface.unsubscribe(self.current_subscription)
+                except Exception as e:
+                    _log(f"Error unsubscribing MIDI: {str(e)}", is_error=True)
+                self.current_subscription = None
+                
+            _log("Emergency cleanup complete")
+            
+        except Exception as e:
+            _log(f"Error during emergency cleanup: {str(e)}", is_error=True)
 
     def _handle_midi_message(self, msg):
         """Handle incoming MIDI messages."""
         try:
+            # Perform periodic health check
+            self._check_health()
+            
             if msg == 'noteon' and msg.velocity > 0 and 'noteon' in self.path_parser.enabled_messages:
+                _log(f"Processing Note On: ch={msg.channel} note={msg.note} vel={msg.velocity}")
                 # Get note from pool with channel tracking
-                result = self.note_pool.get_note(msg.note, msg.channel)
+                result = self.note_pool.get_note(msg.note, msg.channel, self.synth)
                 if result:
                     index, note = result
                     
@@ -320,14 +378,19 @@ class Synthesizer:
                     # Actually press the note
                     self.synth.press(note)
                     _log(f"Pressed note {msg.note} on channel {msg.channel}")
+                else:
+                    _log(f"Failed to allocate note {msg.note}", is_error=True)
                 
             elif ((msg == 'noteoff' or (msg == 'noteon' and msg.velocity == 0)) and 
                   'noteoff' in self.path_parser.enabled_messages):
+                _log(f"Processing Note Off: ch={msg.channel} note={msg.note}")
                 # Release the note using existing pool management
-                index, note = self.note_pool.release_note(msg.note)
+                index, note = self.note_pool.release_note(msg.note, self.synth)
                 if note is not None:
                     self.synth.release(note)
                     _log(f"Released note {msg.note}")
+                else:
+                    _log(f"Note {msg.note} not found for release", is_error=True)
                 
             elif msg == 'cc' and 'cc' in self.path_parser.enabled_messages:
                 cc_trigger = f"cc{msg.control}"
@@ -348,8 +411,10 @@ class Synthesizer:
                             note = self.note_pool.notes[idx]
                             if param_name == 'bend':
                                 note.bend = value
+                                _log(f"Applied bend={value} to note {note_num}")
                             elif param_name == 'panning':
                                 note.panning = value
+                                _log(f"Applied panning={value} to note {note_num}")
                 
             elif msg == 'channelpressure' and 'pressure' in self.path_parser.enabled_messages:
                 for param_name, range_obj in self.path_parser.key_ranges.items():
@@ -360,32 +425,32 @@ class Synthesizer:
                             note = self.note_pool.notes[idx]
                             if param_name == 'sustain_level':
                                 note.amplitude = value
+                                _log(f"Applied amplitude={value} to note {note_num}")
                 
         except Exception as e:
             _log(f"Error handling MIDI message: {str(e)}", is_error=True)
-            if self.note_pool:
-                released_notes = self.note_pool.release_all()
-                for note in released_notes:
-                    self.synth.release(note)
+            self._emergency_cleanup()
 
     def cleanup(self):
         """Clean up resources."""
         _log("Cleaning up synthesizer...")
         try:
             if self.note_pool:
-                released_notes = self.note_pool.release_all()
-                for note in released_notes:
-                    self.synth.release(note)
+                released_notes = self.note_pool.release_all(self.synth)
+                _log(f"Released {len(released_notes)} notes during cleanup")
             
             if self.current_subscription:
                 self.midi_interface.unsubscribe(self.current_subscription)
                 self.current_subscription = None
+                _log("Unsubscribed from MIDI messages")
                 
             if self.synth:
                 self.synth.deinit()
                 self.synth = None
+                _log("Deinitialized synthesizer")
                 
             _log("Cleanup complete")
             
         except Exception as e:
             _log(f"Error during cleanup: {str(e)}", is_error=True)
+            self._emergency_cleanup()

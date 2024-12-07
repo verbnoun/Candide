@@ -106,29 +106,43 @@ class NotePool:
         # First try to find an empty slot
         for i in range(self.size):
             if self.notes[i] is None:
+                _log(f"Found empty slot at index {i}")
                 return i
             if self.timestamps[i] < oldest_timestamp:
                 oldest_index = i
                 oldest_timestamp = self.timestamps[i]
         
         # If no empty slot, use the oldest one
+        _log(f"No empty slots available, stealing oldest slot at index {oldest_index} (age: {self.next_timestamp - oldest_timestamp})")
         return oldest_index
 
     def _release_slot(self, index, synth):
         """Release a note slot."""
-        if self.notes[index] is not None:
-            if synth:
-                _log("Releasing note " + str(self.note_nums[index]) + " from channel " + str(self.channels[index]))
-                synth.release(self.notes[index])
-            
-            # Remove from channel mapping
-            if self.channels[index] in self.channel_notes:
-                del self.channel_notes[self.channels[index]]
-            
-            # Clear slot
-            self.notes[index] = None
-            self.note_nums[index] = None
-            self.channels[index] = None
+        try:
+            if self.notes[index] is not None:
+                note_num = self.note_nums[index]
+                channel = self.channels[index]
+                
+                if synth:
+                    _log(f"Releasing note {note_num} from channel {channel} at index {index}")
+                    try:
+                        synth.release(self.notes[index])
+                    except Exception as e:
+                        _log(f"Error releasing note from synth: {str(e)}", is_error=True)
+                
+                # Remove from channel mapping
+                if channel in self.channel_notes:
+                    del self.channel_notes[channel]
+                    _log(f"Removed channel {channel} from mapping")
+                
+                # Clear slot
+                self.notes[index] = None
+                self.note_nums[index] = None
+                self.channels[index] = None
+                _log(f"Cleared slot at index {index}")
+                
+        except Exception as e:
+            _log(f"Error in _release_slot: {str(e)}", is_error=True)
 
     def get_note(self, note_num, channel, synth=None):
         """Get a note slot, stealing if necessary."""
@@ -138,6 +152,7 @@ class NotePool:
             # First release any existing note on this channel
             if channel in self.channel_notes:
                 old_note_num, old_index = self.channel_notes[channel]
+                _log(f"Channel {channel} already has note {old_note_num}, releasing it")
                 self._release_slot(old_index, synth)
             
             # Get an empty or oldest slot
@@ -145,16 +160,18 @@ class NotePool:
             
             # If slot was in use, we'll need note stealing
             if self.notes[index] is not None:
-                _log("Stealing slot " + str(index) + " from note " + str(self.note_nums[index]) + " for new note " + str(note_num))
+                _log(f"Stealing slot {index} from note {self.note_nums[index]} for new note {note_num}")
                 
                 # If we have a ready note at the correct frequency, use it
                 if self.ready_note and self.ready_note_freq == freq:
                     note = self.ready_note
                     self.ready_note = None
                     self.ready_note_freq = None
+                    _log("Using prepared ready note")
                 else:
                     # Create new note since ready note wasn't suitable
                     note = synthio.Note(frequency=freq)
+                    _log("Created new note (no suitable ready note available)")
                 
                 # Release the old note
                 self._release_slot(index, synth)
@@ -164,6 +181,7 @@ class NotePool:
             else:
                 # No stealing needed, just create a new note
                 note = synthio.Note(frequency=freq)
+                _log(f"Created new note in empty slot {index}")
             
             # Update slot
             self.notes[index] = note
@@ -175,11 +193,11 @@ class NotePool:
             # Update channel mapping
             self.channel_notes[channel] = (note_num, index)
             
-            _log("Allocated note " + str(note_num) + " to channel " + str(channel) + " at index " + str(index))
+            _log(f"Allocated note {note_num} to channel {channel} at index {index}")
             return index, note
             
         except Exception as e:
-            _log("Error allocating note: " + str(e), is_error=True)
+            _log(f"Error allocating note: {str(e)}", is_error=True)
             return None
 
     def release_note(self, note_num, synth=None):
@@ -187,13 +205,15 @@ class NotePool:
         try:
             for i in range(self.size):
                 if self.note_nums[i] == note_num:
+                    _log(f"Found note {note_num} at index {i}, releasing it")
                     note = self.notes[i]
                     self._release_slot(i, synth)
                     return i, note
+            _log(f"Note {note_num} not found in pool")
             return None, None
                     
         except Exception as e:
-            _log("Error releasing note: " + str(e), is_error=True)
+            _log(f"Error releasing note: {str(e)}", is_error=True)
             return None, None
 
     def release_channel(self, channel, synth=None):
@@ -201,15 +221,17 @@ class NotePool:
         try:
             if channel in self.channel_notes:
                 note_num, index = self.channel_notes[channel]
+                _log(f"Releasing all notes on channel {channel}")
                 self._release_slot(index, synth)
                     
         except Exception as e:
-            _log("Error releasing channel: " + str(e), is_error=True)
+            _log(f"Error releasing channel: {str(e)}", is_error=True)
 
     def release_all(self, synth=None):
         """Release all notes."""
         try:
             released = []
+            _log("Releasing all notes from pool")
             for i in range(self.size):
                 if self.notes[i] is not None:
                     note = self.notes[i]
@@ -218,14 +240,46 @@ class NotePool:
             
             # Also release ready note if it exists
             if self.ready_note:
+                _log("Releasing ready note")
                 released.append(self.ready_note)
                 self.ready_note = None
                 self.ready_note_freq = None
             
             self.next_timestamp = 0
             self.channel_notes.clear()
+            _log(f"Released {len(released)} notes total")
             return released
             
         except Exception as e:
-            _log("Error in release_all: " + str(e), is_error=True)
+            _log(f"Error in release_all: {str(e)}", is_error=True)
             return []
+
+    def check_health(self):
+        """Verify the health of the note pool and report any inconsistencies."""
+        try:
+            _log("Performing note pool health check")
+            
+            # Check for orphaned notes
+            for i in range(self.size):
+                if self.notes[i] is not None:
+                    if self.channels[i] not in self.channel_notes:
+                        _log(f"Found orphaned note at index {i}: note={self.note_nums[i]} channel={self.channels[i]}", 
+                             is_error=True)
+            
+            # Check channel mapping consistency
+            for channel, (note_num, index) in self.channel_notes.items():
+                if index >= self.size or self.notes[index] is None:
+                    _log(f"Invalid channel mapping: ch={channel} note={note_num} index={index}", 
+                         is_error=True)
+                elif self.note_nums[index] != note_num:
+                    _log(f"Mismatched note number in channel mapping: ch={channel} " +
+                         f"mapped_note={note_num} actual_note={self.note_nums[index]}", 
+                         is_error=True)
+            
+            # Report current pool status
+            active_notes = sum(1 for note in self.notes if note is not None)
+            _log(f"Pool status: {active_notes}/{self.size} slots in use, " +
+                 f"{len(self.channel_notes)} active channels")
+            
+        except Exception as e:
+            _log(f"Error in health check: {str(e)}", is_error=True)
