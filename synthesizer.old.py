@@ -1,27 +1,59 @@
-"""High-level synthesizer coordination module.
+"""Synthesizer module for handling MIDI input and audio synthesis."""
 
-This module provides the main interface for the synthesizer system, handling:
-- Path parsing and configuration management
-- MIDI parameter handling and mapping
-- Message routing and control
-- System integration and coordination
-
-It uses modules.py for the actual sound generation and resource management.
-This split separates the concerns of "what sound to make" (this file)
-from "how to make sound" (modules.py).
-"""
-
-from modules import NotePool, create_waveform
+import array
 import synthio
+import math
 import sys
 from constants import (
-    SAMPLE_RATE,
+    SAMPLE_RATE, 
     AUDIO_CHANNEL_COUNT,
     LOG_SYNTH,
     LOG_LIGHT_GREEN,
     LOG_RED,
     LOG_RESET
 )
+
+def create_waveform(waveform_type):
+    """Create a waveform buffer based on type."""
+    samples = 100  # Number of samples in waveform
+    buffer = array.array('h')  # signed short array for samples
+    
+    if waveform_type == 'sine':
+        # Sine wave: sin(2π * t)
+        for i in range(samples):
+            value = int(32767 * math.sin(2 * math.pi * i / samples))
+            buffer.append(value)
+            
+    elif waveform_type == 'square':
+        # Square wave: 50% duty cycle
+        half_samples = samples // 2
+        buffer.extend([32767] * half_samples)  # First half high
+        buffer.extend([-32767] * (samples - half_samples))  # Second half low
+            
+    elif waveform_type == 'saw':
+        # Sawtooth wave: linear ramp from -32767 to 32767
+        for i in range(samples):
+            value = int(32767 * (2 * i / samples - 1))
+            buffer.append(value)
+            
+    elif waveform_type == 'triangle':
+        # Triangle wave: linear ramp up then down
+        quarter_samples = samples // 4
+        for i in range(samples):
+            # Normalize position in wave from 0 to 4 (representing quarters)
+            pos = (4 * i) / samples
+            if pos < 1:  # First quarter: ramp up from 0 to 1
+                value = pos
+            elif pos < 3:  # Middle half: ramp down from 1 to -1
+                value = 1 - (pos - 1)
+            else:  # Last quarter: ramp up from -1 to 0
+                value = -1 + (pos - 3)
+            buffer.append(int(32767 * value))
+    
+    else:
+        raise ValueError(f"Invalid waveform type: {waveform_type}. Must be one of: sine, square, saw, triangle")
+    
+    return buffer
 
 def _log(message, is_error=False, is_debug=False):
     """Enhanced logging with error and debug support."""
@@ -187,8 +219,103 @@ class PathParser:
             raise KeyError(f"No range defined for parameter: {param_name}")
         return ranges[param_name].convert(midi_value)
 
+class NotePool:
+    """Manages a fixed pool of pre-allocated notes with MPE support."""
+    def __init__(self, size=5):
+        self.size = size
+        self.available = list(range(size))  # Available note indices
+        self.pressed = {}    # note_number -> index mapping
+        self.order = []      # Tracks note age (oldest first)
+        self.notes = {}      # index -> synthio.Note object
+        self.channel_notes = {}  # channel -> (note_number, index)
+        _log(f"Note pool initialized with size {size}")
+    
+    def get_note(self, note_number, channel):
+        """Get next available note or release oldest if pool exhausted."""
+        try:
+            # Handle existing note on this channel
+            if channel in self.channel_notes:
+                old_note_num, old_idx = self.channel_notes[channel]
+                self.release_note(old_note_num)
+                _log(f"Released existing note {old_note_num} on channel {channel}")
+            
+            # If note is already pressed on another channel, release it
+            if note_number in self.pressed:
+                self.release_note(note_number)
+                _log(f"Released note {note_number} from other channel")
+            
+            if self.available:
+                index = self.available.pop()
+            elif self.order:
+                # Release oldest note if pool is full
+                oldest_number = self.order[0]
+                index = self.pressed[oldest_number]
+                self.release_note(oldest_number)
+                _log(f"Pool full - released oldest note {oldest_number}")
+            else:
+                _log("Error: Note pool in invalid state", is_error=True)
+                return None
+                
+            # Create new synthio Note
+            freq = synthio.midi_to_hz(note_number)
+            note = synthio.Note(frequency=freq)
+            
+            self.notes[index] = note
+            self.pressed[note_number] = index
+            self.order.append(note_number)
+            self.channel_notes[channel] = (note_number, index)
+            
+            _log(f"Note {note_number} allocated from pool (index {index}, channel {channel})")
+            return index, note
+            
+        except Exception as e:
+            _log(f"Error in get_note: {str(e)}", is_error=True)
+            return None
+        
+    def release_note(self, note_number):
+        """Release a note back to the pool."""
+        try:
+            if note_number in self.pressed:
+                index = self.pressed[note_number]
+                
+                # Clean up note object
+                if index in self.notes:
+                    note = self.notes[index]
+                    del self.notes[index]
+                
+                # Remove from channel tracking
+                for channel, (n, idx) in list(self.channel_notes.items()):
+                    if n == note_number:
+                        del self.channel_notes[channel]
+                
+                del self.pressed[note_number]
+                self.order.remove(note_number)
+                self.available.append(index)
+                
+                _log(f"Note {note_number} (index {index}) released back to pool")
+                return index, note
+            return None, None
+            
+        except Exception as e:
+            _log(f"Error in release_note: {str(e)}", is_error=True)
+            return None, None
+    
+    def release_all(self):
+        """Release all notes back to the pool."""
+        try:
+            released_notes = []
+            for note_number in list(self.pressed.keys()):
+                index, note = self.release_note(note_number)
+                if note is not None:
+                    released_notes.append(note)
+            self.channel_notes.clear()
+            _log("All notes released")
+            return released_notes
+        except Exception as e:
+            _log(f"Error in release_all: {str(e)}", is_error=True)
+            return []
+
 class Synthesizer:
-    """Main synthesizer class coordinating MIDI handling and sound generation."""
     def __init__(self, midi_interface, audio_system=None):
         """Initialize the synthesizer with a MIDI interface."""
         self.midi_interface = midi_interface

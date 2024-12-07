@@ -90,6 +90,7 @@ lfo/interpolate/tremolo_lfo/global/0-1/cc107
 class InstrumentManager:
     def __init__(self):
         self.instruments = {}
+        self.instrument_order = []  # Maintain order of instruments
         self.current_instrument = None
         self.connection_manager = None
         self.synthesizer = None
@@ -114,23 +115,28 @@ class InstrumentManager:
     def _discover_instruments(self):
         """Discover available instruments from module constants."""
         self.instruments.clear()
+        self.instrument_order.clear()
         
         import sys
         current_module = sys.modules[__name__]
+        
+        # Find all instrument paths in order of definition
         for name in dir(current_module):
             if name.endswith('_PATHS'):
                 instrument_name = name[:-6].lower()
                 paths = getattr(current_module, name)
                 if isinstance(paths, str):
                     self.instruments[instrument_name] = paths
+                    self.instrument_order.append(instrument_name)
         
         if not self.instruments:
             raise RuntimeError("No instruments found in config")
             
-        if not self.current_instrument:
-            self.current_instrument = next(iter(self.instruments))
+        # Always select the first instrument in order
+        if not self.current_instrument or self.current_instrument not in self.instruments:
+            self.current_instrument = self.instrument_order[0]
             
-        _log(f"Discovered instruments: {', '.join(self.instruments.keys())}")
+        _log(f"Discovered instruments in order: {', '.join(self.instrument_order)}")
 
     def get_current_cc_configs(self):
         """Get all CC numbers and parameter names for the current instrument."""
@@ -200,8 +206,17 @@ class InstrumentManager:
         return self.instruments.get(self.current_instrument)
 
     def get_available_instruments(self):
-        """Get list of available instrument names."""
-        return list(self.instruments.keys())
+        """Get list of available instrument names in order."""
+        return self.instrument_order.copy()
+
+    def get_next_instrument(self):
+        """Get the next instrument in the ordered list."""
+        if not self.current_instrument or not self.instrument_order:
+            return None
+            
+        current_index = self.instrument_order.index(self.current_instrument)
+        next_index = (current_index + 1) % len(self.instrument_order)
+        return self.instrument_order[next_index]
 
     def cleanup(self):
         """Clean up component references."""
