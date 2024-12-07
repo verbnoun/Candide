@@ -366,6 +366,12 @@ class MidiParser:
                 self.collecting_data = False
                 channel = self.current_status & 0x0F
                 
+                # Channel 0 bypasses all filtering
+                if channel == 0:
+                    msg = MidiMessage(self.current_status, self.current_data[:])
+                    msg._parse_message()
+                    return msg
+                
                 # Early threshold check on raw bytes
                 if not self.check_threshold(self.current_status, self.current_data):
                     return None

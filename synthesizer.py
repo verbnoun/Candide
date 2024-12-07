@@ -20,9 +20,9 @@ def _log(message, is_error=False):
         return
     color = LOG_RED if is_error else LOG_LIGHT_GREEN
     if is_error:
-        print(f"{color}{LOG_SYNTH} {message}{LOG_RESET}", file=sys.stderr)
+        print("{}{} [ERROR] {}{}".format(color, LOG_SYNTH, message, LOG_RESET), file=sys.stderr)
     else:
-        print(f"{color}{LOG_SYNTH} {message}{LOG_RESET}", file=sys.stderr)
+        print("{}{} {}{}".format(color, LOG_SYNTH, message, LOG_RESET), file=sys.stderr)
 
 class MidiRange:
     """Handles parameter range conversion and lookup table generation."""
@@ -33,7 +33,8 @@ class MidiRange:
         self.is_integer = is_integer
         self.lookup_table = array.array('f', [0] * 128)
         self._build_lookup()
-        _log(f"Created MIDI range: {name} [{min_val} to {max_val}] {'(integer)' if is_integer else ''}")
+        _log("Created MIDI range: {} [{} to {}] {}".format(
+            name, min_val, max_val, '(integer)' if is_integer else ''))
         
     def _build_lookup(self):
         """Build MIDI value lookup table for fast conversion."""
@@ -42,16 +43,16 @@ class MidiRange:
             value = self.min_val + normalized * (self.max_val - self.min_val)
             self.lookup_table[i] = int(value) if self.is_integer else value
             
-        _log(f"Lookup table for {self.name} (sample values):")
-        _log(f"  0: {self.lookup_table[0]}")
-        _log(f" 64: {self.lookup_table[64]}")
-        _log(f"127: {self.lookup_table[127]}")
+        _log("Lookup table for {} (sample values):".format(self.name))
+        _log("  0: {}".format(self.lookup_table[0]))
+        _log(" 64: {}".format(self.lookup_table[64]))
+        _log("127: {}".format(self.lookup_table[127]))
     
     def convert(self, midi_value):
         """Convert MIDI value (0-127) to parameter value using lookup table."""
         if not 0 <= midi_value <= 127:
-            _log(f"Invalid MIDI value {midi_value} for {self.name}", is_error=True)
-            raise ValueError(f"MIDI value must be between 0 and 127, got {midi_value}")
+            _log("Invalid MIDI value {} for {}".format(midi_value, self.name), is_error=True)
+            raise ValueError("MIDI value must be between 0 and 127, got {}".format(midi_value))
         value = self.lookup_table[midi_value]
         return value
 
@@ -197,6 +198,23 @@ class Synthesizer:
     def _handle_midi_message(self, msg):
         """Handle incoming MIDI messages."""
         try:
+            # Log received MIDI message
+            if msg == 'noteon':
+                _log("Received MIDI note-on: ch={} note={} vel={}".format(
+                    msg.channel, msg.note, msg.velocity))
+            elif msg == 'noteoff':
+                _log("Received MIDI note-off: ch={} note={}".format(
+                    msg.channel, msg.note))
+            elif msg == 'cc':
+                _log("Received MIDI CC: ch={} cc={} val={}".format(
+                    msg.channel, msg.control, msg.value))
+            elif msg == 'pitchbend':
+                _log("Received MIDI pitch bend: ch={} val={}".format(
+                    msg.channel, msg.pitch_bend))
+            elif msg == 'channelpressure':
+                _log("Received MIDI pressure: ch={} val={}".format(
+                    msg.channel, msg.pressure))
+            
             self._check_health()
             
             if not self.synth:
@@ -204,7 +222,7 @@ class Synthesizer:
                 return
             
             if msg == 'noteon' and msg.velocity > 0 and 'noteon' in self.path_parser.enabled_messages:
-                _log(f"Targeting {msg.note}.{msg.channel} with note-on")
+                _log("Targeting {}.{} with note-on".format(msg.note, msg.channel))
                 
                 note_params = {
                     'frequency': synthio.midi_to_hz(msg.note),
@@ -215,19 +233,19 @@ class Synthesizer:
                 
             elif ((msg == 'noteoff' or (msg == 'noteon' and msg.velocity == 0)) and 
                   'noteoff' in self.path_parser.enabled_messages):
-                _log(f"Targeting {msg.note}.{msg.channel} with note-off")
+                _log("Targeting {}.{} with note-off".format(msg.note, msg.channel))
                 
                 voice = self.voice_pool.release_note(msg.note, self.synth)
                 if not voice:
-                    _log(f"No voice found at {msg.note}.{msg.channel}", is_error=True)
+                    _log("No voice found at {}.{}".format(msg.note, msg.channel), is_error=True)
                 
             elif msg == 'cc' and 'cc' in self.path_parser.enabled_messages:
-                cc_trigger = f"cc{msg.control}"
+                cc_trigger = "cc{}".format(msg.control)
                 if msg.control in self.path_parser.enabled_ccs:
                     param_name = self.path_parser.midi_mappings.get(cc_trigger)
                     if param_name:
                         value = self.path_parser.convert_value(param_name, msg.value, True)
-                        _log(f"Updated global {param_name} = {value}")
+                        _log("Updated global {} = {}".format(param_name, value))
                 
             elif msg == 'pitchbend' and 'pitchbend' in self.path_parser.enabled_messages:
                 midi_value = (msg.pitch_bend >> 7) & 0x7F
@@ -251,7 +269,7 @@ class Synthesizer:
                                 voice.update_active_note(self.synth, amplitude=value)
                 
         except Exception as e:
-            _log(f"Error handling MIDI message: {str(e)}", is_error=True)
+            _log("Error handling MIDI message: {}".format(str(e)), is_error=True)
             self._emergency_cleanup()
 
     def _setup_synthio(self):
@@ -392,6 +410,14 @@ class Synthesizer:
                 except Exception as e:
                     _log(f"Error deinitializing synth: {str(e)}", is_error=True)
             self.synth = None
+                
+            # Try to re-init synth
+            try:
+                self._setup_synthio()
+                self._setup_midi_handlers()
+                _log("Successfully re-initialized synthesizer after emergency")
+            except Exception as e:
+                _log(f"Failed to re-initialize synth: {str(e)}", is_error=True)
                 
             _log("Emergency cleanup complete")
             

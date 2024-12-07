@@ -14,13 +14,6 @@ def _log(message, is_error=False):
     else:
         print(f"{color}{LOG_INST} {message}{LOG_RESET}", file=sys.stderr)
 
-NOTE_MINIMUM_PATHS = '''
-note/press/per_key/note_on
-note/release/per_key/note_off
-oscillator/frequency/per_key/note_number/note_on
-oscillator/waveform/global/triangle/note_on
-'''
-
 FILTER_MINIMUM_PATHS = '''
 note/press/per_key/note_on
 note/release/per_key/note_off
@@ -88,6 +81,12 @@ lfo/offset/tremolo_lfo/global/-1-1/cc104
 lfo/phase_offset/tremolo_lfo/global/0-1/cc105
 lfo/once/tremolo_lfo/global/0-1/cc106
 lfo/interpolate/tremolo_lfo/global/0-1/cc107
+'''
+NOTE_MINIMUM_PATHS = '''
+note/press/per_key/note_on
+note/release/per_key/note_off
+oscillator/frequency/per_key/note_number/note_on
+oscillator/waveform/global/triangle/note_on
 '''
 
 class InstrumentManager:

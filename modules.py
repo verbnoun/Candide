@@ -8,13 +8,14 @@ import time
 from constants import LOG_MODU, LOG_LIGHT_BLUE, LOG_RED, LOG_RESET, MODULES_LOG
 
 def _log(message, is_error=False):
+    """Enhanced logging with error support."""
     if not MODULES_LOG:
         return
     color = LOG_RED if is_error else LOG_LIGHT_BLUE
     if is_error:
-        print(f"{color}{LOG_MODU} {message}{LOG_RESET}", file=sys.stderr)
+        print("{}{} [ERROR] {}{}".format(color, LOG_MODU, message, LOG_RESET), file=sys.stderr)
     else:
-        print(f"{color}{LOG_MODU} {message}{LOG_RESET}", file=sys.stderr)
+        print("{}{} {}{}".format(color, LOG_MODU, message, LOG_RESET), file=sys.stderr)
 
 def create_waveform(waveform_type):
     """Create a waveform buffer based on type."""
@@ -45,7 +46,7 @@ def create_waveform(waveform_type):
                 value = -1 + (pos - 3)
             buffer.append(int(32767 * value))
     else:
-        raise ValueError(f"Invalid waveform type: {waveform_type}")
+        raise ValueError("Invalid waveform type: " + waveform_type)
     
     return buffer
 
@@ -60,7 +61,7 @@ class Voice:
     def get_address(self):
         """Get voice's current address (note_number.channel)."""
         if self.note_number is not None and self.channel is not None:
-            return f"{self.note_number}.{self.channel}"
+            return "{}.{}".format(self.note_number, self.channel)
         return None
         
     def _log_state(self, synth, action=""):
@@ -81,15 +82,19 @@ class Voice:
                 releasing_count = 1
             
         if action:
-            action = f" {action}"
+            action = " " + action
             
         state = []
         if active_count > 0:
-            state.append(f"{active_count} active")
+            state.append("{} active".format(active_count))
         if releasing_count > 0:
-            state.append(f"{releasing_count} releasing")
+            state.append("{} releasing".format(releasing_count))
             
-        _log(f"Voice {addr}{action}: has {', '.join(state) if state else 'no'} notes")
+        _log("Voice {}{}: has {}".format(
+            addr,
+            action,
+            ", ".join(state) if state else "no notes"
+        ))
         
     def press_note(self, note_number, channel, synth, **note_params):
         """Target this voice with a note-on."""
@@ -105,12 +110,13 @@ class Voice:
         synth.press(self.active_note)
         self._log_state(synth, "pressed")
         
-    def release_note(self, synth):
+    def release_note(self, synth, forced=False):
         """Target this voice with a note-off."""
         if self.active_note:
             addr = self.get_address()
             synth.release(self.active_note)
-            self._log_state(synth, "manually released")
+            action = "forced release" if forced else "released"
+            self._log_state(synth, action)
             self.active_note = None
             self.note_number = None
             self.channel = None
@@ -120,7 +126,7 @@ class Voice:
         if self.active_note:
             addr = self.get_address()
             synth.release(self.active_note)
-            self._log_state(synth, "stolen")
+            self._log_state(synth, "forced release")
             self.active_note = None
             self.note_number = None
             self.channel = None
@@ -144,7 +150,72 @@ class VoicePool:
         self.voices = [Voice() for _ in range(size)]
         self.next_timestamp = 0
         self.channel_map = {}  # Maps channel -> voice for active voices
-        _log(f"Voice pool initialized with {size} voices")
+        
+        # Toddler mode tracking
+        self.last_steal_time = 0
+        self.rapid_steal_count = 0
+        self.toddler_mode = False
+        self.toddler_start_time = 0  # When toddler mode started
+        self.toddler_timeout = 0  # When toddler mode ends
+        self.last_cleanup_time = 0  # Last time we cleaned up voices during timeout
+        
+        _log("Voice pool initialized with {} voices".format(size))
+        
+    def _check_toddler_trigger(self, synth, current_time, is_stealing=False):
+        """Check if we should trigger toddler mode."""
+        # If already in toddler mode, handle countdown and cleanup
+        if self.toddler_mode:
+            # Check if we need to do periodic cleanup
+            if current_time - self.last_cleanup_time >= 1.0:  # Every second
+                seconds_left = int(self.toddler_timeout - current_time)
+                _log("Stop that! Timeout: {} seconds remaining...".format(seconds_left))
+                self.release_all(synth)
+                self.last_cleanup_time = current_time
+                
+            # Check if timeout is complete
+            if current_time >= self.toddler_timeout:
+                _log("Toddler timeout complete - behaving now")
+                self.toddler_mode = False
+                self.rapid_steal_count = 0
+                self.release_all(synth)  # One final cleanup
+            return self.toddler_mode
+            
+        # Only check for rapid steals when we're actually stealing
+        if is_stealing:
+            if current_time - self.last_steal_time < 0.1:  # 100ms between steals
+                self.rapid_steal_count += 1
+                if self.rapid_steal_count >= 3:  # 3 rapid steals triggers
+                    _log("Stop that! Starting 3 second timeout...")
+                    self.toddler_mode = True
+                    self.toddler_start_time = current_time
+                    self.toddler_timeout = current_time + 3.0  # 3 second timeout
+                    self.last_cleanup_time = current_time
+                    self.release_all(synth)  # Initial cleanup
+                    return True
+            else:
+                self.rapid_steal_count = 1
+                
+            self.last_steal_time = current_time
+            
+        return False
+        
+    def _log_all_voices(self, synth, trigger=""):
+        """Log the state of all voices."""
+        _log("Voice pool state {}:".format(trigger))
+        for i, voice in enumerate(self.voices):
+            if voice.active_note:
+                state, _ = synth.note_info(voice.active_note)
+                addr = voice.get_address()
+                _log("  Voice {}: {} {}".format(i, addr, state))
+            else:
+                _log("  Voice {}: inactive".format(i))
+        
+        # Log channel map
+        channels = []
+        for ch, v in self.channel_map.items():
+            addr = v.get_address() if v else "None"
+            channels.append("{} -> {}".format(ch, addr))
+        _log("  Channels: {}".format(", ".join(channels) if channels else "none"))
         
     def _get_voice(self, synth):
         """Get unused voice or steal oldest one."""
@@ -153,7 +224,12 @@ class VoicePool:
             if not voice.is_active():
                 return voice
                 
-        # If no unused voices, steal oldest one
+        # If no unused voices, check for toddler mode before stealing
+        current_time = time.monotonic()
+        if self._check_toddler_trigger(synth, current_time, is_stealing=True):
+            return None  # Don't allow new notes during toddler mode
+                
+        # If no unused voices and not in toddler mode, steal oldest one
         oldest_voice = self.voices[0]
         oldest_timestamp = self.next_timestamp
         
@@ -163,23 +239,29 @@ class VoicePool:
                 oldest_timestamp = voice.timestamp
                 
         if oldest_voice.get_address():
-            _log(f"Stealing voice {oldest_voice.get_address()}")
+            _log("Stealing voice {}".format(oldest_voice.get_address()))
             oldest_voice.steal_voice(synth)
             
         return oldest_voice
         
     def press_note(self, note_number, channel, synth, **note_params):
         """Target a voice with note-on."""
+        current_time = time.monotonic()
+        
+        # Check toddler mode status
+        if self._check_toddler_trigger(synth, current_time):
+            return None  # Don't allow new notes during toddler mode
+            
+        self._log_all_voices(synth, "before note-on")
+        
         # Release any existing voice on this channel
         self.release_channel(channel, synth)
         
         # Get a voice
         voice = self._get_voice(synth)
-        
-        # If stealing a voice, remove its channel mapping
-        if voice.channel in self.channel_map:
-            del self.channel_map[voice.channel]
-        
+        if voice is None:  # Could be None if we just entered toddler mode
+            return None
+            
         # Press note in voice
         voice.press_note(note_number, channel, synth, **note_params)
         
@@ -188,32 +270,43 @@ class VoicePool:
         self.next_timestamp += 1
         self.channel_map[channel] = voice
         
+        self._log_all_voices(synth, "after note-on")
         return voice
         
     def release_note(self, note_number, synth):
         """Target a voice with note-off."""
+        self._log_all_voices(synth, "before note-off")
+        
         for voice in self.voices:
             if voice.note_number == note_number:
-                voice.release_note(synth)
+                voice.release_note(synth, forced=False)
                 if voice.channel in self.channel_map:
                     del self.channel_map[voice.channel]
+                    
+                self._log_all_voices(synth, "after note-off")
                 return voice
+                
         return None
         
     def release_channel(self, channel, synth):
         """Release voice on channel if any."""
         if channel in self.channel_map:
             voice = self.channel_map[channel]
-            voice.release_note(synth)
+            voice.release_note(synth, forced=True)
             del self.channel_map[channel]
                 
     def release_all(self, synth):
         """Release all voices."""
+        self._log_all_voices(synth, "before release-all")
+        
         for voice in self.voices:
             if voice.is_active():
-                voice.release_note(synth)
+                voice.release_note(synth, forced=True)
+                
         self.next_timestamp = 0
         self.channel_map.clear()
+        
+        self._log_all_voices(synth, "after release-all")
         
     def get_voice_by_channel(self, channel):
         """Get voice targeted to channel."""
@@ -222,13 +315,4 @@ class VoicePool:
     def check_health(self, synth):
         """Check voice pool health."""
         _log("Performing voice pool health check")
-        
-        # Log state of each voice
-        active_count = 0
-        for voice in self.voices:
-            if voice.is_active():
-                active_count += 1
-                voice._log_state(synth)
-                
-        _log(f"Pool status: {active_count}/{self.size} voices active")
-        _log(f"Channel map: {len(self.channel_map)} channels mapped")
+        self._log_all_voices(synth)
