@@ -21,6 +21,7 @@ LOG_INST = "[INST   ]"
 LOG_SYNTH = "[SYNTH  ]"
 LOG_UART = "[UART   ]"
 LOG_MIDI = "[MIDI   ]"
+LOG_MODU = "[MODU   ]"
 
 # Logging enable flags
 CODE_LOG = True

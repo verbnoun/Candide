@@ -11,7 +11,7 @@ This split separates the concerns of "what sound to make" (this file)
 from "how to make sound" (modules.py).
 """
 
-from modules import NotePool, create_waveform
+from modules import VoicePool, create_waveform
 import synthio
 import sys
 import array
@@ -26,14 +26,14 @@ from constants import (
     SYNTHESIZER_LOG
 )
 
-def _log(message, is_error=False, is_debug=False):
-    """Enhanced logging with error and debug support."""
+def _log(message, is_error=False):
+    """Enhanced logging with error support."""
     if not SYNTHESIZER_LOG:
         return
         
     color = LOG_RED if is_error else LOG_LIGHT_GREEN
     if is_error:
-        print(f"{color}{LOG_SYNTH} [ERROR] {message}{LOG_RESET}", file=sys.stderr)
+        print(f"{color}{LOG_SYNTH} {message}{LOG_RESET}", file=sys.stderr)
     else:
         print(f"{color}{LOG_SYNTH} {message}{LOG_RESET}", file=sys.stderr)
 
@@ -200,7 +200,7 @@ class Synthesizer:
         self.midi_interface = midi_interface
         self.audio_system = audio_system
         self.synth = None
-        self.note_pool = NotePool(5)
+        self.voice_pool = VoicePool(5)  # 5 voices in current config
         self.path_parser = PathParser()
         self.current_subscription = None
         self.ready_callback = None
@@ -281,9 +281,9 @@ class Synthesizer:
         
         try:
             # Release all notes before reconfiguring
-            if self.note_pool:
-                released_notes = self.note_pool.release_all(self.synth)
-                _log(f"Released {len(released_notes)} notes during reconfiguration")
+            if self.voice_pool:
+                self.voice_pool.release_all(self.synth)
+                _log("Released all voices during reconfiguration")
             
             # Parse paths using PathParser
             self.path_parser.parse_paths(paths)
@@ -308,8 +308,8 @@ class Synthesizer:
         if current_time - self.last_health_check >= self.health_check_interval:
             _log("Performing synthesizer health check")
             try:
-                # Check note pool health
-                self.note_pool.check_health()
+                # Check voice pool health
+                self.voice_pool.check_health(self.synth)
                 
                 # Verify synth state
                 if self.synth is None:
@@ -327,18 +327,10 @@ class Synthesizer:
         """Perform emergency cleanup in case of critical errors."""
         _log("Performing emergency cleanup", is_error=True)
         try:
-            # Release all notes
-            if self.note_pool:
-                released_notes = self.note_pool.release_all(self.synth)
-                _log(f"Emergency released {len(released_notes)} notes")
-            
-            # Reset synthesizer
-            if self.synth:
-                try:
-                    self.synth.deinit()
-                except Exception as e:
-                    _log(f"Error deinitializing synth: {str(e)}", is_error=True)
-                self.synth = None
+            # Release all voices
+            if self.voice_pool and self.synth:
+                self.voice_pool.release_all(self.synth)
+                _log("Emergency released all voices")
             
             # Reset MIDI subscription
             if self.current_subscription:
@@ -347,6 +339,14 @@ class Synthesizer:
                 except Exception as e:
                     _log(f"Error unsubscribing MIDI: {str(e)}", is_error=True)
                 self.current_subscription = None
+                
+            # Reset synthesizer
+            if self.synth:
+                try:
+                    self.synth.deinit()
+                except Exception as e:
+                    _log(f"Error deinitializing synth: {str(e)}", is_error=True)
+            self.synth = None
                 
             _log("Emergency cleanup complete")
             
@@ -359,37 +359,30 @@ class Synthesizer:
             # Perform periodic health check
             self._check_health()
             
+            if not self.synth:
+                _log("No synthesizer available", is_error=True)
+                return
+            
             if msg == 'noteon' and msg.velocity > 0 and 'noteon' in self.path_parser.enabled_messages:
                 _log(f"Processing Note On: ch={msg.channel} note={msg.note} vel={msg.velocity}")
-                # Get note from pool with channel tracking
-                result = self.note_pool.get_note(msg.note, msg.channel, self.synth)
-                if result:
-                    index, note = result
-                    
-                    # Apply global parameters from path_parser
-                    if 'waveform' in self.path_parser.fixed_values:
-                        note.waveform = self.global_waveform
-                    
-                    # Apply any per-key parameters
-                    for param_name, range_obj in self.path_parser.key_ranges.items():
-                        if param_name == 'frequency':
-                            note.frequency = synthio.midi_to_hz(msg.note)
-                    
-                    # Actually press the note
-                    self.synth.press(note)
-                    _log(f"Pressed note {msg.note} on channel {msg.channel}")
-                else:
-                    _log(f"Failed to allocate note {msg.note}", is_error=True)
+                
+                # Create note parameters
+                note_params = {
+                    'frequency': synthio.midi_to_hz(msg.note),
+                    'waveform': self.global_waveform
+                }
+                
+                # Press note in voice pool
+                voice = self.voice_pool.press_note(msg.note, msg.channel, self.synth, **note_params)
                 
             elif ((msg == 'noteoff' or (msg == 'noteon' and msg.velocity == 0)) and 
                   'noteoff' in self.path_parser.enabled_messages):
                 _log(f"Processing Note Off: ch={msg.channel} note={msg.note}")
-                # Release the note using existing pool management
-                index, note = self.note_pool.release_note(msg.note, self.synth)
-                if note is not None:
-                    self.synth.release(note)
-                    _log(f"Released note {msg.note}")
-                else:
+                
+                # Release note from voice pool
+                voice = self.voice_pool.release_note(msg.note, self.synth)
+                if not voice:
+                    # This is expected when the note was in a stolen voice
                     _log(f"Note {msg.note} not found for release", is_error=True)
                 
             elif msg == 'cc' and 'cc' in self.path_parser.enabled_messages:
@@ -403,29 +396,27 @@ class Synthesizer:
             elif msg == 'pitchbend' and 'pitchbend' in self.path_parser.enabled_messages:
                 # Convert 14-bit pitch bend to 7-bit MIDI value
                 midi_value = (msg.pitch_bend >> 7) & 0x7F
-                for param_name, range_obj in self.path_parser.key_ranges.items():
-                    if 'pitch_bend' in self.path_parser.midi_mappings:
-                        value = range_obj.convert(midi_value)
-                        if msg.channel in self.note_pool.channel_notes:
-                            note_num, idx = self.note_pool.channel_notes[msg.channel]
-                            note = self.note_pool.notes[idx]
+                voice = self.voice_pool.get_voice_by_channel(msg.channel)
+                if voice and voice.active_note:
+                    for param_name, range_obj in self.path_parser.key_ranges.items():
+                        if 'pitch_bend' in self.path_parser.midi_mappings:
+                            value = range_obj.convert(midi_value)
                             if param_name == 'bend':
-                                note.bend = value
-                                _log(f"Applied bend={value} to note {note_num}")
+                                voice.update_active_note(bend=value)
+                                _log(f"Applied bend={value} to note {voice.note_number}.{voice.channel}")
                             elif param_name == 'panning':
-                                note.panning = value
-                                _log(f"Applied panning={value} to note {note_num}")
+                                voice.update_active_note(panning=value)
+                                _log(f"Applied panning={value} to note {voice.note_number}.{voice.channel}")
                 
             elif msg == 'channelpressure' and 'pressure' in self.path_parser.enabled_messages:
-                for param_name, range_obj in self.path_parser.key_ranges.items():
-                    if 'pressure' in self.path_parser.midi_mappings:
-                        value = range_obj.convert(msg.pressure)
-                        if msg.channel in self.note_pool.channel_notes:
-                            note_num, idx = self.note_pool.channel_notes[msg.channel]
-                            note = self.note_pool.notes[idx]
-                            if param_name == 'sustain_level':
-                                note.amplitude = value
-                                _log(f"Applied amplitude={value} to note {note_num}")
+                voice = self.voice_pool.get_voice_by_channel(msg.channel)
+                if voice and voice.active_note:
+                    for param_name, range_obj in self.path_parser.key_ranges.items():
+                        if 'pressure' in self.path_parser.midi_mappings:
+                            value = range_obj.convert(msg.pressure)
+                            if param_name == 'amplitude':
+                                voice.update_active_note(amplitude=value)
+                                _log(f"Applied amplitude={value} to note {voice.note_number}.{voice.channel}")
                 
         except Exception as e:
             _log(f"Error handling MIDI message: {str(e)}", is_error=True)
@@ -435,9 +426,9 @@ class Synthesizer:
         """Clean up resources."""
         _log("Cleaning up synthesizer...")
         try:
-            if self.note_pool:
-                released_notes = self.note_pool.release_all(self.synth)
-                _log(f"Released {len(released_notes)} notes during cleanup")
+            if self.voice_pool and self.synth:
+                self.voice_pool.release_all(self.synth)
+                _log("Released all voices during cleanup")
             
             if self.current_subscription:
                 self.midi_interface.unsubscribe(self.current_subscription)
