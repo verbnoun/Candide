@@ -1,15 +1,4 @@
-"""High-level synthesizer coordination module.
-
-This module provides the main interface for the synthesizer system, handling:
-- Path parsing and configuration management
-- MIDI parameter handling and mapping
-- Message routing and control
-- System integration and coordination
-
-It uses modules.py for the actual sound generation and resource management.
-This split separates the concerns of "what sound to make" (this file)
-from "how to make sound" (modules.py).
-"""
+"""High-level synthesizer coordination module."""
 
 from modules import VoicePool, create_waveform
 import synthio
@@ -27,10 +16,8 @@ from constants import (
 )
 
 def _log(message, is_error=False):
-    """Enhanced logging with error support."""
     if not SYNTHESIZER_LOG:
         return
-        
     color = LOG_RED if is_error else LOG_LIGHT_GREEN
     if is_error:
         print(f"{color}{LOG_SYNTH} {message}{LOG_RESET}", file=sys.stderr)
@@ -66,7 +53,6 @@ class MidiRange:
             _log(f"Invalid MIDI value {midi_value} for {self.name}", is_error=True)
             raise ValueError(f"MIDI value must be between 0 and 127, got {midi_value}")
         value = self.lookup_table[midi_value]
-        _log(f"Converted {self.name}: MIDI {midi_value} -> {value}")
         return value
 
 class PathParser:
@@ -196,18 +182,77 @@ class PathParser:
 class Synthesizer:
     """Main synthesizer class coordinating MIDI handling and sound generation."""
     def __init__(self, midi_interface, audio_system=None):
-        """Initialize the synthesizer with a MIDI interface."""
         self.midi_interface = midi_interface
         self.audio_system = audio_system
         self.synth = None
-        self.voice_pool = VoicePool(5)  # 5 voices in current config
+        self.voice_pool = VoicePool(5)
         self.path_parser = PathParser()
         self.current_subscription = None
         self.ready_callback = None
         self.global_waveform = None
         self.last_health_check = time.monotonic()
-        self.health_check_interval = 5.0  # Check every 5 seconds
+        self.health_check_interval = 5.0
         _log("Synthesizer initialized")
+
+    def _handle_midi_message(self, msg):
+        """Handle incoming MIDI messages."""
+        try:
+            self._check_health()
+            
+            if not self.synth:
+                _log("No synthesizer available", is_error=True)
+                return
+            
+            if msg == 'noteon' and msg.velocity > 0 and 'noteon' in self.path_parser.enabled_messages:
+                _log(f"Targeting {msg.note}.{msg.channel} with note-on")
+                
+                note_params = {
+                    'frequency': synthio.midi_to_hz(msg.note),
+                    'waveform': self.global_waveform
+                }
+                
+                self.voice_pool.press_note(msg.note, msg.channel, self.synth, **note_params)
+                
+            elif ((msg == 'noteoff' or (msg == 'noteon' and msg.velocity == 0)) and 
+                  'noteoff' in self.path_parser.enabled_messages):
+                _log(f"Targeting {msg.note}.{msg.channel} with note-off")
+                
+                voice = self.voice_pool.release_note(msg.note, self.synth)
+                if not voice:
+                    _log(f"No voice found at {msg.note}.{msg.channel}", is_error=True)
+                
+            elif msg == 'cc' and 'cc' in self.path_parser.enabled_messages:
+                cc_trigger = f"cc{msg.control}"
+                if msg.control in self.path_parser.enabled_ccs:
+                    param_name = self.path_parser.midi_mappings.get(cc_trigger)
+                    if param_name:
+                        value = self.path_parser.convert_value(param_name, msg.value, True)
+                        _log(f"Updated global {param_name} = {value}")
+                
+            elif msg == 'pitchbend' and 'pitchbend' in self.path_parser.enabled_messages:
+                midi_value = (msg.pitch_bend >> 7) & 0x7F
+                voice = self.voice_pool.get_voice_by_channel(msg.channel)
+                if voice and voice.active_note:
+                    for param_name, range_obj in self.path_parser.key_ranges.items():
+                        if 'pitch_bend' in self.path_parser.midi_mappings:
+                            value = range_obj.convert(midi_value)
+                            if param_name == 'bend':
+                                voice.update_active_note(self.synth, bend=value)
+                            elif param_name == 'panning':
+                                voice.update_active_note(self.synth, panning=value)
+                
+            elif msg == 'channelpressure' and 'pressure' in self.path_parser.enabled_messages:
+                voice = self.voice_pool.get_voice_by_channel(msg.channel)
+                if voice and voice.active_note:
+                    for param_name, range_obj in self.path_parser.key_ranges.items():
+                        if 'pressure' in self.path_parser.midi_mappings:
+                            value = range_obj.convert(msg.pressure)
+                            if param_name == 'amplitude':
+                                voice.update_active_note(self.synth, amplitude=value)
+                
+        except Exception as e:
+            _log(f"Error handling MIDI message: {str(e)}", is_error=True)
+            self._emergency_cleanup()
 
     def _setup_synthio(self):
         """Initialize or update synthio synthesizer based on global settings."""
@@ -352,75 +397,6 @@ class Synthesizer:
             
         except Exception as e:
             _log(f"Error during emergency cleanup: {str(e)}", is_error=True)
-
-    def _handle_midi_message(self, msg):
-        """Handle incoming MIDI messages."""
-        try:
-            # Perform periodic health check
-            self._check_health()
-            
-            if not self.synth:
-                _log("No synthesizer available", is_error=True)
-                return
-            
-            if msg == 'noteon' and msg.velocity > 0 and 'noteon' in self.path_parser.enabled_messages:
-                _log(f"Processing Note On: ch={msg.channel} note={msg.note} vel={msg.velocity}")
-                
-                # Create note parameters
-                note_params = {
-                    'frequency': synthio.midi_to_hz(msg.note),
-                    'waveform': self.global_waveform
-                }
-                
-                # Press note in voice pool
-                voice = self.voice_pool.press_note(msg.note, msg.channel, self.synth, **note_params)
-                
-            elif ((msg == 'noteoff' or (msg == 'noteon' and msg.velocity == 0)) and 
-                  'noteoff' in self.path_parser.enabled_messages):
-                _log(f"Processing Note Off: ch={msg.channel} note={msg.note}")
-                
-                # Release note from voice pool
-                voice = self.voice_pool.release_note(msg.note, self.synth)
-                if not voice:
-                    # This is expected when the note was in a stolen voice
-                    _log(f"Note {msg.note} not found for release", is_error=True)
-                
-            elif msg == 'cc' and 'cc' in self.path_parser.enabled_messages:
-                cc_trigger = f"cc{msg.control}"
-                if msg.control in self.path_parser.enabled_ccs:
-                    param_name = self.path_parser.midi_mappings.get(cc_trigger)
-                    if param_name:
-                        value = self.path_parser.convert_value(param_name, msg.value, True)
-                        _log(f"Updated global {param_name} = {value}")
-                
-            elif msg == 'pitchbend' and 'pitchbend' in self.path_parser.enabled_messages:
-                # Convert 14-bit pitch bend to 7-bit MIDI value
-                midi_value = (msg.pitch_bend >> 7) & 0x7F
-                voice = self.voice_pool.get_voice_by_channel(msg.channel)
-                if voice and voice.active_note:
-                    for param_name, range_obj in self.path_parser.key_ranges.items():
-                        if 'pitch_bend' in self.path_parser.midi_mappings:
-                            value = range_obj.convert(midi_value)
-                            if param_name == 'bend':
-                                voice.update_active_note(bend=value)
-                                _log(f"Applied bend={value} to note {voice.note_number}.{voice.channel}")
-                            elif param_name == 'panning':
-                                voice.update_active_note(panning=value)
-                                _log(f"Applied panning={value} to note {voice.note_number}.{voice.channel}")
-                
-            elif msg == 'channelpressure' and 'pressure' in self.path_parser.enabled_messages:
-                voice = self.voice_pool.get_voice_by_channel(msg.channel)
-                if voice and voice.active_note:
-                    for param_name, range_obj in self.path_parser.key_ranges.items():
-                        if 'pressure' in self.path_parser.midi_mappings:
-                            value = range_obj.convert(msg.pressure)
-                            if param_name == 'amplitude':
-                                voice.update_active_note(amplitude=value)
-                                _log(f"Applied amplitude={value} to note {voice.note_number}.{voice.channel}")
-                
-        except Exception as e:
-            _log(f"Error handling MIDI message: {str(e)}", is_error=True)
-            self._emergency_cleanup()
 
     def cleanup(self):
         """Clean up resources."""
