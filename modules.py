@@ -20,9 +20,9 @@ def _log(message, is_error=False, is_debug=False):
     """Enhanced logging with error and debug support."""
     color = LOG_RED if is_error else LOG_LIGHT_GREEN
     if is_error:
-        print(f"{color}{LOG_SYNTH} [ERROR] {message}{LOG_RESET}", file=sys.stderr)
+        print("{}{}".format(color, LOG_SYNTH) + (" [ERROR] " if is_error else " ") + message + LOG_RESET, file=sys.stderr)
     else:
-        print(f"{color}{LOG_SYNTH} {message}{LOG_RESET}", file=sys.stderr)
+        print("{}{}".format(color, LOG_SYNTH) + " " + message + LOG_RESET, file=sys.stderr)
 
 def create_waveform(waveform_type):
     """Create a waveform buffer based on type."""
@@ -62,7 +62,7 @@ def create_waveform(waveform_type):
             buffer.append(int(32767 * value))
     
     else:
-        raise ValueError(f"Invalid waveform type: {waveform_type}. Must be one of: sine, square, saw, triangle")
+        raise ValueError("Invalid waveform type: " + waveform_type + ". Must be one of: sine, square, saw, triangle")
     
     return buffer
 
@@ -71,124 +71,158 @@ class NotePool:
     def __init__(self, size=5):
         """Initialize note pool with specified size."""
         self.size = size
-        self.available_indices = list(range(size))  # Available note indices
-        self.active_notes = {}      # note_number -> (index, note) mapping
-        self.note_order = []        # FIFO order tracking (oldest first)
-        self.channel_notes = {}     # channel -> (note_number, index) for MPE
-        self.note_timestamps = {}   # note_number -> timestamp for age tracking
-        self._timestamp = 0         # Monotonic counter for note age
-        _log(f"Note pool initialized with size {size}")
+        self.notes = [None] * size  # Array of synthio.Note objects
+        self.note_nums = [None] * size  # Array of MIDI note numbers
+        self.channels = [None] * size  # Array of MIDI channels
+        self.timestamps = [0] * size  # Array of timestamps
+        self.next_timestamp = 0  # Monotonic counter for age tracking
+        
+        # Ready note for immediate replacement
+        self.ready_note = None
+        self.ready_note_freq = None
+        
+        # Compatibility properties
+        self.channel_notes = {}  # channel -> (note_num, index) mapping
+        
+        _log("Note pool initialized with size " + str(size))
 
-    def _get_timestamp(self):
-        """Get next timestamp for note age tracking."""
-        self._timestamp += 1
-        return self._timestamp
-
-    def _cleanup_note(self, note_number):
-        """Clean up all references to a note."""
-        if note_number in self.active_notes:
-            index, note = self.active_notes[note_number]
-            
-            # Remove from all tracking structures
-            del self.active_notes[note_number]
-            if note_number in self.note_order:
-                self.note_order.remove(note_number)
-            if note_number in self.note_timestamps:
-                del self.note_timestamps[note_number]
-            
-            # Remove from channel tracking
-            channels_to_remove = []
-            for channel, (n, _) in self.channel_notes.items():
-                if n == note_number:
-                    channels_to_remove.append(channel)
-            for channel in channels_to_remove:
-                del self.channel_notes[channel]
-            
-            # Return index to available pool
-            if index not in self.available_indices:
-                self.available_indices.append(index)
-            
-            return index, note
-        return None, None
-
-    def get_note(self, note_number, channel):
-        """Get next available note, implementing FIFO note stealing if needed."""
+    def _prepare_ready_note(self, freq):
+        """Prepare a ready note at a specific frequency."""
         try:
-            # First handle any existing note on this channel (MPE)
+            self.ready_note = synthio.Note(frequency=freq)
+            self.ready_note_freq = freq
+            _log("Prepared ready note at frequency " + str(freq))
+        except Exception as e:
+            _log("Error preparing ready note: " + str(e), is_error=True)
+
+    def _get_slot_index(self):
+        """Find first empty slot or oldest used slot."""
+        oldest_index = 0
+        oldest_timestamp = self.next_timestamp
+        
+        # First try to find an empty slot
+        for i in range(self.size):
+            if self.notes[i] is None:
+                return i
+            if self.timestamps[i] < oldest_timestamp:
+                oldest_index = i
+                oldest_timestamp = self.timestamps[i]
+        
+        # If no empty slot, use the oldest one
+        return oldest_index
+
+    def _release_slot(self, index, synth):
+        """Release a note slot."""
+        if self.notes[index] is not None:
+            if synth:
+                _log("Releasing note " + str(self.note_nums[index]) + " from channel " + str(self.channels[index]))
+                synth.release(self.notes[index])
+            
+            # Remove from channel mapping
+            if self.channels[index] in self.channel_notes:
+                del self.channel_notes[self.channels[index]]
+            
+            # Clear slot
+            self.notes[index] = None
+            self.note_nums[index] = None
+            self.channels[index] = None
+
+    def get_note(self, note_num, channel, synth=None):
+        """Get a note slot, stealing if necessary."""
+        try:
+            freq = synthio.midi_to_hz(note_num)
+            
+            # First release any existing note on this channel
             if channel in self.channel_notes:
-                old_note_num, _ = self.channel_notes[channel]
-                self.release_note(old_note_num)
-                _log(f"Released existing note {old_note_num} on channel {channel}")
+                old_note_num, old_index = self.channel_notes[channel]
+                self._release_slot(old_index, synth)
             
-            # If this note is already pressed somewhere else, release it
-            if note_number in self.active_notes:
-                self.release_note(note_number)
-                _log(f"Released duplicate note {note_number}")
+            # Get an empty or oldest slot
+            index = self._get_slot_index()
             
-            # Get an available index or steal the oldest note
-            if self.available_indices:
-                index = self.available_indices.pop(0)
-                _log(f"Using available index {index} for note {note_number}")
-            else:
-                # No indices available - steal the oldest note
-                if self.note_order:
-                    oldest_note = self.note_order[0]
-                    _log(f"Stealing oldest note {oldest_note} for new note {note_number}")
-                    index, _ = self._cleanup_note(oldest_note)
+            # If slot was in use, we'll need note stealing
+            if self.notes[index] is not None:
+                _log("Stealing slot " + str(index) + " from note " + str(self.note_nums[index]) + " for new note " + str(note_num))
+                
+                # If we have a ready note at the correct frequency, use it
+                if self.ready_note and self.ready_note_freq == freq:
+                    note = self.ready_note
+                    self.ready_note = None
+                    self.ready_note_freq = None
                 else:
-                    _log("Error: Note pool in invalid state - no notes to steal", is_error=True)
-                    return None
+                    # Create new note since ready note wasn't suitable
+                    note = synthio.Note(frequency=freq)
+                
+                # Release the old note
+                self._release_slot(index, synth)
+                
+                # Prepare a new ready note for next time
+                self._prepare_ready_note(freq)
+            else:
+                # No stealing needed, just create a new note
+                note = synthio.Note(frequency=freq)
             
-            # Create new note
-            freq = synthio.midi_to_hz(note_number)
-            note = synthio.Note(frequency=freq)
+            # Update slot
+            self.notes[index] = note
+            self.note_nums[index] = note_num
+            self.channels[index] = channel
+            self.timestamps[index] = self.next_timestamp
+            self.next_timestamp += 1
             
-            # Update all tracking structures
-            self.active_notes[note_number] = (index, note)
-            self.note_order.append(note_number)
-            self.channel_notes[channel] = (note_number, index)
-            self.note_timestamps[note_number] = self._get_timestamp()
+            # Update channel mapping
+            self.channel_notes[channel] = (note_num, index)
             
-            _log(f"Note {note_number} allocated to index {index} on channel {channel}")
+            _log("Allocated note " + str(note_num) + " to channel " + str(channel) + " at index " + str(index))
             return index, note
             
         except Exception as e:
-            _log(f"Error allocating note: {str(e)}", is_error=True)
+            _log("Error allocating note: " + str(e), is_error=True)
             return None
 
-    def release_note(self, note_number):
-        """Release a note and clean up all its references."""
+    def release_note(self, note_num, synth=None):
+        """Release a specific note."""
         try:
-            if note_number in self.active_notes:
-                _log(f"Releasing note {note_number}")
-                index, note = self._cleanup_note(note_number)
-                return index, note
+            for i in range(self.size):
+                if self.note_nums[i] == note_num:
+                    note = self.notes[i]
+                    self._release_slot(i, synth)
+                    return i, note
             return None, None
-            
+                    
         except Exception as e:
-            _log(f"Error releasing note: {str(e)}", is_error=True)
+            _log("Error releasing note: " + str(e), is_error=True)
             return None, None
 
-    def release_all(self):
-        """Release all active notes."""
+    def release_channel(self, channel, synth=None):
+        """Release all notes on a channel."""
         try:
-            released_notes = []
-            for note_number in list(self.active_notes.keys()):
-                _, note = self.release_note(note_number)
-                if note is not None:
-                    released_notes.append(note)
+            if channel in self.channel_notes:
+                note_num, index = self.channel_notes[channel]
+                self._release_slot(index, synth)
+                    
+        except Exception as e:
+            _log("Error releasing channel: " + str(e), is_error=True)
+
+    def release_all(self, synth=None):
+        """Release all notes."""
+        try:
+            released = []
+            for i in range(self.size):
+                if self.notes[i] is not None:
+                    note = self.notes[i]
+                    released.append(note)
+                    self._release_slot(i, synth)
             
-            # Reset all tracking structures
-            self.available_indices = list(range(self.size))
-            self.active_notes.clear()
-            self.note_order.clear()
+            # Also release ready note if it exists
+            if self.ready_note:
+                released.append(self.ready_note)
+                self.ready_note = None
+                self.ready_note_freq = None
+            
+            self.next_timestamp = 0
             self.channel_notes.clear()
-            self.note_timestamps.clear()
-            self._timestamp = 0
-            
-            _log(f"Released all notes ({len(released_notes)} total)")
-            return released_notes
+            return released
             
         except Exception as e:
-            _log(f"Error in release_all: {str(e)}", is_error=True)
+            _log("Error in release_all: " + str(e), is_error=True)
             return []
