@@ -10,10 +10,14 @@ from constants import (
     LOG_CONNECT,
     LOG_LIGHT_CYAN,
     LOG_RED,
-    LOG_RESET
+    LOG_RESET,
+    CONNECTION_LOG
 )
 
 def _log(message, state=None, is_error=False):
+    if not CONNECTION_LOG and not (HEARTBEAT_DEBUG and message == "♡"):
+        return
+        
     if state:
         print(f"{LOG_LIGHT_CYAN}{LOG_CONNECT} [STATE] {state}: {message}{LOG_RESET}", file=sys.stderr)
     else:

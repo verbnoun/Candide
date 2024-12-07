@@ -6,11 +6,14 @@ import sys
 from constants import (
     UART_TX, UART_RX, UART_BAUDRATE, UART_TIMEOUT,
     LOG_UART, LOG_LIGHT_BLUE, LOG_RED, LOG_RESET,
-    MESSAGE_TIMEOUT
+    MESSAGE_TIMEOUT, UART_LOG
 )
 
 def _log(message, is_error=False):
     """Log messages with UART prefix"""
+    if not UART_LOG:
+        return
+        
     color = LOG_RED if is_error else LOG_LIGHT_BLUE
     if is_error:
         print(f"{color}{LOG_UART} [ERROR] {message}{LOG_RESET}", file=sys.stderr)

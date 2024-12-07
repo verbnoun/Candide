@@ -12,7 +12,7 @@ import audiomixer
 from constants import *
 
 def _log(message, is_error=False):
-    if not HARDWARE_DEBUG:
+    if not HARDWARE_LOG:
         return
         
     if isinstance(message, dict):
@@ -93,7 +93,7 @@ class AudioSystem:
 
 class BootBeep:
     def play(self):
-        if not HARDWARE_DEBUG:
+        if not HARDWARE_LOG:
             return
 
         audio_out = None
@@ -193,7 +193,7 @@ class EncoderManager(HardwareComponent):
         if current_raw_position != self.last_position:
             direction = 1 if current_raw_position > self.last_position else -1
 
-            if HARDWARE_DEBUG:
+            if HARDWARE_LOG:
                 print(f"Encoder movement: pos={current_raw_position}, last={self.last_position}, dir={direction}")
             
             events.append(('instrument_change', direction))

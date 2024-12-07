@@ -14,17 +14,22 @@ from "how to make sound" (modules.py).
 from modules import NotePool, create_waveform
 import synthio
 import sys
+import array
 from constants import (
     SAMPLE_RATE,
     AUDIO_CHANNEL_COUNT,
     LOG_SYNTH,
     LOG_LIGHT_GREEN,
     LOG_RED,
-    LOG_RESET
+    LOG_RESET,
+    SYNTHESIZER_LOG
 )
 
 def _log(message, is_error=False, is_debug=False):
     """Enhanced logging with error and debug support."""
+    if not SYNTHESIZER_LOG:
+        return
+        
     color = LOG_RED if is_error else LOG_LIGHT_GREEN
     if is_error:
         print(f"{color}{LOG_SYNTH} [ERROR] {message}{LOG_RESET}", file=sys.stderr)

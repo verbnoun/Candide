@@ -1,6 +1,6 @@
 """MIDI interface system providing MIDI message handling and MPE support with filtering."""
 
-from constants import LOG_MIDI, LOG_LIGHT_ORANGE, LOG_RED, LOG_RESET, MidiMessageType
+from constants import LOG_MIDI, LOG_LIGHT_ORANGE, LOG_RED, LOG_RESET, MidiMessageType, MIDI_LOG
 import supervisor
 
 # MIDI Message Types
@@ -30,6 +30,9 @@ MPE_FILTER_CONFIG = {
 
 def _log(message, is_error=False, is_debug=False):
     """Log messages with MIDI prefix"""
+    if not MIDI_LOG:
+        return
+        
     color = LOG_RED if is_error else LOG_LIGHT_ORANGE
     prefix = "[ERROR] " if is_error else ""
     print("{}{}".format(color, LOG_MIDI) + prefix + " " + message + LOG_RESET)

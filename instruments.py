@@ -1,10 +1,13 @@
 """Instrument configuration management system defining synthesizer paths and parameter mappings."""
 
 import sys
-from constants import LOG_INST, LOG_LIGHT_YELLOW, LOG_RED, LOG_RESET
+from constants import LOG_INST, LOG_LIGHT_YELLOW, LOG_RED, LOG_RESET, INSTRUMENTS_LOG
 
 def _log(message, is_error=False):
     """Simple logging function for instrument events."""
+    if not INSTRUMENTS_LOG:
+        return
+        
     color = LOG_RED if is_error else LOG_LIGHT_YELLOW
     if is_error:
         print(f"{color}{LOG_INST} [ERROR] {message}{LOG_RESET}", file=sys.stderr)

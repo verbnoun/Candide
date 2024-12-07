@@ -14,10 +14,13 @@ import array
 import synthio
 import math
 import sys
-from constants import LOG_SYNTH, LOG_LIGHT_GREEN, LOG_RED, LOG_RESET
+from constants import LOG_SYNTH, LOG_LIGHT_GREEN, LOG_RED, LOG_RESET, MODULES_LOG
 
 def _log(message, is_error=False, is_debug=False):
     """Enhanced logging with error and debug support."""
+    if not MODULES_LOG:
+        return
+        
     color = LOG_RED if is_error else LOG_LIGHT_GREEN
     if is_error:
         print("{}{}".format(color, LOG_SYNTH) + (" [ERROR] " if is_error else " ") + message + LOG_RESET, file=sys.stderr)

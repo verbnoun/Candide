@@ -14,13 +14,16 @@ from synthesizer import Synthesizer
 
 def _log(message, prefix=LOG_CANDIDE, color=LOG_WHITE, is_error=False):
     """Centralized logging function with consistent formatting."""
+    if not CODE_LOG:
+        return
+        
     if is_error:
         print(f"{color}{prefix} [ERROR] {message}{LOG_RESET}", file=sys.stderr)
     else:
         print(f"{color}{prefix} {message}{LOG_RESET}", file=sys.stderr)
 
 def _cycle_log(message):
-    """Special logging effect for startup messages."""
+    """Special logging effect for startup messages. Always runs regardless of CODE_LOG."""
     COLORS = [LOG_LIGHT_CYAN, LOG_LIGHT_BLUE, LOG_LIGHT_MAGENTA, LOG_LIGHT_GREEN, LOG_LIGHT_YELLOW]
     
     print("\033[s", end='', file=sys.stderr)

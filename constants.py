@@ -22,9 +22,17 @@ LOG_SYNTH = "[SYNTH  ]"
 LOG_UART = "[UART   ]"
 LOG_MIDI = "[MIDI   ]"
 
-DEBUG = True
-HARDWARE_DEBUG = True
+# Logging enable flags
+CODE_LOG = False
+CONNECTION_LOG = False
+HARDWARE_LOG = False
+INSTRUMENTS_LOG = False
+MIDI_LOG = False
+MODULES_LOG = False
+SYNTHESIZER_LOG = False
+UART_LOG = False
 HEARTBEAT_DEBUG = False
+
 ADC_MAX = 65535
 ADC_MIN = 1
 
