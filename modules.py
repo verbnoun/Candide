@@ -131,7 +131,7 @@ class Voice:
         # Ensure amplitude is set
         if 'amplitude' not in note_params:
             note_params['amplitude'] = 1.0
-        
+            
         # Create new active note - will use synth's global envelope
         self.active_note = synthio.Note(**note_params)
         synth.press(self.active_note)
@@ -173,7 +173,7 @@ class Voice:
                 if filter:
                     params['filter'] = filter
             
-            # Update note parameters
+            # Update note parameters including ring modulation
             for param, value in params.items():
                 if hasattr(self.active_note, param):
                     setattr(self.active_note, param, value)

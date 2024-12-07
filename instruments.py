@@ -43,6 +43,16 @@ def _log(message, is_error=False):
     else:
         print(f"{color}{LOG_INST} {message}{LOG_RESET}", file=sys.stderr)
 
+RING_PATHS = '''
+note/press/per_key/note_on
+note/release/per_key/note_off
+oscillator/frequency/per_key/note_number/note_on
+oscillator/waveform/global/saw/note_on
+
+oscillator/ring/frequency/global/20-2000/cc74
+oscillator/ring/waveform/global/triangle/note_on
+oscillator/ring/bend/global/n12-12/cc85
+'''
 
 BASIC_PATHS = '''
 note/press/per_key/note_on
@@ -65,7 +75,7 @@ note/press/per_key/note_on
 note/release/per_key/note_off
 oscillator/frequency/per_key/note_number/note_on
 oscillator/waveform/global/triangle/note_on
-# note/panning/per_key/-1-1/pitch_bend
+note/panning/per_key/-1-1/pitch_bend
 
 filter/low_pass/resonance/global/0.1-2.0/cc71
 filter/low_pass/frequency/global/20-20000/cc70

@@ -70,6 +70,11 @@ class PathParser:
             'frequency': 0,
             'resonance': 0
         }
+        self.current_ring_params = {
+            'frequency': 20,  # Default to minimum
+            'bend': 0,       # Default to no bend
+            'waveform': None # Will be set during parsing
+        }
         self.current_envelope_params = {
             'attack_time': 0.1,
             'decay_time': 0.05,
@@ -108,6 +113,7 @@ class PathParser:
         _log(f"Enabled messages: {self.enabled_messages}")
         _log(f"Enabled CCs: {self.enabled_ccs}")
         _log(f"Filter type: {self.filter_type}")
+        _log(f"Ring mod params: {self.current_ring_params}")
         _log(f"Envelope params: {self.current_envelope_params}")
     
     def _reset(self):
@@ -123,6 +129,11 @@ class PathParser:
             'frequency': 0,
             'resonance': 0
         }
+        self.current_ring_params = {
+            'frequency': 20,  # Default to minimum
+            'bend': 0,       # Default to no bend
+            'waveform': None # Will be set during parsing
+        }
         self.current_envelope_params = {
             'attack_time': 0.1,
             'decay_time': 0.05,
@@ -130,6 +141,26 @@ class PathParser:
             'attack_level': 1.0,
             'sustain_level': 0.8
         }
+
+    def _parse_range(self, range_str):
+        """Parse a range string, handling negative numbers with 'n' prefix."""
+        try:
+            if '-' not in range_str:
+                raise ValueError(f"Invalid range format: {range_str}")
+                
+            min_str, max_str = range_str.split('-')
+            
+            # Handle negative numbers with 'n' prefix
+            if min_str.startswith('n'):
+                min_val = -float(min_str[1:])
+            else:
+                min_val = float(min_str)
+                
+            max_val = float(max_str)
+            return min_val, max_val
+            
+        except ValueError as e:
+            raise ValueError(f"Invalid range format {range_str}: {str(e)}")
     
     def _parse_line(self, parts):
         """Parse a single path line to extract parameter information."""
@@ -141,6 +172,16 @@ class PathParser:
             if len(parts) >= 2 and parts[1] in ('low_pass', 'high_pass', 'band_pass', 'notch'):
                 self.filter_type = parts[1]
                 _log(f"Found filter type: {self.filter_type}")
+
+        # Check for ring modulation configuration
+        if parts[0] == 'oscillator' and len(parts) >= 2 and parts[1] == 'ring':
+            if len(parts) >= 3:
+                if parts[2] == 'waveform' and len(parts) >= 5:
+                    self.current_ring_params['waveform'] = parts[4]
+                    _log(f"Found ring mod waveform: {parts[4]}")
+                # Prefix ring mod parameters with 'ring_'
+                if parts[2] in ('frequency', 'bend'):
+                    parts[2] = f"ring_{parts[2]}"
             
         # Find parameter scope and name
         scope = None
@@ -152,7 +193,7 @@ class PathParser:
             if part in ('global', 'per_key'):
                 scope = part
                 if i > 0:
-                    param_name = parts[i-1]
+                    param_name = parts[i-1]  # Now contains 'ring_frequency' or 'ring_bend' for ring mod
                 if i + 1 < len(parts):
                     next_part = parts[i+1]
                     if '-' in next_part:
@@ -195,7 +236,7 @@ class PathParser:
             
         if range_str:
             try:
-                min_val, max_val = map(float, range_str.split('-'))
+                min_val, max_val = self._parse_range(range_str)
                 range_obj = MidiRange(param_name, min_val, max_val)
                 
                 if scope == 'global':
@@ -233,6 +274,7 @@ class Synthesizer:
         self.current_subscription = None
         self.ready_callback = None
         self.global_waveform = None
+        self.global_ring_waveform = None
         self.last_health_check = time.monotonic()
         self.health_check_interval = 5.0
         _log("Synthesizer initialized")
@@ -271,7 +313,10 @@ class Synthesizer:
                     'waveform': self.global_waveform,
                     'filter_type': self.path_parser.filter_type,
                     'filter_frequency': self.path_parser.current_filter_params['frequency'],
-                    'filter_resonance': self.path_parser.current_filter_params['resonance']
+                    'filter_resonance': self.path_parser.current_filter_params['resonance'],
+                    'ring_frequency': self.path_parser.current_ring_params['frequency'],
+                    'ring_waveform': self.global_ring_waveform,
+                    'ring_bend': self.path_parser.current_ring_params['bend']
                 }
                 
                 self.voice_pool.press_note(msg.note, msg.channel, self.synth, **note_params)
@@ -320,6 +365,23 @@ class Synthesizer:
                                         filter_type=self.path_parser.filter_type,
                                         filter_frequency=self.path_parser.current_filter_params['frequency'],
                                         filter_resonance=value)
+
+                        # Handle ring modulation parameter updates
+                        elif param_name == 'ring_frequency':
+                            self.path_parser.current_ring_params['frequency'] = value
+                            # Update all active voices with new ring frequency
+                            for voice in self.voice_pool.voices:
+                                if voice.active_note:
+                                    voice.update_active_note(self.synth,
+                                        ring_frequency=value)
+
+                        elif param_name == 'ring_bend':
+                            self.path_parser.current_ring_params['bend'] = value
+                            # Update all active voices with new ring bend
+                            for voice in self.voice_pool.voices:
+                                if voice.active_note:
+                                    voice.update_active_note(self.synth,
+                                        ring_bend=value)
                 
             elif msg == 'pitchbend' and 'pitchbend' in self.path_parser.enabled_messages:
                 midi_value = (msg.pitch_bend >> 7) & 0x7F
@@ -354,6 +416,12 @@ class Synthesizer:
                 
             waveform_type = self.path_parser.fixed_values['waveform']
             self.global_waveform = create_waveform(waveform_type)
+            
+            # Create ring modulation waveform if specified
+            if self.path_parser.current_ring_params['waveform']:
+                self.global_ring_waveform = create_waveform(
+                    self.path_parser.current_ring_params['waveform'])
+                _log(f"Created ring mod waveform: {self.path_parser.current_ring_params['waveform']}")
             
             _log(f"Creating synthio synthesizer with {waveform_type} waveform")
             
