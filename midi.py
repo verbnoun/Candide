@@ -19,7 +19,7 @@ MPE_TIMBRE_CC = 74
 
 # MPE Filtering Configuration
 MPE_FILTER_CONFIG = {
-    'max_messages_per_second': 0, #20 # Total MPE messages across all channels
+    'mpe_continuous_messages_per_second': 20, # Total continuous MPE messages across all channels
     'pitch_bend_ratio': 50,    # 50% of remaining bandwidth
     'pressure_ratio': 30,      # 30% of remaining bandwidth
     'timbre_ratio': 20,        # 20% of remaining bandwidth
@@ -40,8 +40,8 @@ def _log(message, is_error=False, is_debug=False):
 class MPEMessageCounter:
     """Tracks MPE message counts globally and per channel"""
     def __init__(self):
-        self.reset_counters()
         self.last_reset_time = supervisor.ticks_ms()
+        self.reset_counters()
         
     def reset_counters(self):
         """Reset all message counters"""
@@ -52,6 +52,13 @@ class MPEMessageCounter:
         self.channel_messages = {}
         for ch in range(16):
             self.channel_messages[ch] = 0
+            
+        # Only track filtered messages if logging is enabled
+        if MIDI_LOG:
+            if hasattr(self, 'filtered_messages') and sum(self.filtered_messages.values()) > 0:
+                _log(f"Filtered MPE messages in last second - Pitch: {self.filtered_messages['pitch_bend']}, " +
+                     f"Pressure: {self.filtered_messages['pressure']}, Timbre: {self.filtered_messages['timbre']}")
+        self.filtered_messages = {'pitch_bend': 0, 'pressure': 0, 'timbre': 0}
         
     def update_rate_limits(self):
         """Check and reset counters based on time"""
@@ -69,20 +76,34 @@ class MPEMessageCounter:
             return True
             
         # Check total message limit
-        if self.total_messages >= MPE_FILTER_CONFIG['max_messages_per_second']:
+        if self.total_messages >= MPE_FILTER_CONFIG['mpe_continuous_messages_per_second']:
+            # Only count filtered messages if logging is enabled
+            if MIDI_LOG:
+                if msg_type == 'pitchbend':
+                    self.filtered_messages['pitch_bend'] += 1
+                elif msg_type == 'channelpressure':
+                    self.filtered_messages['pressure'] += 1
+                elif msg_type == 'cc':  # Timbre
+                    self.filtered_messages['timbre'] += 1
             return False
             
         # Calculate available slots for each type
-        available_slots = MPE_FILTER_CONFIG['max_messages_per_second'] - self.total_messages
+        available_slots = MPE_FILTER_CONFIG['mpe_continuous_messages_per_second'] - self.total_messages
         
         if msg_type == 'pitchbend':
             max_allowed = (available_slots * MPE_FILTER_CONFIG['pitch_bend_ratio']) // 100
+            if self.pitch_bend_messages >= max_allowed and MIDI_LOG:
+                self.filtered_messages['pitch_bend'] += 1
             return self.pitch_bend_messages < max_allowed
         elif msg_type == 'channelpressure':
             max_allowed = (available_slots * MPE_FILTER_CONFIG['pressure_ratio']) // 100
+            if self.pressure_messages >= max_allowed and MIDI_LOG:
+                self.filtered_messages['pressure'] += 1
             return self.pressure_messages < max_allowed
         elif msg_type == 'cc':  # Timbre
             max_allowed = (available_slots * MPE_FILTER_CONFIG['timbre_ratio']) // 100
+            if self.timbre_messages >= max_allowed and MIDI_LOG:
+                self.filtered_messages['timbre'] += 1
             return self.timbre_messages < max_allowed
             
         return True
@@ -105,7 +126,8 @@ class MPEMessageCounter:
             'total': self.channel_messages[channel],
             'pitch_bend': self.pitch_bend_messages,
             'pressure': self.pressure_messages,
-            'timbre': self.timbre_messages
+            'timbre': self.timbre_messages,
+            'filtered': self.filtered_messages
         }
 
 class MidiSubscription:
@@ -181,11 +203,22 @@ class MPEZone:
             if channel in self.channel_states:
                 if msg.note in self.channel_states[channel]['active_notes']:
                     del self.channel_states[channel]['active_notes'][msg.note]
-                    # Log MPE statistics for this channel
+                    # Log detailed MPE statistics for this channel
                     stats = message_counter.get_channel_stats(channel)
-                    _log("Channel " + str(channel) + " MPE stats - Total: " + str(stats['total']) + 
-                         ", Pitch: " + str(stats['pitch_bend']) + ", Pressure: " + str(stats['pressure']) + 
-                         ", Timbre: " + str(stats['timbre']))
+                    filtered = stats['filtered']
+                    _log("Channel " + str(channel) + " MPE message statistics:")
+                    _log("    Pitch Bend:")
+                    _log("        Allowed: " + str(stats['pitch_bend']))
+                    _log("        Filtered: " + str(filtered['pitch_bend']))
+                    _log("        Total: " + str(stats['pitch_bend'] + filtered['pitch_bend']))
+                    _log("    Pressure:")
+                    _log("        Allowed: " + str(stats['pressure']))
+                    _log("        Filtered: " + str(filtered['pressure']))
+                    _log("        Total: " + str(stats['pressure'] + filtered['pressure']))
+                    _log("    Timbre:")
+                    _log("        Allowed: " + str(stats['timbre']))
+                    _log("        Filtered: " + str(filtered['timbre']))
+                    _log("        Total: " + str(stats['timbre'] + filtered['timbre']))
                     
         elif msg.type == 'channelpressure':
             if channel in self.channel_states:
@@ -281,29 +314,60 @@ class MidiMessage:
 
 class MidiParser:
     """MIDI byte stream parser"""
-    def __init__(self):
+    def __init__(self, message_counter):
         self.current_message = None
         self.running_status = None
         self.bytes_processed = 0
+        self.message_counter = message_counter
+        self.collecting_continuous = False
+        self.continuous_type = None
+
+    def get_message_type(self, status_byte):
+        """Get message type from status byte for early filtering"""
+        message_type = status_byte & 0xF0
+        if message_type == MIDI_CHANNEL_PRESSURE:
+            return 'channelpressure'
+        elif message_type == MIDI_PITCH_BEND:
+            return 'pitchbend'
+        elif message_type == MIDI_CONTROL_CHANGE:
+            return 'cc'
+        return None
 
     def process_byte(self, byte):
         """Process a single MIDI byte"""
         self.bytes_processed += 1
         
         if byte & 0x80:  # Status byte
-            _log("Processing status byte: 0x{:02x}".format(byte), is_debug=True)
             if byte < 0xF8:  # Not realtime
                 self.running_status = byte
+                # Early MPE continuous message filtering
+                msg_type = self.get_message_type(byte)
+                if msg_type and not self.message_counter.can_process_message(msg_type):
+                    self.collecting_continuous = True
+                    self.continuous_type = msg_type
+                    return None
+                self.collecting_continuous = False
                 self.current_message = MidiMessage(byte)
             return None
             
         # Data byte - use running status if needed
+        if self.collecting_continuous:
+            # Skip data bytes for filtered continuous messages
+            if self.continuous_type == 'channelpressure':
+                self.collecting_continuous = False  # Reset after 1 data byte
+            elif len(self.current_message.data if self.current_message else []) == 1:
+                self.collecting_continuous = False  # Reset after 2 data bytes
+            return None
+            
         if not self.current_message and self.running_status:
-            _log("Using running status: 0x{:02x}".format(self.running_status), is_debug=True)
+            msg_type = self.get_message_type(self.running_status)
+            if msg_type and not self.message_counter.can_process_message(msg_type):
+                self.collecting_continuous = True
+                self.continuous_type = msg_type
+                return None
             self.current_message = MidiMessage(self.running_status)
         
         if self.current_message:
-            _log("Adding data byte: 0x{:02x}".format(byte), is_debug=True)
             self.current_message.data.append(byte)
             if self.current_message.is_complete():
                 self.current_message._parse_message()  # Parse message once complete
@@ -317,9 +381,9 @@ class MidiInterface:
     """MIDI interface with MPE support"""
     def __init__(self, transport):
         self.transport = transport
-        self.parser = MidiParser()
-        self.subscribers = []
         self.message_counter = MPEMessageCounter()
+        self.parser = MidiParser(self.message_counter)
+        self.subscribers = []
         
         # Initialize MPE zones
         self.lower_zone = MPEZone(is_lower_zone=True)
@@ -339,15 +403,10 @@ class MidiInterface:
 
     def _handle_message(self, msg):
         """Update MPE state based on message"""
-        # Always process Note On/Off messages
-        if msg.type in ['noteon', 'noteoff']:
-            self._process_message(msg)
-            return
-            
-        # Filter other MPE messages based on configuration
-        if self.message_counter.can_process_message(msg.type):
-            self._process_message(msg)
+        # Process message and update counter for continuous messages
+        if msg.type in ['pitchbend', 'channelpressure', 'cc']:
             self.message_counter.count_message(msg.type, msg.channel)
+        self._process_message(msg)
 
     def _process_message(self, msg):
         """Process a message that has passed filtering"""

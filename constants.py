@@ -23,12 +23,12 @@ LOG_UART = "[UART   ]"
 LOG_MIDI = "[MIDI   ]"
 
 # Logging enable flags
-CODE_LOG = False
+CODE_LOG = True
 CONNECTION_LOG = False
 HARDWARE_LOG = False
 INSTRUMENTS_LOG = False
-MIDI_LOG = False
-MODULES_LOG = False
+MIDI_LOG = True
+MODULES_LOG = True
 SYNTHESIZER_LOG = False
 UART_LOG = False
 HEARTBEAT_DEBUG = False
