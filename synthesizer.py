@@ -70,6 +70,13 @@ class PathParser:
             'frequency': 0,
             'resonance': 0
         }
+        self.current_envelope_params = {
+            'attack_time': 0.1,
+            'decay_time': 0.05,
+            'release_time': 0.2,
+            'attack_level': 1.0,
+            'sustain_level': 0.8
+        }
         
     def parse_paths(self, paths):
         """Parse instrument paths to extract parameters and mappings."""
@@ -101,6 +108,7 @@ class PathParser:
         _log(f"Enabled messages: {self.enabled_messages}")
         _log(f"Enabled CCs: {self.enabled_ccs}")
         _log(f"Filter type: {self.filter_type}")
+        _log(f"Envelope params: {self.current_envelope_params}")
     
     def _reset(self):
         """Reset all collections before parsing new paths."""
@@ -114,6 +122,13 @@ class PathParser:
         self.current_filter_params = {
             'frequency': 0,
             'resonance': 0
+        }
+        self.current_envelope_params = {
+            'attack_time': 0.1,
+            'decay_time': 0.05,
+            'release_time': 0.2,
+            'attack_level': 1.0,
+            'sustain_level': 0.8
         }
     
     def _parse_line(self, parts):
@@ -197,6 +212,16 @@ class PathParser:
             raise KeyError(f"No range defined for parameter: {param_name}")
         return ranges[param_name].convert(midi_value)
 
+    def update_envelope(self):
+        """Create a new envelope with current parameters."""
+        return synthio.Envelope(
+            attack_time=self.current_envelope_params['attack_time'],
+            decay_time=self.current_envelope_params['decay_time'],
+            release_time=self.current_envelope_params['release_time'],
+            attack_level=self.current_envelope_params['attack_level'],
+            sustain_level=self.current_envelope_params['sustain_level']
+        )
+
 class Synthesizer:
     """Main synthesizer class coordinating MIDI handling and sound generation."""
     def __init__(self, midi_interface, audio_system=None):
@@ -267,8 +292,16 @@ class Synthesizer:
                         value = self.path_parser.convert_value(param_name, msg.value, True)
                         _log("Updated global {} = {}".format(param_name, value))
                         
-                        # Update filter parameters if this is a filter CC
-                        if param_name == 'frequency':
+                        # Handle envelope parameter updates
+                        if param_name in ('attack_time', 'decay_time', 'release_time', 
+                                        'attack_level', 'sustain_level'):
+                            self.path_parser.current_envelope_params[param_name] = value
+                            # Update global envelope
+                            self.synth.envelope = self.path_parser.update_envelope()
+                            _log(f"Updated global envelope {param_name} = {value}")
+                            
+                        # Handle filter parameter updates
+                        elif param_name == 'frequency':
                             self.path_parser.current_filter_params['frequency'] = value
                             # Update all active voices with new filter
                             for voice in self.voice_pool.voices:
@@ -323,10 +356,17 @@ class Synthesizer:
             self.global_waveform = create_waveform(waveform_type)
             
             _log(f"Creating synthio synthesizer with {waveform_type} waveform")
+            
+            # Create initial envelope
+            initial_envelope = self.path_parser.update_envelope()
+            _log("Created initial envelope with params: {}".format(
+                self.path_parser.current_envelope_params))
+            
             self.synth = synthio.Synthesizer(
                 sample_rate=SAMPLE_RATE,
                 channel_count=AUDIO_CHANNEL_COUNT,
-                waveform=self.global_waveform)
+                waveform=self.global_waveform,
+                envelope=initial_envelope)
             
             # Connect synthesizer to audio system's mixer if available
             if self.audio_system and self.audio_system.mixer:

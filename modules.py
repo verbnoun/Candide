@@ -128,7 +128,11 @@ class Voice:
             if filter:
                 note_params['filter'] = filter
         
-        # Create new active note
+        # Ensure amplitude is set
+        if 'amplitude' not in note_params:
+            note_params['amplitude'] = 1.0
+        
+        # Create new active note - will use synth's global envelope
         self.active_note = synthio.Note(**note_params)
         synth.press(self.active_note)
         self._log_state(synth, "pressed")
@@ -186,6 +190,18 @@ class VoicePool:
         self.voices = [Voice() for _ in range(size)]
         self.next_timestamp = 0
         self.channel_map = {}  # Maps channel -> voice for active voices
+        self.base_amplitude = 1.0  # Base amplitude for notes
+        
+        # Pre-calculate amplitude scaling factors using 1/sqrt(n)
+        # Create table for size+3 entries to handle potential voice stealing
+        self.amplitude_scaling = array.array('f', [1.0])  # Start with 1.0 for 0 notes
+        for i in range(1, size + 4):  # size+3 plus 1 since we start at 1
+            self.amplitude_scaling.append(1.0 / math.sqrt(i))
+        
+        # Log the amplitude scaling table
+        _log("Amplitude scaling table:")
+        for i, amp in enumerate(self.amplitude_scaling):
+            _log(f"  {i} notes: {amp:.4f}")
         
         # Toddler mode tracking
         self.last_steal_time = 0
@@ -196,6 +212,38 @@ class VoicePool:
         self.last_cleanup_time = 0  # Last time we cleaned up voices during timeout
         
         _log("Voice pool initialized with {} voices".format(size))
+
+    def get_active_note_count(self, synth):
+        """Get count of currently active notes (not including releasing notes)."""
+        active_count = 0
+        for voice in self.voices:
+            if voice.active_note:
+                state, _ = synth.note_info(voice.active_note)
+                if state in (synthio.EnvelopeState.ATTACK, 
+                           synthio.EnvelopeState.DECAY,
+                           synthio.EnvelopeState.SUSTAIN):
+                    active_count += 1
+        return active_count
+
+    def update_all_note_amplitudes(self, synth):
+        """Update amplitudes of all active notes based on count."""
+        active_count = self.get_active_note_count(synth)
+        if active_count == 0:
+            return
+
+        # Get pre-calculated amplitude for this number of notes
+        new_amplitude = self.amplitude_scaling[active_count]
+        _log("Adjusting amplitudes: {} active notes, new amplitude: {:.4f}".format(
+            active_count, new_amplitude))
+
+        # Update all active notes
+        for voice in self.voices:
+            if voice.active_note:
+                state, _ = synth.note_info(voice.active_note)
+                if state in (synthio.EnvelopeState.ATTACK, 
+                           synthio.EnvelopeState.DECAY,
+                           synthio.EnvelopeState.SUSTAIN):
+                    voice.update_active_note(synth, amplitude=new_amplitude)
         
     def _check_toddler_trigger(self, synth, current_time, is_stealing=False):
         """Check if we should trigger toddler mode."""
@@ -298,6 +346,10 @@ class VoicePool:
         if voice is None:  # Could be None if we just entered toddler mode
             return None
             
+        # Calculate initial amplitude based on current active notes + 1 (for this new note)
+        active_count = self.get_active_note_count(synth) + 1
+        note_params['amplitude'] = self.amplitude_scaling[active_count]
+        
         # Press note in voice
         voice.press_note(note_number, channel, synth, **note_params)
         
@@ -305,6 +357,9 @@ class VoicePool:
         voice.timestamp = self.next_timestamp
         self.next_timestamp += 1
         self.channel_map[channel] = voice
+        
+        # Update all note amplitudes after adding new note
+        self.update_all_note_amplitudes(synth)
         
         self._log_all_voices(synth, "after note-on")
         return voice
@@ -319,6 +374,9 @@ class VoicePool:
                 if voice.channel in self.channel_map:
                     del self.channel_map[voice.channel]
                     
+                # Update all note amplitudes after releasing note
+                self.update_all_note_amplitudes(synth)
+                    
                 self._log_all_voices(synth, "after note-off")
                 return voice
                 
@@ -330,6 +388,9 @@ class VoicePool:
             voice = self.channel_map[channel]
             voice.release_note(synth, forced=True)
             del self.channel_map[channel]
+            
+            # Update all note amplitudes after releasing note
+            self.update_all_note_amplitudes(synth)
                 
     def release_all(self, synth):
         """Release all voices."""

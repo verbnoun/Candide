@@ -44,19 +44,6 @@ def _log(message, is_error=False):
         print(f"{color}{LOG_INST} {message}{LOG_RESET}", file=sys.stderr)
 
 
-ENVELOPE_MINIMUM_PATHS = '''
-note/press/per_key/note_on
-note/release/per_key/note_off
-oscillator/frequency/per_key/note_number/note_on
-oscillator/waveform/global/sine/note_on
-
-amplifier/envelope/attack_level/global/0.001-1/cc85
-amplifier/envelope/attack_time/global/0.001-0.5/cc73
-amplifier/envelope/decay_time/global/0.001-0.25/cc75
-amplifier/envelope/sustain_level/global/0.001-1/cc66
-amplifier/envelope/release_time/global/0.001-1/cc72
-'''
-
 BASIC_PATHS = '''
 note/press/per_key/note_on
 note/release/per_key/note_off
@@ -76,7 +63,12 @@ amplifier/envelope/release_time/global/0.001-1/cc72
 ALL_SYNTHIO_PATHS = '''
 note/press/per_key/note_on
 note/release/per_key/note_off
-note/panning/per_key/-1-1/pitch_bend
+oscillator/frequency/per_key/note_number/note_on
+oscillator/waveform/global/triangle/note_on
+# note/panning/per_key/-1-1/pitch_bend
+
+filter/low_pass/resonance/global/0.1-2.0/cc71
+filter/low_pass/frequency/global/20-20000/cc70
 
 oscilator/amplitude/per_key/0.001-1/velocity/note_on
 oscillator/frequency/per_key/note_number/note_on
@@ -85,9 +77,6 @@ oscillator/bend/per_key/-12-12/pitch_bend
 oscillator/ring/frequency/global/20-2000/cc74
 oscillator/ring/waveform/global/triangle/note_on
 oscillator/ring/bend/per_key/-12-12/pitch_bend
-
-filter/band_pass/resonance/global/0.1-2.0/cc71
-filter/band_pass/frequency/global/20-20000/cc70
 
 amplifier/envelope/attack_level/per_key/0.001-1/velocity/note_on
 amplifier/envelope/attack_time/global/0.001-0.5/cc73
@@ -115,8 +104,21 @@ note/release/per_key/note_off
 oscillator/frequency/per_key/note_number/note_on
 oscillator/waveform/global/saw/note_on
 
-filter/band_pass/resonance/global/0.1-2.0/cc71
-filter/band_pass/frequency/global/20-20000/cc70
+filter/high_pass/resonance/global/0.1-2.0/cc71
+filter/high_pass/frequency/global/20-20000/cc70
+'''
+
+ENVELOPE_MINIMUM_PATHS = '''
+note/press/per_key/note_on
+note/release/per_key/note_off
+oscillator/frequency/per_key/note_number/note_on
+oscillator/waveform/global/sine/note_on
+
+amplifier/envelope/attack_level/global/0.001-1/cc85
+amplifier/envelope/attack_time/global/0.001-0.5/cc73
+amplifier/envelope/decay_time/global/0.001-0.25/cc75
+amplifier/envelope/sustain_level/global/0.001-1/cc66
+amplifier/envelope/release_time/global/0.001-1/cc72
 '''
 
 class InstrumentManager:
