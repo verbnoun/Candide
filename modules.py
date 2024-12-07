@@ -59,6 +59,68 @@ def create_waveform(waveform_type):
     
     return buffer
 
+class WaveformMorph:
+    """Handles pre-calculated morphed waveforms for MIDI control."""
+    def __init__(self, name, waveform_sequence=None):
+        self.name = name
+        self.waveform_sequence = waveform_sequence or ['sine', 'triangle', 'square', 'saw']
+        self.lookup_table = array.array('h', [])  # Will be 128 morphed waveforms
+        self._build_lookup()
+        _log(f"Created waveform morph: {name} sequence: {'-'.join(self.waveform_sequence)}")
+        
+    def _build_lookup(self):
+        """Build lookup table of 128 morphed waveforms for MIDI control."""
+        # Get sample length from first waveform
+        first_wave = get_cached_waveform(self.waveform_sequence[0])
+        samples = len(first_wave)
+        
+        # Pre-calculate all possible morphed waveforms
+        num_transitions = len(self.waveform_sequence) - 1
+        
+        # Log sample values for debugging
+        _log(f"Building morph table for {self.name}:")
+        _log(f"  0: {self.waveform_sequence[0]}")
+        _log(f" 64: Between {self.waveform_sequence[len(self.waveform_sequence)//2-1]} and {self.waveform_sequence[len(self.waveform_sequence)//2]}")
+        _log(f"127: {self.waveform_sequence[-1]}")
+        
+        # Create array to hold all morphed waveforms
+        self.lookup_table = []
+        
+        for midi_value in range(128):
+            # Convert MIDI value to morph position
+            morph_position = midi_value / 127.0
+            
+            # Scale position to total number of transitions
+            scaled_pos = morph_position * num_transitions
+            transition_index = int(scaled_pos)
+            
+            # Clamp to valid range
+            if transition_index >= num_transitions:
+                self.lookup_table.append(get_cached_waveform(self.waveform_sequence[-1]))
+                continue
+                
+            # Get the two waveforms to blend
+            waveform1 = get_cached_waveform(self.waveform_sequence[transition_index])
+            waveform2 = get_cached_waveform(self.waveform_sequence[transition_index + 1])
+            
+            # Calculate blend amount within this transition
+            t = scaled_pos - transition_index
+            
+            # Create morphed buffer
+            morphed = array.array('h')
+            for i in range(samples):
+                value = int(waveform1[i] * (1-t) + waveform2[i] * t)
+                morphed.append(value)
+                
+            self.lookup_table.append(morphed)
+    
+    def get_waveform(self, midi_value):
+        """Get pre-calculated morphed waveform for MIDI value."""
+        if not 0 <= midi_value <= 127:
+            _log(f"Invalid MIDI value {midi_value} for {self.name}", is_error=True)
+            raise ValueError(f"MIDI value must be between 0 and 127, got {midi_value}")
+        return self.lookup_table[midi_value]
+
 def create_morphed_waveform(morph_position, waveform_sequence=None):
     """
     Create a morphed waveform based on position and sequence.

@@ -1,6 +1,6 @@
 """High-level synthesizer coordination module."""
 
-from modules import VoicePool, create_waveform, create_morphed_waveform
+from modules import VoicePool, create_waveform, create_morphed_waveform, WaveformMorph
 from pather import PathParser
 import synthio
 import sys
@@ -36,6 +36,8 @@ class Synthesizer:
         self.ready_callback = None
         self.global_waveform = None
         self.global_ring_waveform = None
+        self.base_morph = None  # WaveformMorph for base oscillator
+        self.ring_morph = None  # WaveformMorph for ring oscillator
         self.last_health_check = time.monotonic()
         self.health_check_interval = 5.0
         _log("Synthesizer initialized")
@@ -69,20 +71,27 @@ class Synthesizer:
             if msg == 'noteon' and msg.velocity > 0 and 'noteon' in self.path_parser.enabled_messages:
                 _log("Targeting {}.{} with note-on".format(msg.note, msg.channel))
                 
-                # Create waveform based on current morph position
-                waveform = create_morphed_waveform(
-                    self.path_parser.current_morph_position,
-                    self.path_parser.waveform_sequence
-                )
-                _log(f"Using current morph position: {self.path_parser.current_morph_position}")
+                # Use waveform based on path configuration
+                if 'waveform' in self.path_parser.fixed_values:
+                    waveform = create_waveform(self.path_parser.fixed_values['waveform'])
+                    _log(f"Using fixed base waveform: {self.path_parser.fixed_values['waveform']}")
+                elif self.base_morph:
+                    # Convert current morph position to MIDI value
+                    midi_value = int(self.path_parser.current_morph_position * 127)
+                    waveform = self.base_morph.get_waveform(midi_value)
+                    _log(f"Using pre-calculated base morphed waveform at position {self.path_parser.current_morph_position}")
+                else:
+                    waveform = self.global_waveform
                 
-                # Create ring waveform based on current ring morph position
-                if self.path_parser.ring_waveform_sequence:
-                    ring_waveform = create_morphed_waveform(
-                        self.path_parser.current_ring_morph_position,
-                        self.path_parser.ring_waveform_sequence
-                    )
-                    _log(f"Using current ring morph position: {self.path_parser.current_ring_morph_position}")
+                # Create ring waveform based on path configuration
+                if self.path_parser.current_ring_params['waveform']:
+                    ring_waveform = create_waveform(self.path_parser.current_ring_params['waveform'])
+                    _log(f"Using fixed ring waveform: {self.path_parser.current_ring_params['waveform']}")
+                elif self.ring_morph:
+                    # Convert current ring morph position to MIDI value
+                    midi_value = int(self.path_parser.current_ring_morph_position * 127)
+                    ring_waveform = self.ring_morph.get_waveform(midi_value)
+                    _log(f"Using pre-calculated ring morphed waveform at position {self.path_parser.current_ring_morph_position}")
                 else:
                     ring_waveform = self.global_ring_waveform
                 
@@ -113,25 +122,31 @@ class Synthesizer:
                     path_info = self.path_parser.midi_mappings.get(cc_trigger)
                     if path_info:
                         original_path, param_name = path_info
-                        value = self.path_parser.convert_value(param_name, msg.value, True)
-                        _log("Updated {} = {}".format(original_path, value))
                         
                         # Parse path to determine parameter type
                         path_parts = original_path.split('/')
+                        
+                        # For ring waveform morph, use ring_morph parameter
+                        if (path_parts[0] == 'oscillator' and 
+                            path_parts[1] == 'ring' and 
+                            path_parts[2] == 'waveform' and 
+                            path_parts[3] == 'morph'):
+                            param_name = 'ring_morph'
+                            
+                        value = self.path_parser.convert_value(param_name, msg.value, True)
+                        _log("Updated {} = {}".format(original_path, value))
                         
                         # Handle base waveform morph
                         if (path_parts[0] == 'oscillator' and 
                             path_parts[1] == 'waveform' and 
                             path_parts[2] == 'morph'):
                             self.path_parser.current_morph_position = value
-                            new_waveform = create_morphed_waveform(
-                                value,
-                                self.path_parser.waveform_sequence
-                            )
-                            _log(f"Created new base morphed waveform at position {value}")
-                            for voice in self.voice_pool.voices:
-                                if voice.active_note:
-                                    voice.update_active_note(self.synth, waveform=new_waveform)
+                            if self.base_morph:
+                                new_waveform = self.base_morph.get_waveform(msg.value)
+                                _log(f"Using pre-calculated base morphed waveform at position {value}")
+                                for voice in self.voice_pool.voices:
+                                    if voice.active_note:
+                                        voice.update_active_note(self.synth, waveform=new_waveform)
                                     
                         # Handle ring waveform morph
                         elif (path_parts[0] == 'oscillator' and 
@@ -139,14 +154,12 @@ class Synthesizer:
                               path_parts[2] == 'waveform' and 
                               path_parts[3] == 'morph'):
                             self.path_parser.current_ring_morph_position = value
-                            new_ring_waveform = create_morphed_waveform(
-                                value,
-                                self.path_parser.ring_waveform_sequence
-                            )
-                            _log(f"Created new ring morphed waveform at position {value}")
-                            for voice in self.voice_pool.voices:
-                                if voice.active_note:
-                                    voice.update_active_note(self.synth, ring_waveform=new_ring_waveform)
+                            if self.ring_morph:
+                                new_ring_waveform = self.ring_morph.get_waveform(msg.value)
+                                _log(f"Using pre-calculated ring morphed waveform at position {value}")
+                                for voice in self.voice_pool.voices:
+                                    if voice.active_note:
+                                        voice.update_active_note(self.synth, ring_waveform=new_ring_waveform)
                                     
                         # Handle ring frequency
                         elif (path_parts[0] == 'oscillator' and 
@@ -225,25 +238,34 @@ class Synthesizer:
     def _setup_synthio(self):
         """Initialize or update synthio synthesizer based on global settings."""
         try:
-            # Create initial waveform based on morph position
-            self.global_waveform = create_morphed_waveform(
-                self.path_parser.current_morph_position,
-                self.path_parser.waveform_sequence
-            )
-            _log(f"Created initial morphed waveform at position {self.path_parser.current_morph_position}")
+            # Base oscillator waveform should be determined by path
+            if 'waveform' in self.path_parser.fixed_values:
+                # Path specified a fixed waveform (oscillator/waveform/global/TYPE/note_on)
+                waveform_type = self.path_parser.fixed_values['waveform']
+                self.global_waveform = create_waveform(waveform_type)
+                self.base_morph = None
+                _log(f"Created fixed base waveform: {waveform_type}")
+            elif self.path_parser.waveform_sequence:
+                # Path specified morphing (oscillator/waveform/morph/global/TYPE-TYPE-TYPE/ccX)
+                self.base_morph = WaveformMorph('base', self.path_parser.waveform_sequence)
+                self.global_waveform = self.base_morph.get_waveform(0)  # Start at first waveform
+                _log(f"Created base morph table: {'-'.join(self.path_parser.waveform_sequence)}")
+            else:
+                _log("No base oscillator waveform path found", is_error=True)
+                raise ValueError("No base oscillator waveform path found")
             
-            # Create ring modulation waveform if specified
+            # Ring oscillator waveform should be determined by path
             if self.path_parser.current_ring_params['waveform']:
-                if self.path_parser.ring_waveform_sequence:
-                    self.global_ring_waveform = create_morphed_waveform(
-                        self.path_parser.current_ring_morph_position,  # Use ring-specific position
-                        self.path_parser.ring_waveform_sequence
-                    )
-                    _log(f"Created morphed ring mod waveform at position {self.path_parser.current_ring_morph_position}")
-                else:
-                    self.global_ring_waveform = create_waveform(
-                        self.path_parser.current_ring_params['waveform'])
-                    _log(f"Created ring mod waveform: {self.path_parser.current_ring_params['waveform']}")
+                # Path specified a fixed waveform (oscillator/ring/waveform/global/TYPE/note_on)
+                ring_type = self.path_parser.current_ring_params['waveform']
+                self.global_ring_waveform = create_waveform(ring_type)
+                self.ring_morph = None
+                _log(f"Created fixed ring waveform: {ring_type}")
+            elif self.path_parser.ring_waveform_sequence:
+                # Path specified morphing (oscillator/ring/waveform/morph/global/TYPE-TYPE-TYPE/ccX)
+                self.ring_morph = WaveformMorph('ring', self.path_parser.ring_waveform_sequence)
+                self.global_ring_waveform = self.ring_morph.get_waveform(0)  # Start at first waveform
+                _log(f"Created ring morph table: {'-'.join(self.path_parser.ring_waveform_sequence)}")
             
             # Create initial envelope
             initial_envelope = self.path_parser.update_envelope()

@@ -43,6 +43,35 @@ def _log(message, is_error=False):
     else:
         print(f"{color}{LOG_INST} {message}{LOG_RESET}", file=sys.stderr)
 
+PUSH_PATHS = '''
+note/press/per_key/note_on
+note/release/per_key/note_off
+oscillator/frequency/per_key/note_number/note_on
+oscillator/waveform/morph/global/sine-triangle-square-saw/cc72
+
+'''
+
+PLAY_PATHS = '''
+note/press/per_key/note_on
+note/release/per_key/note_off
+
+oscillator/frequency/per_key/note_number/note_on
+oscillator/waveform/global/triangle/note_on
+
+oscillator/ring/frequency/global/20-2000/cc2
+oscillator/ring/waveform/morph/global/sine-triangle-square-saw/cc4
+oscillator/ring/bend/global/n12-12/cc6
+
+filter/band_pass/resonance/global/0.1-2.0/cc3
+filter/band_pass/frequency/global/20-20000/cc5
+
+amplifier/envelope/attack_level/global/0.001-1/cc11
+amplifier/envelope/attack_time/global/0.001-0.5/cc13
+amplifier/envelope/decay_time/global/0.001-0.25/cc15
+amplifier/envelope/sustain_level/global/0.001-1/cc17
+amplifier/envelope/release_time/global/0.001-1/cc19
+'''
+
 WAVY_PATHS = '''
 note/press/per_key/note_on
 note/release/per_key/note_off
