@@ -328,7 +328,7 @@ class Synthesizer:
             _log("Configuration complete - signaling ready")
             self.ready_callback()
 
-    def update_instrument(self, paths):
+    def update_instrument(self, paths, config_name=None):
         """Update instrument configuration."""
         _log("Updating instrument configuration...")
         _log("----------------------------------------")
@@ -340,7 +340,7 @@ class Synthesizer:
                 _log("Released all voices during reconfiguration")
             
             # Parse paths using PathParser
-            self.path_parser.parse_paths(paths)
+            self.path_parser.parse_paths(paths, config_name)
             
             # Initialize or update synthio
             self._setup_synthio()

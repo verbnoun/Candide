@@ -69,23 +69,22 @@ class PathParser:
             'bend': 0,       # Default to no bend
             'waveform': None # Will be set during parsing
         }
-        self.current_envelope_params = {
-            'attack_time': 0.1,
-            'decay_time': 0.05,
-            'release_time': 0.2,
-            'attack_level': 1.0,
-            'sustain_level': 0.8
-        }
+        # Initialize envelope params as empty - will only be populated if envelope paths exist
+        self.current_envelope_params = {}
         # Keep morph state separate and clear
         self.current_morph_position = 0.0  # Base waveform morph (CC72)
         self.current_ring_morph_position = 0.0  # Ring waveform morph (CC76)
         self.waveform_sequence = None  # Base waveform sequence
         self.ring_waveform_sequence = None  # Ring waveform sequence
+        self.has_envelope_paths = False  # Track if envelope paths are present
         
-    def parse_paths(self, paths):
+    def parse_paths(self, paths, config_name=None):
         """Parse instrument paths to extract parameters and mappings."""
         _log("Parsing instrument paths...")
         _log("----------------------------------------")
+        
+        if config_name:
+            _log(f"Using paths configuration: {config_name}")
         
         try:
             self._reset()
@@ -106,7 +105,7 @@ class PathParser:
                     
             # Validate required paths are present
             if not self.enabled_messages:
-                raise ValueError("No MIDI messages enabled in paths")
+                raise ValueError("No MIDI message types enabled in paths")
                 
             _log("Path parsing complete:")
             _log(f"Global parameters: {list(self.global_ranges.keys())}")
@@ -116,7 +115,9 @@ class PathParser:
             _log(f"Enabled CCs: {self.enabled_ccs}")
             _log(f"Filter type: {self.filter_type}")
             _log(f"Ring mod params: {self.current_ring_params}")
-            _log(f"Envelope params: {self.current_envelope_params}")
+            _log(f"Has envelope paths: {self.has_envelope_paths}")
+            if self.has_envelope_paths:
+                _log(f"Envelope params: {self.current_envelope_params}")
             if self.waveform_sequence:
                 _log(f"Waveform morph sequence: {'-'.join(self.waveform_sequence)}")
             if self.ring_waveform_sequence:
@@ -146,17 +147,13 @@ class PathParser:
             'bend': 0,       # Default to no bend
             'waveform': None # Will be set during parsing
         }
-        self.current_envelope_params = {
-            'attack_time': 0.1,
-            'decay_time': 0.05,
-            'release_time': 0.2,
-            'attack_level': 1.0,
-            'sustain_level': 0.8
-        }
+        # Reset envelope params to empty
+        self.current_envelope_params = {}
         self.current_morph_position = 0.0
         self.current_ring_morph_position = 0.0
         self.waveform_sequence = None
         self.ring_waveform_sequence = None
+        self.has_envelope_paths = False
 
     def _parse_range(self, range_str):
         """Parse a range string, handling negative numbers with 'n' prefix."""
@@ -192,31 +189,44 @@ class PathParser:
                 self.filter_type = parts[1]
                 _log(f"Found filter type: {self.filter_type}")
 
-        # Check for waveform morph configuration
-        if (parts[0] == 'oscillator' and len(parts) >= 4 and 
-            parts[1] == 'waveform' and parts[2] == 'morph'):
-            _log("Found waveform morph configuration")
-            # Extract waveform sequence from the path
-            if len(parts) >= 5 and '-' in parts[4]:
-                self.waveform_sequence = parts[4].split('-')
-                _log(f"Found waveform sequence: {self.waveform_sequence}")
-                # Create range for morph parameter (0-1)
-                self.global_ranges['morph'] = MidiRange('morph', 0, 1)
+        # Check for envelope paths
+        if parts[0] == 'amplifier' and len(parts) >= 2 and parts[1] == 'envelope':
+            self.has_envelope_paths = True
+            _log("Found envelope path")
 
-        # Check for ring modulation configuration
+        # Handle base oscillator waveform configuration
+        if parts[0] == 'oscillator' and len(parts) >= 2:
+            if parts[1] == 'waveform':
+                # Check if this is a morphing waveform
+                if len(parts) >= 3 and parts[2] == 'morph':
+                    _log("Found base waveform morph configuration")
+                    if len(parts) >= 5 and '-' in parts[4]:
+                        self.waveform_sequence = parts[4].split('-')
+                        _log(f"Found waveform sequence: {self.waveform_sequence}")
+                        self.global_ranges['morph'] = MidiRange('morph', 0, 1)
+                # Fixed waveform
+                elif len(parts) >= 4 and parts[2] == 'global':
+                    waveform_type = parts[3]
+                    if waveform_type in ('triangle', 'sine', 'square', 'saw'):
+                        self.fixed_values['waveform'] = waveform_type
+                        _log(f"Found fixed base waveform: {waveform_type}")
+
+        # Handle ring modulation configuration
         if parts[0] == 'oscillator' and len(parts) >= 2 and parts[1] == 'ring':
             if len(parts) >= 3:
                 if parts[2] == 'waveform':
-                    if parts[3] == 'morph':
-                        # Extract ring waveform sequence
+                    # Check if this is a morphing ring waveform
+                    if len(parts) >= 4 and parts[3] == 'morph':
                         if len(parts) >= 6 and '-' in parts[5]:
                             self.ring_waveform_sequence = parts[5].split('-')
                             _log(f"Found ring waveform sequence: {self.ring_waveform_sequence}")
-                            # Create separate range for ring morph
                             self.global_ranges['ring_morph'] = MidiRange('ring_morph', 0, 1)
-                    elif len(parts) >= 5:
-                        self.current_ring_params['waveform'] = parts[4]
-                        _log(f"Found ring mod waveform: {parts[4]}")
+                    # Fixed ring waveform
+                    elif len(parts) >= 5 and parts[3] == 'global':
+                        waveform_type = parts[4]
+                        if waveform_type in ('triangle', 'sine', 'square', 'saw'):
+                            self.current_ring_params['waveform'] = waveform_type
+                            _log(f"Found fixed ring waveform: {waveform_type}")
                         
         # Find parameter scope and name
         scope = None
@@ -233,8 +243,6 @@ class PathParser:
                     next_part = parts[i+1]
                     if '-' in next_part and not any(w in next_part for w in ('sine', 'triangle', 'square', 'saw')):
                         range_str = next_part
-                    elif param_name == 'waveform' and next_part in ('triangle', 'sine', 'square', 'saw'):
-                        self.fixed_values[param_name] = next_part
                         
                 # Look for trigger type
                 for p in parts[i:]:
@@ -291,6 +299,19 @@ class PathParser:
 
     def update_envelope(self):
         """Create a new envelope with current parameters."""
+        # Only create envelope if envelope paths are present
+        if not self.has_envelope_paths:
+            _log("No envelope paths found - using instant on/off envelope")
+            return None
+            
+        # Ensure all required envelope parameters are present
+        required_params = ['attack_time', 'decay_time', 'release_time', 'attack_level', 'sustain_level']
+        missing_params = [p for p in required_params if p not in self.current_envelope_params]
+        if missing_params:
+            _log(f"Missing required envelope parameters: {missing_params}", is_error=True)
+            return None
+            
+        _log("Creating envelope with params: {}".format(self.current_envelope_params))
         return synthio.Envelope(
             attack_time=self.current_envelope_params['attack_time'],
             decay_time=self.current_envelope_params['decay_time'],

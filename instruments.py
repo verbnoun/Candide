@@ -43,6 +43,36 @@ def _log(message, is_error=False):
     else:
         print(f"{color}{LOG_INST} {message}{LOG_RESET}", file=sys.stderr)
 
+NOTE_MINIMUM_PATHS = '''
+note/press/per_key/note_on
+note/release/per_key/note_off
+oscillator/frequency/per_key/note_number/note_on
+oscillator/waveform/global/square/note_on
+'''
+
+FILTER_MINIMUM_PATHS = '''
+note/press/per_key/note_on
+note/release/per_key/note_off
+oscillator/frequency/per_key/note_number/note_on
+oscillator/waveform/global/saw/note_on
+
+filter/high_pass/resonance/global/0.1-2.0/cc71
+filter/high_pass/frequency/global/20-20000/cc70
+'''
+
+ENVELOPE_MINIMUM_PATHS = '''
+note/press/per_key/note_on
+note/release/per_key/note_off
+oscillator/frequency/per_key/note_number/note_on
+oscillator/waveform/morph/global/sine-triangle-square-saw/cc2
+
+amplifier/envelope/attack_level/global/0.001-1/cc85
+amplifier/envelope/attack_time/global/0.001-0.5/cc73
+amplifier/envelope/decay_time/global/0.001-0.25/cc75
+amplifier/envelope/sustain_level/global/0.001-1/cc66
+amplifier/envelope/release_time/global/0.001-1/cc72
+'''
+
 PUSH_PATHS = '''
 note/press/per_key/note_on
 note/release/per_key/note_off
@@ -141,35 +171,6 @@ lfo/phase_offset/tremolo_lfo/global/0-1/cc105
 lfo/once/tremolo_lfo/global/0-1/cc106
 lfo/interpolate/tremolo_lfo/global/0-1/cc107
 '''
-NOTE_MINIMUM_PATHS = '''
-note/press/per_key/note_on
-note/release/per_key/note_off
-oscillator/frequency/per_key/note_number/note_on
-oscillator/waveform/global/triangle/note_on
-'''
-
-FILTER_MINIMUM_PATHS = '''
-note/press/per_key/note_on
-note/release/per_key/note_off
-oscillator/frequency/per_key/note_number/note_on
-oscillator/waveform/global/saw/note_on
-
-filter/high_pass/resonance/global/0.1-2.0/cc71
-filter/high_pass/frequency/global/20-20000/cc70
-'''
-
-ENVELOPE_MINIMUM_PATHS = '''
-note/press/per_key/note_on
-note/release/per_key/note_off
-oscillator/frequency/per_key/note_number/note_on
-oscillator/waveform/global/sine/note_on
-
-amplifier/envelope/attack_level/global/0.001-1/cc85
-amplifier/envelope/attack_time/global/0.001-0.5/cc73
-amplifier/envelope/decay_time/global/0.001-0.25/cc75
-amplifier/envelope/sustain_level/global/0.001-1/cc66
-amplifier/envelope/release_time/global/0.001-1/cc72
-'''
 
 class InstrumentManager:
     def __init__(self):
@@ -210,7 +211,7 @@ class InstrumentManager:
                 instrument_name = name[:-6].lower()
                 paths = getattr(current_module, name)
                 if isinstance(paths, str):
-                    self.instruments[instrument_name] = paths
+                    self.instruments[instrument_name] = (name, paths)  # Store both name and paths
                     self.instrument_order.append(instrument_name)
         
         if not self.instruments:
@@ -224,7 +225,7 @@ class InstrumentManager:
 
     def get_current_cc_configs(self):
         """Get all CC numbers and parameter names for the current instrument."""
-        paths = self.get_current_config()
+        config_name, paths = self.instruments.get(self.current_instrument, (None, None))
         if not paths:
             return []
             
@@ -274,12 +275,12 @@ class InstrumentManager:
             
         _log(f"Setting instrument to: {instrument_name}")
         self.current_instrument = instrument_name
-        paths = self.get_current_config()
+        config_name, paths = self.instruments[instrument_name]
 
         # Update synthesizer configuration
         if self.synthesizer:
             _log("Updating synthesizer configuration")
-            self.synthesizer.update_instrument(paths)
+            self.synthesizer.update_instrument(paths, config_name)  # Pass config_name to update_instrument
             # Synthesizer will signal ready to connection manager
             return True
             
@@ -287,7 +288,7 @@ class InstrumentManager:
 
     def get_current_config(self):
         """Get the current instrument's configuration paths."""
-        return self.instruments.get(self.current_instrument)
+        return self.instruments.get(self.current_instrument, (None, None))[1]
 
     def get_available_instruments(self):
         """Get list of available instrument names in order."""

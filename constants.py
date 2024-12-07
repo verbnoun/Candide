@@ -23,7 +23,7 @@ LOG_SYNTH = "[SYNTH  ]"
 LOG_UART = "[UART   ]"
 LOG_MIDI = "[MIDI   ]"
 LOG_MODU = "[MODU   ]"
-LOG_PATH = "[PATHR   ]"
+LOG_PATH = "[PATHR  ]"
 
 # Logging enable flags
 CODE_LOG = True
@@ -36,6 +36,10 @@ SYNTHESIZER_LOG = True
 UART_LOG = False
 HEARTBEAT_DEBUG = False
 PATH_LOG = True
+
+# Waveform sample sizes
+STATIC_WAVEFORM_SAMPLES = 512   # Sample size for static waveforms
+MORPHED_WAVEFORM_SAMPLES = 512  # Sample size for morphed waveforms
 
 ADC_MAX = 65535
 ADC_MIN = 1
