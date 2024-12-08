@@ -4,19 +4,18 @@ import synthio
 import sys
 import array
 from constants import (
-    LOG_PATH, LOG_GREEN, LOG_RED, LOG_RESET,
-    PATH_LOG
+    LOG_ROUTE, LOG_GREEN, LOG_RED, LOG_RESET
 )
 
 def _log(message, is_error=False):
     """Enhanced logging with error support."""
-    if not PATH_LOG:
+    if not LOG_ROUTE:
         return
     color = LOG_RED if is_error else LOG_GREEN
     if is_error:
-        print("{}{} [ERROR] {}{}".format(color, LOG_PATH, message, LOG_RESET), file=sys.stderr)
+        print("{}{} [ERROR] {}{}".format(color, LOG_ROUTE, message, LOG_RESET), file=sys.stderr)
     else:
-        print("{}{} {}{}".format(color, LOG_PATH, message, LOG_RESET), file=sys.stderr)
+        print("{}{} {}{}".format(color, LOG_ROUTE, message, LOG_RESET), file=sys.stderr)
 
 class MidiRange:
     """Handles parameter range conversion and lookup table generation."""

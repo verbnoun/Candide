@@ -23,7 +23,7 @@ LOG_SYNTH = "[SYNTH  ]"
 LOG_UART = "[UART   ]"
 LOG_MIDI = "[MIDI   ]"
 LOG_MODU = "[MODU   ]"
-LOG_PATH = "[PATHR  ]"
+LOG_ROUTE = "[ROUTER ]"
 
 # Logging enable flags
 CODE_LOG = True

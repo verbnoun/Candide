@@ -1,7 +1,7 @@
 """High-level synthesizer coordination module."""
 
 from modules import VoicePool, create_waveform, create_morphed_waveform, WaveformMorph
-from pather import PathParser
+from router import PathParser
 import synthio
 import sys
 import time
