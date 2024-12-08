@@ -43,6 +43,37 @@ class MidiHandler:
         self.path_parser = path_parser
         self.subscription = None
 
+    def handle_message(self, msg, synth):
+        """Log and route incoming MIDI messages."""
+        # Log received MIDI message
+        if msg == 'noteon':
+            _log("Received MIDI note-on: ch={} note={} vel={}".format(
+                msg.channel, msg.note, msg.velocity))
+        elif msg == 'noteoff':
+            _log("Received MIDI note-off: ch={} note={}".format(
+                msg.channel, msg.note))
+        elif msg == 'cc':
+            _log("Received MIDI CC: ch={} cc={} val={}".format(
+                msg.channel, msg.control, msg.value))
+        elif msg == 'pitchbend':
+            _log("Received MIDI pitch bend: ch={} val={}".format(
+                msg.channel, msg.pitch_bend))
+        elif msg == 'channelpressure':
+            _log("Received MIDI pressure: ch={} val={}".format(
+                msg.channel, msg.pressure))
+
+        # Route message to appropriate handler
+        if msg == 'noteon' and msg.velocity > 0:
+            self.handle_note_on(msg, synth)
+        elif msg == 'noteoff' or (msg == 'noteon' and msg.velocity == 0):
+            self.handle_note_off(msg, synth)
+        elif msg == 'cc':
+            self.handle_cc(msg, synth)
+        elif msg == 'pitchbend':
+            self.handle_pitch_bend(msg, synth)
+        elif msg == 'channelpressure':
+            self.handle_pressure(msg, synth)
+
     def handle_note_on(self, msg, synth):
         _log("Targeting {}.{} with note-on".format(msg.note, msg.channel))
         
@@ -81,6 +112,12 @@ class MidiHandler:
         
         self.voice_pool.press_note(msg.note, msg.channel, synth, **note_params)
 
+    def handle_note_off(self, msg, synth):
+        _log("Targeting {}.{} with note-off".format(msg.note, msg.channel))
+        voice = self.voice_pool.release_note(msg.note, synth)
+        if not voice:
+            _log("No voice found at {}.{}".format(msg.note, msg.channel), is_error=True)
+
     def handle_cc(self, msg, synth):
         cc_trigger = f"cc{msg.control}"
         if msg.control in self.path_parser.enabled_ccs:
@@ -99,6 +136,29 @@ class MidiHandler:
                 _log("Updated {} = {}".format(original_path, value))
                 
                 self._handle_parameter_update(path_parts, param_name, value, msg.value, synth)
+
+    def handle_pitch_bend(self, msg, synth):
+        if 'pitchbend' in self.path_parser.enabled_messages:
+            midi_value = (msg.pitch_bend >> 7) & 0x7F
+            voice = self.voice_pool.get_voice_by_channel(msg.channel)
+            if voice and voice.active_note:
+                for param_name, range_obj in self.path_parser.key_ranges.items():
+                    if 'pitch_bend' in self.path_parser.midi_mappings:
+                        value = range_obj.convert(midi_value)
+                        if param_name == 'bend':
+                            voice.update_active_note(synth, bend=value)
+                        elif param_name == 'panning':
+                            voice.update_active_note(synth, panning=value)
+
+    def handle_pressure(self, msg, synth):
+        if 'pressure' in self.path_parser.enabled_messages:
+            voice = self.voice_pool.get_voice_by_channel(msg.channel)
+            if voice and voice.active_note:
+                for param_name, range_obj in self.path_parser.key_ranges.items():
+                    if 'pressure' in self.path_parser.midi_mappings:
+                        value = range_obj.convert(msg.pressure)
+                        if param_name == 'amplitude':
+                            voice.update_active_note(synth, amplitude=value)
 
     def _handle_parameter_update(self, path_parts, param_name, value, midi_value, synth):
         """Handle updates to various parameter types."""
@@ -202,13 +262,8 @@ class Synthesizer:
                 _log("No synthesizer available", is_error=True)
                 return
 
-            if msg == 'noteon' and msg.velocity > 0 and 'noteon' in self.path_parser.enabled_messages:
-                self.midi_handler.handle_note_on(msg, self.synth)
-            elif ((msg == 'noteoff' or (msg == 'noteon' and msg.velocity == 0)) and 
-                  'noteoff' in self.path_parser.enabled_messages):
-                self.voice_pool.release_note(msg.note, self.synth)
-            elif msg == 'cc' and 'cc' in self.path_parser.enabled_messages:
-                self.midi_handler.handle_cc(msg, self.synth)
+            if msg.type in self.path_parser.enabled_messages:
+                self.midi_handler.handle_message(msg, self.synth)
 
         except Exception as e:
             _log("Error handling MIDI message: {}".format(str(e)), is_error=True)
@@ -219,6 +274,8 @@ class Synthesizer:
         try:
             self._configure_waveforms()
             initial_envelope = self.path_parser.update_envelope()
+            _log("Created initial envelope with params: {}".format(
+                self.path_parser.current_envelope_params))
             
             self.synth = synthio.Synthesizer(
                 sample_rate=SAMPLE_RATE,
@@ -228,6 +285,9 @@ class Synthesizer:
             
             if self.audio_system and self.audio_system.mixer:
                 self.audio_system.mixer.voice[0].play(self.synth)
+                _log("Connected synthesizer to audio mixer")
+                
+            _log("Synthio initialization complete")
                 
         except Exception as e:
             _log(f"Failed to initialize synthio: {str(e)}", is_error=True)
@@ -240,10 +300,13 @@ class Synthesizer:
             waveform_type = self.path_parser.fixed_values['waveform']
             self.state.global_waveform = create_waveform(waveform_type)
             self.state.base_morph = None
+            _log(f"Created fixed base waveform: {waveform_type}")
         elif self.path_parser.waveform_sequence:
             self.state.base_morph = WaveformMorph('base', self.path_parser.waveform_sequence)
             self.state.global_waveform = self.state.base_morph.get_waveform(0)
+            _log(f"Created base morph table: {'-'.join(self.path_parser.waveform_sequence)}")
         else:
+            _log("No base oscillator waveform path found", is_error=True)
             raise ValueError("No base oscillator waveform path found")
             
         # Configure ring waveform
@@ -251,15 +314,19 @@ class Synthesizer:
             ring_type = self.path_parser.current_ring_params['waveform']
             self.state.global_ring_waveform = create_waveform(ring_type)
             self.state.ring_morph = None
+            _log(f"Created fixed ring waveform: {ring_type}")
         elif self.path_parser.ring_waveform_sequence:
             self.state.ring_morph = WaveformMorph('ring', self.path_parser.ring_waveform_sequence)
             self.state.global_ring_waveform = self.state.ring_morph.get_waveform(0)
+            _log(f"Created ring morph table: {'-'.join(self.path_parser.ring_waveform_sequence)}")
 
     def _setup_midi_handlers(self):
         """Set up MIDI message handlers."""
         if self.midi_handler.subscription:
             self.midi_interface.unsubscribe(self.midi_handler.subscription)
             self.midi_handler.subscription = None
+            
+        _log("Setting up MIDI handlers...")
             
         message_types = [msg_type for msg_type in 
                         ('noteon', 'noteoff', 'cc', 'pitchbend', 'channelpressure')
@@ -273,23 +340,33 @@ class Synthesizer:
             message_types=message_types,
             cc_numbers=self.path_parser.enabled_ccs if 'cc' in self.path_parser.enabled_messages else None
         )
+        _log(f"MIDI handlers configured for: {self.path_parser.enabled_messages}")
         
         if self.ready_callback:
+            _log("Configuration complete - signaling ready")
             self.ready_callback()
 
     def register_ready_callback(self, callback):
         """Register a callback to be notified when synth is ready."""
         self.ready_callback = callback
+        _log("Ready callback registered")
 
     def update_instrument(self, paths, config_name=None):
         """Update instrument configuration."""
+        _log("Updating instrument configuration...")
+        _log("----------------------------------------")
+        
         try:
             if self.voice_pool:
                 self.voice_pool.release_all(self.synth)
+                _log("Released all voices during reconfiguration")
             
             self.path_parser.parse_paths(paths, config_name)
             self._setup_synthio()
             self._setup_midi_handlers()
+            
+            _log("----------------------------------------")
+            _log("Instrument update complete")
             
         except Exception as e:
             _log(f"Failed to update instrument: {str(e)}", is_error=True)
