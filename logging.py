@@ -2,64 +2,70 @@
 
 import sys
 
-# ANSI Colors
-COLOR_WHITE = '\033[37m'
-COLOR_CYAN = '\033[96m'
-COLOR_MAGENTA = '\033[95m'
-COLOR_YELLOW = '\033[93m'
-COLOR_GREEN = '\033[92m'
-COLOR_BLUE = '\033[94m'
-COLOR_ORANGE = '\033[38;5;215m'
-COLOR_LIGHT_CYAN = '\033[36m'
-COLOR_LIGHT_GREEN = '\033[32m'
-COLOR_PURPLE = '\033[35m'
-COLOR_RED = '\033[31m'
+# ANSI Colors - Using bright variants for dark mode visibility, avoiding reds
+COLOR_WHITE = '\033[97m'        # Bright White for code.py
+COLOR_ORANGE = '\033[38;5;215m' # Bright Orange
+COLOR_YELLOW = '\033[93m'       # Bright Yellow
+COLOR_CHARTREUSE = '\033[38;5;226m' # Bright Chartreuse
+COLOR_LIME = '\033[38;5;118m'   # Bright Lime
+COLOR_GREEN = '\033[92m'        # Bright Green
+COLOR_SPRING = '\033[38;5;121m' # Bright Spring Green
+COLOR_CYAN = '\033[96m'         # Bright Cyan
+COLOR_AZURE = '\033[38;5;117m'  # Bright Azure
+COLOR_BLUE = '\033[94m'         # Bright Blue
+COLOR_INDIGO = '\033[38;5;147m' # Bright Indigo
+COLOR_VIOLET = '\033[95m'       # Bright Violet
+COLOR_MAGENTA = '\033[38;5;213m' # Bright Magenta
+COLOR_ERROR = '\033[30;41m'     # Black text on red background for errors
 COLOR_RESET = '\033[0m'
 
-# Module Tags (7 chars)
-TAG_CANDIDE = 'CANDIDE'
-TAG_CONNECT = 'CONECT '
-TAG_HARD = 'HARD   '
-TAG_INST = 'INST   '
-TAG_SYNTH = 'SYNTH  '
-TAG_UART = 'UART   '
-TAG_MIDI = 'MIDI   '
-TAG_MODU = 'MODU   '
-TAG_ROUTE = 'ROUTE  '
-TAG_VOICE = 'VOICE  '
-TAG_POOL = 'POOL   '
-TAG_PATCH = 'PATCH  '
+# Module Tags (7 chars) - Alphabetically ordered
+TAG_CANDIDE = 'CANDIDE'  # code.py
+TAG_CONNECT = 'CONECT '  # connection.py
+TAG_CONST = 'CONST  '    # constants.py
+TAG_HARD = 'HARD   '     # hardware.py
+TAG_INST = 'INST   '     # instruments.py
+TAG_MIDI = 'MIDI   '     # midi.py
+TAG_MODU = 'MODU   '     # modules.py
+TAG_PATCH = 'PATCH  '    # patcher.py
+TAG_POOL = 'POOL   '     # pool.py
+TAG_ROUTE = 'ROUTE  '    # router.py
+TAG_SYNTH = 'SYNTH  '    # synthesizer.py
+TAG_UART = 'UART   '     # uart.py
+TAG_VOICE = 'VOICE  '    # voice.py
 
-# Map tags to colors
+# Map tags to colors - Alphabetically ordered by file name tag
 TAG_COLORS = {
-    TAG_CANDIDE: COLOR_WHITE,
-    TAG_CONNECT: COLOR_CYAN,
-    TAG_HARD: COLOR_MAGENTA,
-    TAG_INST: COLOR_YELLOW,
-    TAG_SYNTH: COLOR_GREEN,
-    TAG_UART: COLOR_BLUE,
-    TAG_MIDI: COLOR_ORANGE,
-    TAG_MODU: COLOR_LIGHT_CYAN,
-    TAG_ROUTE: COLOR_LIGHT_GREEN,
-    TAG_VOICE: COLOR_PURPLE,
-    TAG_POOL: COLOR_YELLOW,
-    TAG_PATCH: COLOR_BLUE,
+    TAG_CANDIDE: COLOR_WHITE,     # code.py
+    TAG_CONNECT: COLOR_ORANGE,    # connection.py
+    TAG_CONST: COLOR_YELLOW,      # constants.py
+    TAG_HARD: COLOR_CHARTREUSE,   # hardware.py
+    TAG_INST: COLOR_LIME,         # instruments.py
+    TAG_MIDI: COLOR_GREEN,        # midi.py
+    TAG_MODU: COLOR_SPRING,       # modules.py
+    TAG_PATCH: COLOR_CYAN,        # patcher.py
+    TAG_POOL: COLOR_AZURE,        # pool.py
+    TAG_ROUTE: COLOR_BLUE,        # router.py
+    TAG_SYNTH: COLOR_INDIGO,      # synthesizer.py
+    TAG_UART: COLOR_VIOLET,       # uart.py
+    TAG_VOICE: COLOR_MAGENTA,     # voice.py
 }
 
-# Enable flags for each module's logging
+# Enable flags for each module's logging - Alphabetically ordered
 LOG_ENABLE = {
     TAG_CANDIDE: True,
-    TAG_CONNECT: False,
-    TAG_HARD: False,
-    TAG_INST: False,
-    TAG_SYNTH: True,
-    TAG_UART: False,
+    TAG_CONNECT: True,
+    TAG_CONST: True,
+    TAG_HARD: True,
+    TAG_INST: True,
     TAG_MIDI: True,
     TAG_MODU: True,
-    TAG_ROUTE: True,
-    TAG_VOICE: True,
-    TAG_POOL: True,
     TAG_PATCH: True,
+    TAG_POOL: True,
+    TAG_ROUTE: True,
+    TAG_SYNTH: True,
+    TAG_UART: True,
+    TAG_VOICE: True,
 }
 
 # Special debug flags
@@ -75,8 +81,12 @@ def log(tag, message, is_error=False, is_heartbeat=False):
         is_error: Whether this is an error message
         is_heartbeat: Whether this is a heartbeat message (special case)
     """
-    # Check if logging is enabled for this tag, with special case for heartbeat
-    if not LOG_ENABLE.get(tag, True) and not (is_heartbeat and HEARTBEAT_DEBUG):
+    # Skip heartbeat messages unless HEARTBEAT_DEBUG is True
+    if is_heartbeat and not HEARTBEAT_DEBUG:
+        return
+        
+    # Check if logging is enabled for this tag
+    if not LOG_ENABLE.get(tag, True):
         return
         
     if len(tag) != 7:
@@ -87,7 +97,7 @@ def log(tag, message, is_error=False, is_heartbeat=False):
     
     # Format the message
     if is_error:
-        print(f"{COLOR_RED}[{tag}] [ERROR] {message}{COLOR_RESET}", file=sys.stderr)
+        print(f"{COLOR_ERROR}[{tag}] [ERROR] {message}{COLOR_RESET}", file=sys.stderr)
     else:
         print(f"{color}[{tag}] {message}{COLOR_RESET}", file=sys.stderr)
 
