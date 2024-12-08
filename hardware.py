@@ -10,24 +10,11 @@ import sys
 import audiobusio
 import audiomixer
 from constants import *
-
-def _log(message, is_error=False):
-    if not HARDWARE_LOG:
-        return
-        
-    if isinstance(message, dict):
-        formatted_message = _format_log_message(message)
-        print(f"{LOG_LIGHT_MAGENTA}{LOG_HARD} {formatted_message}{LOG_RESET}", file=sys.stderr)
-    else:
-        color = LOG_RED if is_error else LOG_LIGHT_MAGENTA
-        if is_error:
-            print(f"{color}{LOG_HARD} [ERROR] {message}{LOG_RESET}", file=sys.stderr)
-        else:
-            print(f"{color}{LOG_HARD} {message}{LOG_RESET}", file=sys.stderr)
+from logging import log, TAG_HARD
 
 class AudioSystem:
     def __init__(self):
-        _log("Initializing AudioSystem")
+        log(TAG_HARD, "Initializing AudioSystem")
         self.audio_out = None
         self.mixer = None
         self.current_volume = 0.5
@@ -53,10 +40,10 @@ class AudioSystem:
             
             self.set_volume(self.current_volume)
             
-            _log("Audio system initialized successfully")
+            log(TAG_HARD, "Audio system initialized successfully")
 
         except Exception as e:
-            _log(f"Audio setup failed: {str(e)}", is_error=True)
+            log(TAG_HARD, f"Audio setup failed: {str(e)}", is_error=True)
             self.cleanup()
             raise
 
@@ -76,10 +63,10 @@ class AudioSystem:
             self.current_volume = volume
             
         except Exception as e:
-            _log(f"Volume update failed: {str(e)}", is_error=True)
+            log(TAG_HARD, f"Volume update failed: {str(e)}", is_error=True)
 
     def cleanup(self):
-        _log("Starting audio system cleanup")
+        log(TAG_HARD, "Starting audio system cleanup")
         try:
             if self.mixer:
                 for voice in self.mixer.voice:
@@ -89,34 +76,31 @@ class AudioSystem:
                 self.audio_out.stop()
                 self.audio_out.deinit()
         except Exception as e:
-            _log(f"Audio cleanup failed: {str(e)}", is_error=True)
+            log(TAG_HARD, f"Audio cleanup failed: {str(e)}", is_error=True)
 
 class BootBeep:
     def play(self):
-        if not HARDWARE_LOG:
-            return
-
         audio_out = None
         try:
             audiobusio.I2SOut(I2S_BIT_CLOCK, I2S_WORD_SELECT, I2S_DATA).deinit()
             audio_out = audiobusio.I2SOut(I2S_BIT_CLOCK, I2S_WORD_SELECT, I2S_DATA)
             
-            _log(f"BootBeep: Parameters: SAMPLE_RATE={SAMPLE_RATE}, AUDIO_CHANNEL_COUNT={AUDIO_CHANNEL_COUNT}")
+            log(TAG_HARD, f"BootBeep: Parameters: SAMPLE_RATE={SAMPLE_RATE}, AUDIO_CHANNEL_COUNT={AUDIO_CHANNEL_COUNT}")
             synth = synthio.Synthesizer(sample_rate=SAMPLE_RATE, channel_count=AUDIO_CHANNEL_COUNT)
             
             audio_out.play(synth)
-            _log("Testing basic hardware audio output...")
+            log(TAG_HARD, "Testing basic hardware audio output...")
             synth.press(64)
             time.sleep(0.05)
             
             synth.release(64)
             time.sleep(0.05)
-            _log("BootBeep: BEEP!")
+            log(TAG_HARD, "BootBeep: BEEP!")
             synth.deinit()
             audio_out.deinit()
             
         except Exception as e:
-            _log(f"BootBeep error: {str(e)}", is_error=True)
+            log(TAG_HARD, f"BootBeep error: {str(e)}", is_error=True)
             if audio_out:
                 audio_out.deinit()
 
@@ -133,7 +117,7 @@ class VolumeManager(HardwareComponent):
         self.pot = analogio.AnalogIn(pin)
         self.last_value = self.pot.value
         self.last_normalized = self.normalize_value(self.last_value)
-        _log(f"Volume pot initialized. Initial raw value: {self.last_value}, normalized: {self.last_normalized:.2f}")
+        log(TAG_HARD, f"Volume pot initialized. Initial raw value: {self.last_value}, normalized: {self.last_normalized:.2f}")
     
     def normalize_value(self, value):
         clamped_value = max(min(value, ADC_MAX), ADC_MIN)
@@ -157,7 +141,6 @@ class VolumeManager(HardwareComponent):
                 normalized_new = self.normalize_value(raw_value)
                 
                 if normalized_new != self.last_normalized:
-                    
                     self.last_value = raw_value
                     self.last_normalized = normalized_new
                     self.is_active = True
@@ -166,7 +149,7 @@ class VolumeManager(HardwareComponent):
             return None
             
         except Exception as e:
-            _log(f"[ERROR] Volume read failed: {str(e)}")
+            log(TAG_HARD, f"Volume read failed: {str(e)}", is_error=True)
             return None
         
     def cleanup(self):
@@ -192,10 +175,7 @@ class EncoderManager(HardwareComponent):
         
         if current_raw_position != self.last_position:
             direction = 1 if current_raw_position > self.last_position else -1
-
-            if HARDWARE_LOG:
-                print(f"Encoder movement: pos={current_raw_position}, last={self.last_position}, dir={direction}")
-            
+            log(TAG_HARD, f"Encoder movement: pos={current_raw_position}, last={self.last_position}, dir={direction}")
             events.append(('instrument_change', direction))
             self.last_position = current_raw_position
         
@@ -209,7 +189,7 @@ class DetectPinManager:
         :param pin: The GPIO pin to monitor.
         :param log_interval: Time interval (in seconds) for periodic logging.
         """
-        _log("Initializing detection pin...")
+        log(TAG_HARD, "Initializing detection pin...")
         
         # Set up the pin
         self.detect_pin = digitalio.DigitalInOut(pin)
@@ -222,7 +202,7 @@ class DetectPinManager:
         self.log_interval = log_interval  # Log periodically
         
         # Initial log for verification
-        _log(f"Detection pin initialized (initial state: {'HIGH' if self.last_state else 'LOW'})")
+        log(TAG_HARD, f"Detection pin initialized (initial state: {'HIGH' if self.last_state else 'LOW'})")
 
     def is_detected(self):
         """
@@ -234,7 +214,7 @@ class DetectPinManager:
         
         # Log state changes
         if current_state != self.last_state:
-            _log(f"State changed: {'HIGH' if current_state else 'LOW'}")
+            log(TAG_HARD, f"State changed: {'HIGH' if current_state else 'LOW'}")
             self.last_state = current_state
         
         # Periodic logging for monitoring
@@ -250,13 +230,13 @@ class DetectPinManager:
         """
         if self.detect_pin:
             self.detect_pin.deinit()
-            _log("Detection pin deinitialized.")
+            log(TAG_HARD, "Detection pin deinitialized.")
 
 class HardwareManager:
     def __init__(self):
-        _log("Starting HardwareManager initialization...")
+        log(TAG_HARD, "Starting HardwareManager initialization...")
         
-        _log("Running BootBeep test...")
+        log(TAG_HARD, "Running BootBeep test...")
         BootBeep().play()
         
         self.volume = None
@@ -269,25 +249,25 @@ class HardwareManager:
 
     def _initialize_components(self):
         try:
-            _log("Initializing volume manager...")
+            log(TAG_HARD, "Initializing volume manager...")
             self.volume = VolumeManager(VOLUME_POT)
             
-            _log("Initializing encoder manager...")
+            log(TAG_HARD, "Initializing encoder manager...")
             self.encoder = EncoderManager(INSTRUMENT_ENC_CLK, INSTRUMENT_ENC_DT)
             
-            _log("Initializing detect pin manager...")
+            log(TAG_HARD, "Initializing detect pin manager...")
             self.detect = DetectPinManager(DETECT_PIN)
             
-            _log("Hardware components initialized successfully")
+            log(TAG_HARD, "Hardware components initialized successfully")
         except Exception as e:
-            print(f"[ERROR] Hardware initialization failed: {str(e)}")
+            log(TAG_HARD, f"Hardware initialization failed: {str(e)}", is_error=True)
             self.cleanup()
             raise
 
     def get_initial_volume(self):
         if self.volume:
             initial_volume = self.volume.normalize_value(self.volume.pot.value)
-            _log(f"Getting initial volume: {initial_volume:.2f}")
+            log(TAG_HARD, f"Getting initial volume: {initial_volume:.2f}")
             return initial_volume
         return 0.0
 
@@ -313,7 +293,7 @@ class HardwareManager:
             if new_volume is not None and new_volume != self.last_volume:
                 # Only log if volume changed by 0.05 or more
                 if abs(new_volume - (self.last_volume or 0)) >= 0.05:
-                    _log(f"Volume update - Previous: {self.last_volume:.2f}, New: {new_volume:.2f}")
+                    log(TAG_HARD, f"Volume update - Previous: {self.last_volume:.2f}, New: {new_volume:.2f}")
                 audio_system.set_volume(new_volume)
                 self.last_volume = new_volume
             self.last_volume_scan = current_time

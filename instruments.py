@@ -30,18 +30,7 @@ Filter parameters:
 """
 
 import sys
-from constants import LOG_INST, LOG_LIGHT_YELLOW, LOG_RED, LOG_RESET, INSTRUMENTS_LOG
-
-def _log(message, is_error=False):
-    """Simple logging function for instrument events."""
-    if not INSTRUMENTS_LOG:
-        return
-        
-    color = LOG_RED if is_error else LOG_LIGHT_YELLOW
-    if is_error:
-        print(f"{color}{LOG_INST} [ERROR] {message}{LOG_RESET}", file=sys.stderr)
-    else:
-        print(f"{color}{LOG_INST} {message}{LOG_RESET}", file=sys.stderr)
+from logging import log, TAG_INST
 
 NOTE_MINIMUM_PATHS = '''
 note/press/per_key/note_on
@@ -180,22 +169,22 @@ class InstrumentManager:
         self.connection_manager = None
         self.synthesizer = None
         self._discover_instruments()
-        _log("Instrument manager initialized")
+        log(TAG_INST, "Instrument manager initialized")
 
     def register_components(self, connection_manager=None, synthesizer=None):
         """Register ConnectionManager and Synthesizer components."""
         if connection_manager:
             self.connection_manager = connection_manager
-            _log("Registered connection manager")
+            log(TAG_INST, "Registered connection manager")
             
         if synthesizer:
             self.synthesizer = synthesizer
-            _log("Registered synthesizer")
+            log(TAG_INST, "Registered synthesizer")
             
         # Register connection manager's callback with synthesizer
         if self.synthesizer and self.connection_manager:
             self.synthesizer.register_ready_callback(self.connection_manager.on_synth_ready)
-            _log("Connected synth ready callback")
+            log(TAG_INST, "Connected synth ready callback")
 
     def _discover_instruments(self):
         """Discover available instruments from module constants."""
@@ -221,7 +210,7 @@ class InstrumentManager:
         if not self.current_instrument or self.current_instrument not in self.instruments:
             self.current_instrument = self.instrument_order[0]
             
-        _log(f"Discovered instruments in order: {', '.join(self.instrument_order)}")
+        log(TAG_INST, f"Discovered instruments in order: {', '.join(self.instrument_order)}")
 
     def get_current_cc_configs(self):
         """Get all CC numbers and parameter names for the current instrument."""
@@ -270,16 +259,16 @@ class InstrumentManager:
     def set_instrument(self, instrument_name):
         """Set current instrument and update components."""
         if instrument_name not in self.instruments:
-            _log(f"Invalid instrument name: {instrument_name}", is_error=True)
+            log(TAG_INST, f"Invalid instrument name: {instrument_name}", is_error=True)
             return False
             
-        _log(f"Setting instrument to: {instrument_name}")
+        log(TAG_INST, f"Setting instrument to: {instrument_name}")
         self.current_instrument = instrument_name
         config_name, paths = self.instruments[instrument_name]
 
         # Update synthesizer configuration
         if self.synthesizer:
-            _log("Updating synthesizer configuration")
+            log(TAG_INST, "Updating synthesizer configuration")
             self.synthesizer.update_instrument(paths, config_name)  # Pass config_name to update_instrument
             # Synthesizer will signal ready to connection manager
             return True
@@ -305,6 +294,6 @@ class InstrumentManager:
 
     def cleanup(self):
         """Clean up component references."""
-        _log("Cleaning up instrument manager")
+        log(TAG_INST, "Cleaning up instrument manager")
         self.connection_manager = None
         self.synthesizer = None

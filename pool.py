@@ -3,20 +3,9 @@
 import array
 import math
 import time
-import sys
 import synthio
 from voice import Voice
-from constants import LOG_MODU, LOG_LIGHT_BLUE, LOG_RED, LOG_RESET, MODULES_LOG
-
-def _log(message, is_error=False):
-    """Enhanced logging with error support."""
-    if not MODULES_LOG:
-        return
-    color = LOG_RED if is_error else LOG_LIGHT_BLUE
-    if is_error:
-        print("{}{} [ERROR] {}{}".format(color, LOG_MODU, message, LOG_RESET), file=sys.stderr)
-    else:
-        print("{}{} {}{}".format(color, LOG_MODU, message, LOG_RESET), file=sys.stderr)
+from logging import log, TAG_POOL
 
 class VoicePool:
     """Manages voices that can be targeted by MIDI address."""
@@ -34,9 +23,9 @@ class VoicePool:
             self.amplitude_scaling.append(1.0 / math.sqrt(i))
         
         # Log the amplitude scaling table
-        _log("Amplitude scaling table:")
+        log(TAG_POOL, "Amplitude scaling table:")
         for i, amp in enumerate(self.amplitude_scaling):
-            _log(f"  {i} notes: {amp:.4f}")
+            log(TAG_POOL, f"  {i} notes: {amp:.4f}")
         
         # Toddler mode tracking
         self.last_steal_time = 0
@@ -46,7 +35,7 @@ class VoicePool:
         self.toddler_timeout = 0  # When toddler mode ends
         self.last_cleanup_time = 0  # Last time we cleaned up voices during timeout
         
-        _log("Voice pool initialized with {} voices".format(size))
+        log(TAG_POOL, "Voice pool initialized with {} voices".format(size))
 
     def get_active_note_count(self, synth):
         """Get count of currently active notes (not including releasing notes)."""
@@ -68,7 +57,7 @@ class VoicePool:
 
         # Get pre-calculated amplitude for this number of notes
         new_amplitude = self.amplitude_scaling[active_count]
-        _log("Adjusting amplitudes: {} active notes, new amplitude: {:.4f}".format(
+        log(TAG_POOL, "Adjusting amplitudes: {} active notes, new amplitude: {:.4f}".format(
             active_count, new_amplitude))
 
         # Update all active notes
@@ -87,13 +76,13 @@ class VoicePool:
             # Check if we need to do periodic cleanup
             if current_time - self.last_cleanup_time >= 1.0:  # Every second
                 seconds_left = int(self.toddler_timeout - current_time)
-                _log("Stop that! Timeout: {} seconds remaining...".format(seconds_left))
+                log(TAG_POOL, "Stop that! Timeout: {} seconds remaining...".format(seconds_left))
                 self.release_all(synth)
                 self.last_cleanup_time = current_time
                 
             # Check if timeout is complete
             if current_time >= self.toddler_timeout:
-                _log("Toddler timeout complete - behaving now")
+                log(TAG_POOL, "Toddler timeout complete - behaving now")
                 self.toddler_mode = False
                 self.rapid_steal_count = 0
                 self.release_all(synth)  # One final cleanup
@@ -104,7 +93,7 @@ class VoicePool:
             if current_time - self.last_steal_time < 0.1:  # 100ms between steals
                 self.rapid_steal_count += 1
                 if self.rapid_steal_count >= 3:  # 3 rapid steals triggers
-                    _log("Stop that! Starting 3 second timeout...")
+                    log(TAG_POOL, "Stop that! Starting 3 second timeout...")
                     self.toddler_mode = True
                     self.toddler_start_time = current_time
                     self.toddler_timeout = current_time + 3.0  # 3 second timeout
@@ -120,21 +109,21 @@ class VoicePool:
         
     def _log_all_voices(self, synth, trigger=""):
         """Log the state of all voices."""
-        _log("Voice pool state {}:".format(trigger))
+        log(TAG_POOL, "Voice pool state {}:".format(trigger))
         for i, voice in enumerate(self.voices):
             if voice.active_note:
                 state, _ = synth.note_info(voice.active_note)
                 addr = voice.get_address()
-                _log("  Voice {}: {} {}".format(i, addr, state))
+                log(TAG_POOL, "  Voice {}: {} {}".format(i, addr, state))
             else:
-                _log("  Voice {}: inactive".format(i))
+                log(TAG_POOL, "  Voice {}: inactive".format(i))
         
         # Log channel map
         channels = []
         for ch, v in self.channel_map.items():
             addr = v.get_address() if v else "None"
             channels.append("{} -> {}".format(ch, addr))
-        _log("  Channels: {}".format(", ".join(channels) if channels else "none"))
+        log(TAG_POOL, "  Channels: {}".format(", ".join(channels) if channels else "none"))
         
     def _get_voice(self, synth):
         """Get unused voice or steal oldest one."""
@@ -158,7 +147,7 @@ class VoicePool:
                 oldest_timestamp = voice.timestamp
                 
         if oldest_voice.get_address():
-            _log("Stealing voice {}".format(oldest_voice.get_address()))
+            log(TAG_POOL, "Stealing voice {}".format(oldest_voice.get_address()))
             oldest_voice.steal_voice(synth)
             
         return oldest_voice
@@ -246,5 +235,5 @@ class VoicePool:
         
     def check_health(self, synth):
         """Check voice pool health."""
-        _log("Performing voice pool health check")
+        log(TAG_POOL, "Performing voice pool health check")
         self._log_all_voices(synth)

@@ -4,52 +4,35 @@ import time
 import sys
 from constants import (
     HEARTBEAT_INTERVAL,
-    HEARTBEAT_DEBUG,
     ConnectionState,
     DETECT_PIN,
-    LOG_CONNECT,
-    LOG_LIGHT_CYAN,
-    LOG_RED,
-    LOG_RESET,
-    CONNECTION_LOG
+    DETECTION_RETRY_INTERVAL
 )
-
-def _log(message, state=None, is_error=False):
-    if not CONNECTION_LOG and not (HEARTBEAT_DEBUG and message == "♡"):
-        return
-        
-    if state:
-        print(f"{LOG_LIGHT_CYAN}{LOG_CONNECT} [STATE] {state}: {message}{LOG_RESET}", file=sys.stderr)
-    else:
-        color = LOG_RED if is_error else LOG_LIGHT_CYAN
-        if is_error:
-            print(f"{color}{LOG_CONNECT} [ERROR] {message}{LOG_RESET}", file=sys.stderr)
-        else:
-            print(f"{color}{LOG_CONNECT} {message}{LOG_RESET}", file=sys.stderr)
+from logging import log, TAG_CONNECT
 
 class ConnectionManager:
     def __init__(self, text_uart, midi_interface, hardware_manager, instrument_manager):
         if text_uart is None or midi_interface is None or hardware_manager is None or instrument_manager is None:
             raise ValueError("Required arguments cannot be None")
         
-        _log("Setting uart, midi_interface")
+        log(TAG_CONNECT, "Setting uart, midi_interface")
         self.uart = text_uart
         self.midi = midi_interface
         self.hardware = hardware_manager
         self.instrument_manager = instrument_manager
         
-        _log("Initializing state variables ...")
+        log(TAG_CONNECT, "Initializing state variables ...")
         self.state = ConnectionState.STANDALONE
         self.last_heartbeat_time = 0
         self.last_detection_time = 0
         self.synth_ready = False
         self.waiting_for_synth = False
         
-        _log("Candide connection manager initialized")
+        log(TAG_CONNECT, "Candide connection manager initialized")
 
     def on_synth_ready(self):
         """Called when synthesizer is ready for MIDI messages."""
-        _log("Synthesizer signaled ready state")
+        log(TAG_CONNECT, "Synthesizer signaled ready state")
         self.synth_ready = True
         self.waiting_for_synth = False
         self.send_config()
@@ -84,7 +67,7 @@ class ConnectionManager:
         """Send CC configuration to Bartleby."""
         if not self.synth_ready:
             if not self.waiting_for_synth:
-                _log("Waiting for synthesizer to be ready before sending config")
+                log(TAG_CONNECT, "Waiting for synthesizer to be ready before sending config")
                 self.waiting_for_synth = True
             return False
 
@@ -100,32 +83,32 @@ class ConnectionManager:
                     config_parts.append(f"{pot_num}={cc_num}")
                 
                 config_string = "cc|" + "|".join(config_parts)
-                _log(f"Sending config string: {config_string}")
+                log(TAG_CONNECT, f"Sending config string: {config_string}")
             else:
                 # Send blank CC config when no mappings exist
                 config_string = "cc|"
-                _log("No CC configurations found - sending blank config")
+                log(TAG_CONNECT, "No CC configurations found - sending blank config")
             
             # Send config
             self.uart.write(config_string)
-            _log("Config sent successfully")
+            log(TAG_CONNECT, "Config sent successfully")
             
             self._transition_to_connected()
             return True
                 
         except Exception as e:
-            _log(f"Failed to send config: {str(e)}", is_error=True)
+            log(TAG_CONNECT, f"Failed to send config: {str(e)}", is_error=True)
         return False
 
     def _transition_to_connected(self):
         """Helper to transition to connected state and start heartbeat."""
-        _log("Starting heartbeat", "STANDALONE -> CONNECTED")
+        log(TAG_CONNECT, "[STATE] STANDALONE -> CONNECTED: Starting heartbeat")
         self.state = ConnectionState.CONNECTED
         self._send_heartbeat()
         self.last_heartbeat_time = time.monotonic()
 
     def _handle_initial_detection(self):
-        _log("Base station detected (GP22 HIGH) - initializing connection", "STANDALONE -> DETECTED")
+        log(TAG_CONNECT, "[STATE] STANDALONE -> DETECTED: Base station detected (GP22 HIGH) - initializing connection")
         # Reset synth ready state on new detection
         self.synth_ready = False
         self.waiting_for_synth = False
@@ -135,7 +118,7 @@ class ConnectionManager:
             self.instrument_manager.set_instrument(current)
         
     def _handle_disconnection(self):
-        _log("Base station disconnected (GP22 LOW)")
+        log(TAG_CONNECT, "Base station disconnected (GP22 LOW)")
         self.state = ConnectionState.STANDALONE
         self.last_heartbeat_time = 0
         self.synth_ready = False
@@ -146,17 +129,17 @@ class ConnectionManager:
             # Only send heartbeat if still detected
             if self.hardware.is_base_station_detected():
                 self.uart.write("♡")
-                if HEARTBEAT_DEBUG:
-                    _log("♡", "CONNECTED")
+                # Use is_heartbeat=True for heartbeat logging
+                log(TAG_CONNECT, "♡", is_heartbeat=True)
         except Exception as e:
-            _log(f"Failed to send heartbeat: {str(e)}", is_error=True)
+            log(TAG_CONNECT, f"Failed to send heartbeat: {str(e)}", is_error=True)
 
     def is_connected(self):
         return self.state == ConnectionState.CONNECTED
 
     def cleanup(self):
         """Clean up resources when shutting down."""
-        _log("Cleaning up connection manager resources")
+        log(TAG_CONNECT, "Cleaning up connection manager resources")
         try:
             self.state = ConnectionState.STANDALONE
             self.uart = None
@@ -164,4 +147,4 @@ class ConnectionManager:
             self.hardware = None
             self.instrument_manager = None
         except Exception as e:
-            _log(f"Connection manager cleanup error: {str(e)}", is_error=True)
+            log(TAG_CONNECT, f"Connection manager cleanup error: {str(e)}", is_error=True)

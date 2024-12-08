@@ -1,19 +1,8 @@
 """Voice module for synthesizer system."""
 
-import array
-import synthio
-import sys
-from constants import LOG_MODU, LOG_LIGHT_BLUE, LOG_RED, LOG_RESET, MODULES_LOG
 
-def _log(message, is_error=False):
-    """Enhanced logging with error support."""
-    if not MODULES_LOG:
-        return
-    color = LOG_RED if is_error else LOG_LIGHT_BLUE
-    if is_error:
-        print("{}{} [ERROR] {}{}".format(color, LOG_MODU, message, LOG_RESET), file=sys.stderr)
-    else:
-        print("{}{} {}{}".format(color, LOG_MODU, message, LOG_RESET), file=sys.stderr)
+import synthio
+from logging import log, TAG_VOICE
 
 class Voice:
     """A voice that can be targeted by MIDI address."""
@@ -33,7 +22,7 @@ class Voice:
         """Log voice state showing note counts by state."""
         addr = self.get_address()
         if not addr:
-            _log("Voice has no address")
+            log(TAG_VOICE, "Voice has no address")
             return
             
         # Get note states from synth
@@ -55,7 +44,7 @@ class Voice:
         if releasing_count > 0:
             state.append("{} releasing".format(releasing_count))
             
-        _log("Voice {}{}: has {}".format(
+        log(TAG_VOICE, "Voice {}{}: has {}".format(
             addr,
             action,
             ", ".join(state) if state else "no notes"

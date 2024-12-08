@@ -1,7 +1,8 @@
 """MIDI interface system providing MIDI message handling and MPE support with filtering."""
 
-from constants import LOG_MIDI, LOG_LIGHT_ORANGE, LOG_RED, LOG_RESET, MidiMessageType, MIDI_LOG
 import supervisor
+from constants import MidiMessageType
+from logging import log, TAG_MIDI
 
 # MIDI Message Types
 MIDI_NOTE_OFF = 0x80          # Note Off
@@ -27,27 +28,14 @@ MPE_FILTER_CONFIG = {
     'timbre_threshold': 4        # ~3% of total range (0-127)
 }
 
-def _log(message, is_error=False, is_debug=False):
-    """Log messages with MIDI prefix"""
-    if not MIDI_LOG:
-        return
-        
-    color = LOG_RED if is_error else LOG_LIGHT_ORANGE
-    prefix = "[ERROR] " if is_error else ""
-    print("{}{}".format(color, LOG_MIDI) + prefix + " " + message + LOG_RESET)
-
 class MPEMessageCounter:
     """Tracks MPE message counts globally and per channel"""
     def __init__(self):
         self.positions = {'pitch_bend': 0, 'pressure': 0, 'timbre': 0}
-        if MIDI_LOG:
-            self.reset_counters()
+        self.reset_counters()
         
     def reset_counters(self):
-        """Reset all message counters - only used when logging is enabled"""
-        if not MIDI_LOG:
-            return
-            
+        """Reset all message counters"""
         self.channel_messages = {}
         for ch in range(16):
             self.channel_messages[ch] = {
@@ -72,13 +60,11 @@ class MPEMessageCounter:
         ratio = MPE_FILTER_CONFIG[ratio_key]
         
         if ratio == 0:  # Filter all if ratio is 0
-            if MIDI_LOG:
-                self.channel_messages[channel]['filtered'][count_key] += 1
+            self.channel_messages[channel]['filtered'][count_key] += 1
             return False
             
         if ratio == 1:  # Allow all if ratio is 1
-            if MIDI_LOG:
-                self.channel_messages[channel]['allowed'][count_key] += 1
+            self.channel_messages[channel]['allowed'][count_key] += 1
             return True
             
         # Increment position and wrap around to 1 when we hit ratio
@@ -87,20 +73,15 @@ class MPEMessageCounter:
         # Allow through when we hit ratio
         should_process = self.positions[count_key] == ratio
         
-        # Update statistics only if logging is enabled
-        if MIDI_LOG:
-            if should_process:
-                self.channel_messages[channel]['allowed'][count_key] += 1
-            else:
-                self.channel_messages[channel]['filtered'][count_key] += 1
+        if should_process:
+            self.channel_messages[channel]['allowed'][count_key] += 1
+        else:
+            self.channel_messages[channel]['filtered'][count_key] += 1
             
         return should_process
             
     def get_channel_stats(self, channel):
-        """Get message statistics for a channel - only used when logging is enabled"""
-        if not MIDI_LOG:
-            return None
-            
+        """Get message statistics for a channel"""
         stats = self.channel_messages[channel]
         return {
             'pitch_bend': stats['allowed']['pitch_bend'],
@@ -116,7 +97,7 @@ class MidiSubscription:
         self.message_types = message_types if message_types is not None else []
         self.channels = set(channels) if channels is not None else None
         self.cc_numbers = set(cc_numbers) if cc_numbers is not None else None
-        _log("Created subscription for types=" + str(message_types) + " channels=" + str(channels) + " cc=" + str(cc_numbers))
+        log(TAG_MIDI, f"Created subscription for types={message_types} channels={channels} cc={cc_numbers}")
 
     def matches(self, message):
         """Check if a MIDI message matches this subscription's filters."""
@@ -173,47 +154,45 @@ class MPEZone:
         zone_name = 'lower' if self.is_lower_zone else 'upper'
         
         if msg.type == 'noteon':
-            _log("MPE Note On: zone=" + zone_name + " ch=" + str(channel) + " note=" + str(msg.note) + " vel=" + str(msg.velocity))
+            log(TAG_MIDI, f"MPE Note On: zone={zone_name} ch={channel} note={msg.note} vel={msg.velocity}")
             if channel in self.channel_states:
                 self.channel_states[channel]['active_notes'][msg.note] = msg.velocity
                 
         elif msg.type == 'noteoff':
-            _log("MPE Note Off: zone=" + zone_name + " ch=" + str(channel) + " note=" + str(msg.note))
+            log(TAG_MIDI, f"MPE Note Off: zone={zone_name} ch={channel} note={msg.note}")
             if channel in self.channel_states:
                 if msg.note in self.channel_states[channel]['active_notes']:
                     del self.channel_states[channel]['active_notes'][msg.note]
-                    # Log detailed MPE statistics for this channel if logging is enabled
-                    if MIDI_LOG:
-                        stats = message_counter.get_channel_stats(channel)
-                        if stats:  # Will be None if logging is disabled
-                            filtered = stats['filtered']
-                            _log("Channel " + str(channel) + " MPE message statistics:")
-                            _log("    Pitch Bend:")
-                            _log("        Allowed: " + str(stats['pitch_bend']))
-                            _log("        Filtered: " + str(filtered['pitch_bend']))
-                            _log("        Total: " + str(stats['pitch_bend'] + filtered['pitch_bend']))
-                            _log("    Pressure:")
-                            _log("        Allowed: " + str(stats['pressure']))
-                            _log("        Filtered: " + str(filtered['pressure']))
-                            _log("        Total: " + str(stats['pressure'] + filtered['pressure']))
-                            _log("    Timbre:")
-                            _log("        Allowed: " + str(stats['timbre']))
-                            _log("        Filtered: " + str(filtered['timbre']))
-                            _log("        Total: " + str(stats['timbre'] + filtered['timbre']))
+                    # Log detailed MPE statistics for this channel
+                    stats = message_counter.get_channel_stats(channel)
+                    filtered = stats['filtered']
+                    log(TAG_MIDI, f"Channel {channel} MPE message statistics:")
+                    log(TAG_MIDI, f"    Pitch Bend:")
+                    log(TAG_MIDI, f"        Allowed: {stats['pitch_bend']}")
+                    log(TAG_MIDI, f"        Filtered: {filtered['pitch_bend']}")
+                    log(TAG_MIDI, f"        Total: {stats['pitch_bend'] + filtered['pitch_bend']}")
+                    log(TAG_MIDI, f"    Pressure:")
+                    log(TAG_MIDI, f"        Allowed: {stats['pressure']}")
+                    log(TAG_MIDI, f"        Filtered: {filtered['pressure']}")
+                    log(TAG_MIDI, f"        Total: {stats['pressure'] + filtered['pressure']}")
+                    log(TAG_MIDI, f"    Timbre:")
+                    log(TAG_MIDI, f"        Allowed: {stats['timbre']}")
+                    log(TAG_MIDI, f"        Filtered: {filtered['timbre']}")
+                    log(TAG_MIDI, f"        Total: {stats['timbre'] + filtered['timbre']}")
                     
         elif msg.type == 'channelpressure':
             if channel in self.channel_states:
-                _log("MPE Pressure: zone=" + zone_name + " ch=" + str(channel) + " pressure=" + str(msg.pressure))
+                log(TAG_MIDI, f"MPE Pressure: zone={zone_name} ch={channel} pressure={msg.pressure}")
                 self.channel_states[channel]['pressure'] = msg.pressure
                 
         elif msg.type == 'pitchbend':
             if channel in self.channel_states:
-                _log("MPE Pitch Bend: zone=" + zone_name + " ch=" + str(channel) + " value=" + str(msg.pitch_bend))
+                log(TAG_MIDI, f"MPE Pitch Bend: zone={zone_name} ch={channel} value={msg.pitch_bend}")
                 self.channel_states[channel]['pitch_bend'] = msg.pitch_bend
                 
         elif msg.type == 'cc':
             if msg.control == MPE_TIMBRE_CC and channel in self.channel_states:
-                _log("MPE CC: zone=" + zone_name + " ch=" + str(channel) + " cc=" + str(msg.control) + " value=" + str(msg.value))
+                log(TAG_MIDI, f"MPE CC: zone={zone_name} ch={channel} cc={msg.control} value={msg.value}")
                 self.channel_states[channel]['timbre'] = msg.value
 
 class MidiMessage:
@@ -240,32 +219,32 @@ class MidiMessage:
                 self.note = self.data[0]
                 self.velocity = self.data[1]
                 self.type = 'noteon' if self.velocity > 0 else 'noteoff'
-                _log("Created Note " + self.type + ": ch=" + str(self.channel) + " note=" + str(self.note) + " vel=" + str(self.velocity))
+                log(TAG_MIDI, f"Created Note {self.type}: ch={self.channel} note={self.note} vel={self.velocity}")
                 
             elif self.message_type == MIDI_NOTE_OFF:
                 self.type = 'noteoff'
                 self.note = self.data[0]
                 self.velocity = self.data[1]
-                _log("Created Note Off: ch=" + str(self.channel) + " note=" + str(self.note))
+                log(TAG_MIDI, f"Created Note Off: ch={self.channel} note={self.note}")
                 
             elif self.message_type == MIDI_CONTROL_CHANGE:
                 self.type = 'cc'
                 self.control = self.data[0]
                 self.value = self.data[1]
-                _log("Created CC: ch=" + str(self.channel) + " cc=" + str(self.control) + " val=" + str(self.value))
+                log(TAG_MIDI, f"Created CC: ch={self.channel} cc={self.control} val={self.value}")
                 
             elif self.message_type == MIDI_CHANNEL_PRESSURE:
                 self.type = 'channelpressure'
                 self.pressure = self.data[0]
-                _log("Created Channel Pressure: ch=" + str(self.channel) + " pressure=" + str(self.pressure))
+                log(TAG_MIDI, f"Created Channel Pressure: ch={self.channel} pressure={self.pressure}")
                 
             elif self.message_type == MIDI_PITCH_BEND:
                 self.type = 'pitchbend'
                 self.pitch_bend = (self.data[1] << 7) | self.data[0]
-                _log("Created Pitch Bend: ch=" + str(self.channel) + " value=" + str(self.pitch_bend))
+                log(TAG_MIDI, f"Created Pitch Bend: ch={self.channel} value={self.pitch_bend}")
                 
         except Exception as e:
-            _log("Error parsing MIDI message: " + str(e), is_error=True)
+            log(TAG_MIDI, f"Error parsing MIDI message: {str(e)}", is_error=True)
             self.type = 'error'
 
     @property
@@ -399,7 +378,7 @@ class MidiInterface:
         # Initialize MPE zones
         self.lower_zone = MPEZone(is_lower_zone=True)
         self.upper_zone = None  # Initialize upper zone only if needed
-        _log("MIDI Interface initialized with MPE support")
+        log(TAG_MIDI, "MIDI Interface initialized with MPE support")
         
     def process_midi_messages(self):
         """Process incoming MIDI data"""
@@ -434,20 +413,20 @@ class MidiInterface:
                 try:
                     subscription.callback(msg)
                 except Exception as e:
-                    _log(str(e), is_error=True)
+                    log(TAG_MIDI, str(e), is_error=True)
 
     def subscribe(self, callback, message_types=None, channels=None, cc_numbers=None):
         """Add a filtered subscription"""
         subscription = MidiSubscription(callback, message_types, channels, cc_numbers)
         self.subscribers.append(subscription)
-        _log("Added subscription for types=" + str(message_types) + " channels=" + str(channels) + " cc=" + str(cc_numbers))
+        log(TAG_MIDI, f"Added subscription for types={message_types} channels={channels} cc={cc_numbers}")
         return subscription
 
     def unsubscribe(self, subscription):
         """Remove a subscription"""
         if subscription in self.subscribers:
             self.subscribers.remove(subscription)
-            _log("Removed subscription")
+            log(TAG_MIDI, "Removed subscription")
 
 def initialize_midi():
     """Initialize MIDI interface"""
@@ -455,5 +434,5 @@ def initialize_midi():
     transport, _ = UartManager.get_interfaces()
     midi_interface = MidiInterface(transport)
     UartManager.set_midi_interface(midi_interface)
-    _log("MIDI system initialized")
+    log(TAG_MIDI, "MIDI system initialized")
     return midi_interface

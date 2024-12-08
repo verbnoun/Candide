@@ -2,41 +2,6 @@
 
 import board
 
-# Logging colors
-LOG_WHITE = "\033[37m"
-LOG_LIGHT_CYAN = "\033[96m"
-LOG_LIGHT_MAGENTA = "\033[95m"
-LOG_LIGHT_YELLOW = "\033[93m"
-LOG_LIGHT_GREEN = "\033[92m"
-LOG_GREEN = "\033[32m"
-LOG_LIGHT_BLUE = "\033[94m"
-LOG_RED = "\033[31m"
-LOG_LIGHT_ORANGE = "\033[38;5;215m"
-LOG_RESET = "\033[0m"
-
-# Logging prefixes
-LOG_CANDIDE = "[CANDIDE]"
-LOG_CONNECT = "[CONECT ]"
-LOG_HARD = "[HARD   ]"
-LOG_INST = "[INST   ]"
-LOG_SYNTH = "[SYNTH  ]"
-LOG_UART = "[UART   ]"
-LOG_MIDI = "[MIDI   ]"
-LOG_MODU = "[MODU   ]"
-LOG_ROUTE = "[ROUTER ]"
-
-# Logging enable flags
-CODE_LOG = True
-CONNECTION_LOG = False
-HARDWARE_LOG = False
-INSTRUMENTS_LOG = False
-MIDI_LOG = True
-MODULES_LOG = True
-SYNTHESIZER_LOG = True
-UART_LOG = False
-HEARTBEAT_DEBUG = False
-PATH_LOG = True
-
 # Waveform sample sizes
 STATIC_WAVEFORM_SAMPLES = 512   # Sample size for static waveforms
 MORPHED_WAVEFORM_SAMPLES = 512  # Sample size for morphed waveforms
@@ -84,7 +49,7 @@ WELCOME_VALUE = 43
 STARTUP_DELAY = 1.0
 RETRY_DELAY = 5.0
 RETRY_INTERVAL = 0.25
-DETECTION_RETRY_INTERVAL = 0.25  # Added missing constant
+DETECTION_RETRY_INTERVAL = 0.25
 ERROR_RECOVERY_DELAY = 0.5
 BUFFER_CLEAR_TIMEOUT = 0.1
 MAX_RETRIES = 3

@@ -2,21 +2,9 @@
 
 import array
 import sys
-from constants import (
-    LOG_MODU, LOG_LIGHT_BLUE, LOG_RED, LOG_RESET, MODULES_LOG,
-    STATIC_WAVEFORM_SAMPLES, MORPHED_WAVEFORM_SAMPLES
-)
 import math
-
-def _log(message, is_error=False):
-    """Enhanced logging with error support."""
-    if not MODULES_LOG:
-        return
-    color = LOG_RED if is_error else LOG_LIGHT_BLUE
-    if is_error:
-        print("{}{} [ERROR] {}{}".format(color, LOG_MODU, message, LOG_RESET), file=sys.stderr)
-    else:
-        print("{}{} {}{}".format(color, LOG_MODU, message, LOG_RESET), file=sys.stderr)
+from constants import STATIC_WAVEFORM_SAMPLES, MORPHED_WAVEFORM_SAMPLES
+from logging import log, TAG_MODU
 
 # Cache for pre-computed waveforms
 _waveform_cache = {}
@@ -26,7 +14,7 @@ def get_cached_waveform(waveform_type):
     """Get or create a waveform from cache."""
     if waveform_type not in _waveform_cache:
         _waveform_cache[waveform_type] = create_waveform(waveform_type)
-        _log(f"Created and cached {waveform_type} waveform")
+        log(TAG_MODU, f"Created and cached {waveform_type} waveform")
     return _waveform_cache[waveform_type]
 
 def create_waveform(waveform_type):
@@ -69,14 +57,14 @@ class WaveformMorph:
         self.waveform_sequence = waveform_sequence or ['sine', 'triangle', 'square', 'saw']
         self.lookup_table = []  # Will be 128 morphed waveforms
         self._build_lookup()
-        _log(f"Created waveform morph: {name} sequence: {'-'.join(self.waveform_sequence)}")
+        log(TAG_MODU, f"Created waveform morph: {name} sequence: {'-'.join(self.waveform_sequence)}")
         
     def _build_lookup(self):
         """Build lookup table of 128 morphed waveforms for MIDI control."""
         cache_key = '-'.join(self.waveform_sequence)
         if cache_key in _morphed_waveform_cache:
             self.lookup_table = _morphed_waveform_cache[cache_key]
-            _log(f"Using cached morph table for {cache_key}")
+            log(TAG_MODU, f"Using cached morph table for {cache_key}")
             return
             
         # Get sample length from first waveform
@@ -87,10 +75,10 @@ class WaveformMorph:
         num_transitions = len(self.waveform_sequence) - 1
         
         # Log sample values for debugging
-        _log(f"Building morph table for {self.name}:")
-        _log(f"  0: {self.waveform_sequence[0]}")
-        _log(f" 64: Between {self.waveform_sequence[len(self.waveform_sequence)//2-1]} and {self.waveform_sequence[len(self.waveform_sequence)//2]}")
-        _log(f"127: {self.waveform_sequence[-1]}")
+        log(TAG_MODU, f"Building morph table for {self.name}:")
+        log(TAG_MODU, f"  0: {self.waveform_sequence[0]}")
+        log(TAG_MODU, f" 64: Between {self.waveform_sequence[len(self.waveform_sequence)//2-1]} and {self.waveform_sequence[len(self.waveform_sequence)//2]}")
+        log(TAG_MODU, f"127: {self.waveform_sequence[-1]}")
         
         # Create array to hold all morphed waveforms
         self.lookup_table = []
@@ -128,12 +116,12 @@ class WaveformMorph:
             
         # Cache the computed morph table
         _morphed_waveform_cache[cache_key] = self.lookup_table
-        _log(f"Cached morph table for {cache_key}")
+        log(TAG_MODU, f"Cached morph table for {cache_key}")
     
     def get_waveform(self, midi_value):
         """Get pre-calculated morphed waveform for MIDI value."""
         if not 0 <= midi_value <= 127:
-            _log(f"Invalid MIDI value {midi_value} for {self.name}", is_error=True)
+            log(TAG_MODU, f"Invalid MIDI value {midi_value} for {self.name}", is_error=True)
             raise ValueError(f"MIDI value must be between 0 and 127, got {midi_value}")
         return self.lookup_table[midi_value]
 
@@ -179,5 +167,5 @@ def create_morphed_waveform(morph_position, waveform_sequence=None):
         value = int(waveform1[idx1] * (1-t) + waveform2[idx2] * t)
         morphed.append(value)
     
-    _log(f"Created morphed waveform at position {morph_position} between {waveform_sequence[transition_index]} and {waveform_sequence[transition_index + 1]}")
+    log(TAG_MODU, f"Created morphed waveform at position {morph_position} between {waveform_sequence[transition_index]} and {waveform_sequence[transition_index + 1]}")
     return morphed

@@ -3,22 +3,7 @@
 import sys
 import synthio
 from modules import create_waveform
-from constants import (
-    LOG_SYNTH,
-    LOG_LIGHT_GREEN,
-    LOG_RED,
-    LOG_RESET,
-    SYNTHESIZER_LOG
-)
-
-def _log(message, is_error=False):
-    if not SYNTHESIZER_LOG:
-        return
-    color = LOG_RED if is_error else LOG_LIGHT_GREEN
-    if is_error:
-        print("{}{} [ERROR] {}{}".format(color, LOG_SYNTH, message, LOG_RESET), file=sys.stderr)
-    else:
-        print("{}{} {}{}".format(color, LOG_SYNTH, message, LOG_RESET), file=sys.stderr)
+from logging import log, TAG_PATCH
 
 class MidiHandler:
     """Handles MIDI message processing and routing."""
@@ -32,19 +17,19 @@ class MidiHandler:
         """Log and route incoming MIDI messages."""
         # Log received MIDI message
         if msg == 'noteon':
-            _log("Received MIDI note-on: ch={} note={} vel={}".format(
+            log(TAG_PATCH, "Received MIDI note-on: ch={} note={} vel={}".format(
                 msg.channel, msg.note, msg.velocity))
         elif msg == 'noteoff':
-            _log("Received MIDI note-off: ch={} note={}".format(
+            log(TAG_PATCH, "Received MIDI note-off: ch={} note={}".format(
                 msg.channel, msg.note))
         elif msg == 'cc':
-            _log("Received MIDI CC: ch={} cc={} val={}".format(
+            log(TAG_PATCH, "Received MIDI CC: ch={} cc={} val={}".format(
                 msg.channel, msg.control, msg.value))
         elif msg == 'pitchbend':
-            _log("Received MIDI pitch bend: ch={} val={}".format(
+            log(TAG_PATCH, "Received MIDI pitch bend: ch={} val={}".format(
                 msg.channel, msg.pitch_bend))
         elif msg == 'channelpressure':
-            _log("Received MIDI pressure: ch={} val={}".format(
+            log(TAG_PATCH, "Received MIDI pressure: ch={} val={}".format(
                 msg.channel, msg.pressure))
 
         # Route message to appropriate handler
@@ -60,27 +45,27 @@ class MidiHandler:
             self.handle_pressure(msg, synth)
 
     def handle_note_on(self, msg, synth):
-        _log("Targeting {}.{} with note-on".format(msg.note, msg.channel))
+        log(TAG_PATCH, "Targeting {}.{} with note-on".format(msg.note, msg.channel))
         
         # Use waveform based on path configuration
         if 'waveform' in self.path_parser.fixed_values:
             waveform = create_waveform(self.path_parser.fixed_values['waveform'])
-            _log(f"Using fixed base waveform: {self.path_parser.fixed_values['waveform']}")
+            log(TAG_PATCH, f"Using fixed base waveform: {self.path_parser.fixed_values['waveform']}")
         elif self.synth_state.base_morph:
             midi_value = int(self.path_parser.current_morph_position * 127)
             waveform = self.synth_state.base_morph.get_waveform(midi_value)
-            _log(f"Using pre-calculated base morphed waveform at position {self.path_parser.current_morph_position}")
+            log(TAG_PATCH, f"Using pre-calculated base morphed waveform at position {self.path_parser.current_morph_position}")
         else:
             waveform = self.synth_state.global_waveform
         
         # Create ring waveform based on path configuration
         if self.path_parser.current_ring_params['waveform']:
             ring_waveform = create_waveform(self.path_parser.current_ring_params['waveform'])
-            _log(f"Using fixed ring waveform: {self.path_parser.current_ring_params['waveform']}")
+            log(TAG_PATCH, f"Using fixed ring waveform: {self.path_parser.current_ring_params['waveform']}")
         elif self.synth_state.ring_morph:
             midi_value = int(self.path_parser.current_ring_morph_position * 127)
             ring_waveform = self.synth_state.ring_morph.get_waveform(midi_value)
-            _log(f"Using pre-calculated ring morphed waveform at position {self.path_parser.current_ring_morph_position}")
+            log(TAG_PATCH, f"Using pre-calculated ring morphed waveform at position {self.path_parser.current_ring_morph_position}")
         else:
             ring_waveform = self.synth_state.global_ring_waveform
         
@@ -98,10 +83,10 @@ class MidiHandler:
         self.voice_pool.press_note(msg.note, msg.channel, synth, **note_params)
 
     def handle_note_off(self, msg, synth):
-        _log("Targeting {}.{} with note-off".format(msg.note, msg.channel))
+        log(TAG_PATCH, "Targeting {}.{} with note-off".format(msg.note, msg.channel))
         voice = self.voice_pool.release_note(msg.note, synth)
         if not voice:
-            _log("No voice found at {}.{}".format(msg.note, msg.channel), is_error=True)
+            log(TAG_PATCH, "No voice found at {}.{}".format(msg.note, msg.channel), is_error=True)
 
     def handle_cc(self, msg, synth):
         cc_trigger = f"cc{msg.control}"
@@ -118,7 +103,7 @@ class MidiHandler:
                     param_name = 'ring_morph'
                     
                 value = self.path_parser.convert_value(param_name, msg.value, True)
-                _log("Updated {} = {}".format(original_path, value))
+                log(TAG_PATCH, "Updated {} = {}".format(original_path, value))
                 
                 self._handle_parameter_update(path_parts, param_name, value, msg.value, synth)
 

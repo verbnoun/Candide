@@ -5,20 +5,9 @@ import busio
 import sys
 from constants import (
     UART_TX, UART_RX, UART_BAUDRATE, UART_TIMEOUT,
-    LOG_UART, LOG_LIGHT_BLUE, LOG_RED, LOG_RESET,
-    MESSAGE_TIMEOUT, UART_LOG
+    MESSAGE_TIMEOUT
 )
-
-def _log(message, is_error=False):
-    """Log messages with UART prefix"""
-    if not UART_LOG:
-        return
-        
-    color = LOG_RED if is_error else LOG_LIGHT_BLUE
-    if is_error:
-        print(f"{color}{LOG_UART} [ERROR] {message}{LOG_RESET}", file=sys.stderr)
-    else:
-        print(f"{color}{LOG_UART} {message}{LOG_RESET}", file=sys.stderr)
+from logging import log, TAG_UART
 
 class UartTransport:
     """UART transport layer"""
@@ -42,9 +31,9 @@ class UartTransport:
                 parity=None,
                 stop=1
             )
-            _log(f"UART initialized: baudrate={self.baudrate}, timeout={self.timeout}")
+            log(TAG_UART, f"UART initialized: baudrate={self.baudrate}, timeout={self.timeout}")
         except Exception as e:
-            _log(f"UART initialization failed: {str(e)}", is_error=True)
+            log(TAG_UART, f"UART initialization failed: {str(e)}", is_error=True)
             raise
 
     def write(self, data):
@@ -59,7 +48,7 @@ class UartTransport:
         if data:
             # Convert bytes to hex representation for logging
             hex_data = ' '.join([f'0x{b:02x}' for b in data])
-            _log(f"Received bytes: {hex_data}")
+            log(TAG_UART, f"Received bytes: {hex_data}")
         return data
 
     @property
@@ -79,12 +68,12 @@ class UartTransport:
             # Fallback for CircuitPython UART
             while self.in_waiting:
                 self.uart.read()
-        _log("Buffers flushed")
+        log(TAG_UART, "Buffers flushed")
 
     def cleanup(self):
         """Clean up resources"""
         if hasattr(self, 'uart'):
-            _log("Cleaning up UART")
+            log(TAG_UART, "Cleaning up UART")
             self.flush_buffers()
             self.uart.deinit()
 
@@ -132,7 +121,7 @@ class UartManager:
     @classmethod
     def initialize(cls):
         if cls._instance is None:
-            _log("Initializing UART Manager")
+            log(TAG_UART, "Initializing UART Manager")
             cls._instance = cls()
             cls._transport = UartTransport(
                 tx_pin=UART_TX,
@@ -142,7 +131,7 @@ class UartManager:
             )
             cls._text_protocol = TextProtocol(cls._transport)
             # Note: midi interface will be initialized by midi.py
-            _log("UART Manager initialized")
+            log(TAG_UART, "UART Manager initialized")
         return cls._instance
 
     @classmethod
@@ -164,11 +153,11 @@ class UartManager:
 
     @classmethod
     def cleanup(cls):
-        _log("Cleaning up UART Manager")
+        log(TAG_UART, "Cleaning up UART Manager")
         if cls._transport:
             cls._transport.cleanup()
         cls._transport = None
         cls._text_protocol = None
         cls._midi = None
         cls._instance = None
-        _log("UART Manager cleanup complete")
+        log(TAG_UART, "UART Manager cleanup complete")
