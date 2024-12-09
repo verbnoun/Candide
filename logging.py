@@ -54,18 +54,18 @@ TAG_COLORS = {
 # Enable flags for each module's logging - Alphabetically ordered
 LOG_ENABLE = {
     TAG_CANDIDE: True,
-    TAG_CONNECT: True,
-    TAG_CONST: True,
-    TAG_HARD: True,
-    TAG_INST: True,
-    TAG_MIDI: True,
-    TAG_MODU: True,
-    TAG_PATCH: True,
-    TAG_POOL: True,
-    TAG_ROUTE: True,
-    TAG_SYNTH: True,
-    TAG_UART: True,
-    TAG_VOICE: True,
+    TAG_CONNECT: False,
+    TAG_CONST: False,
+    TAG_HARD: False,
+    TAG_INST: False,
+    TAG_MIDI: False,
+    TAG_MODU: False,
+    TAG_PATCH: False,
+    TAG_POOL: False,
+    TAG_ROUTE: False,
+    TAG_SYNTH: False,
+    TAG_UART: False,
+    TAG_VOICE: False,
 }
 
 # Special debug flags
