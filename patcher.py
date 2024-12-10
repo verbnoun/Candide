@@ -52,9 +52,10 @@ class MidiHandler:
             waveform = self.synth_state.global_waveform
             log(TAG_PATCH, f"Using base waveform: {self.path_parser.set_values['waveform']}")
         elif self.synth_state.base_morph:
-            midi_value = int(self.synth_state.get_value('morph_position') * 127)
+            # Use stored MIDI value directly
+            midi_value = self.synth_state.get_value('morph_position')
             waveform = self.synth_state.base_morph.get_waveform(midi_value)
-            log(TAG_PATCH, f"Using pre-calculated base morphed waveform at position {self.synth_state.get_value('morph_position')}")
+            log(TAG_PATCH, f"Using pre-calculated base morphed waveform at position {midi_value}")
         else:
             waveform = self.synth_state.global_waveform
         
@@ -64,22 +65,19 @@ class MidiHandler:
                 ring_waveform = self.synth_state.global_ring_waveform
                 log(TAG_PATCH, f"Using ring waveform: {self.path_parser.set_values['ring_waveform']}")
             elif self.synth_state.ring_morph:
-                midi_value = int(self.synth_state.get_value('ring_morph_position') * 127)
+                # Use stored MIDI value directly
+                midi_value = self.synth_state.get_value('ring_morph_position')
                 ring_waveform = self.synth_state.ring_morph.get_waveform(midi_value)
-                log(TAG_PATCH, f"Using pre-calculated ring morphed waveform at position {self.synth_state.get_value('ring_morph_position')}")
+                log(TAG_PATCH, f"Using pre-calculated ring morphed waveform at position {midi_value}")
             else:
                 ring_waveform = self.synth_state.global_ring_waveform
         
         # Create filter if filter type is specified
         filter_obj = None
         if self.path_parser.filter_type:
+            # Use stored values directly - they were already converted from MIDI
             filter_freq = self.synth_state.get_value('filter_frequency') or 0
             filter_res = self.synth_state.get_value('filter_resonance') or 0
-            
-            if 'frequency' in self.path_parser.global_ranges:
-                filter_freq = self.path_parser.convert_value('frequency', filter_freq)
-            if 'resonance' in self.path_parser.global_ranges:
-                filter_res = self.path_parser.convert_value('resonance', filter_res)
                 
             try:
                 filter_obj = SynthioInterfaces.create_filter(
@@ -128,8 +126,16 @@ class MidiHandler:
                     path_parts[3] == 'morph'):
                     param_name = 'ring_morph'
                     
+                # Convert MIDI value once using router's lookup table
                 value = self.path_parser.convert_value(param_name, msg.value, True)
                 log(TAG_PATCH, "Updated {} = {}".format(original_path, value))
+                
+                # Store MIDI value for morph parameters
+                if param_name in ('morph', 'ring_morph'):
+                    self.synth_state.update_value(f"{param_name}_position", msg.value)
+                else:
+                    # Store converted value for other parameters
+                    self.synth_state.update_value(param_name, value)
                 
                 self._handle_parameter_update(path_parts, param_name, value, msg.value, synth)
 
@@ -140,6 +146,7 @@ class MidiHandler:
             if voice:
                 for param_name, range_obj in self.path_parser.key_ranges.items():
                     if 'pitch_bend' in self.path_parser.midi_mappings:
+                        # Convert MIDI value once using router's lookup table
                         value = range_obj.convert(midi_value)
                         if param_name == 'bend':
                             self.synthesizer.handle_voice_update(voice, bend=value)
@@ -152,6 +159,7 @@ class MidiHandler:
             if voice:
                 for param_name, range_obj in self.path_parser.key_ranges.items():
                     if 'pressure' in self.path_parser.midi_mappings:
+                        # Convert MIDI value once using router's lookup table
                         value = range_obj.convert(msg.pressure)
                         if param_name == 'amplitude':
                             self.synthesizer.handle_voice_update(voice, amplitude=value)
@@ -162,8 +170,8 @@ class MidiHandler:
         if (path_parts[0] == 'oscillator' and 
             path_parts[1] == 'waveform' and 
             path_parts[2] == 'morph'):
-            self.synth_state.update_value('morph_position', value)
             if self.synth_state.base_morph:
+                # Use MIDI value directly for waveform lookup
                 new_waveform = self.synth_state.base_morph.get_waveform(midi_value)
                 for voice in self.voice_pool.voices:
                     if voice.is_active():
@@ -174,8 +182,8 @@ class MidiHandler:
               path_parts[1] == 'ring' and 
               path_parts[2] == 'waveform' and 
               path_parts[3] == 'morph'):
-            self.synth_state.update_value('ring_morph_position', value)
             if self.synth_state.ring_morph:
+                # Use MIDI value directly for waveform lookup
                 new_ring_waveform = self.synth_state.ring_morph.get_waveform(midi_value)
                 for voice in self.voice_pool.voices:
                     if voice.is_active():
@@ -202,6 +210,7 @@ class MidiHandler:
             self.synth_state.update_value(param_name, value)
             synth.envelope = self.synthesizer._create_envelope()
         elif param_name in ('frequency', 'resonance'):
+            # Store parameter values with filter_ prefix
             self.synth_state.update_value(f'filter_{param_name}', value)
             self._update_filter_params(synth)
 
@@ -210,14 +219,9 @@ class MidiHandler:
         if not self.path_parser.filter_type:
             return
             
-        # Convert filter parameters using ranges if available
+        # Use stored values directly - they were already converted from MIDI
         filter_freq = self.synth_state.get_value('filter_frequency') or 0
         filter_res = self.synth_state.get_value('filter_resonance') or 0
-        
-        if 'frequency' in self.path_parser.global_ranges:
-            filter_freq = self.path_parser.convert_value('frequency', filter_freq)
-        if 'resonance' in self.path_parser.global_ranges:
-            filter_res = self.path_parser.convert_value('resonance', filter_res)
             
         for voice in self.voice_pool.voices:
             if voice.is_active():

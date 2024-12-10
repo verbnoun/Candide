@@ -52,7 +52,7 @@ TAG_COLORS = {
 # Enable flags for each module's logging - Alphabetically ordered
 LOG_ENABLE = {
     TAG_CANDIDE: True,
-    TAG_CONNECT: False,
+    TAG_CONNECT: True,
     TAG_CONST: False,
     TAG_HARD: False,
     TAG_INST: True,
