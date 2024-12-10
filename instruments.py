@@ -4,17 +4,11 @@
 import sys
 from logging import log, TAG_INST
 
-ENVELOPE_MINIMUM_PATHS = '''
+SET_PATHS = '''
 note/press/per_key/note_on
 note/release/per_key/note_off
-oscillator/frequency/per_key/note_number/note_on
-oscillator/waveform/global/sine/set
-
-amplifier/envelope/attack_level/global/0.001-1/cc85
-amplifier/envelope/attack_time/global/0.001-0.5/cc73
-amplifier/envelope/decay_time/global/0.001-0.25/cc75
-amplifier/envelope/sustain_level/global/0.001-1/cc66
-amplifier/envelope/release_time/global/0.001-1/cc72
+oscillator/frequency/per_key/64/set
+oscillator/waveform/global/triangle/set
 '''
 
 PUSH_PATHS = '''
@@ -97,8 +91,21 @@ note/release/per_key/note_off
 oscillator/frequency/per_key/note_number/note_on
 oscillator/waveform/global/saw/note_on
 
-filter/high_pass/resonance/global/0.1-2.0/cc71
-filter/high_pass/frequency/global/20-20000/cc70
+filter/notch/resonance/global/0.1-2.0/cc71
+filter/notch/frequency/global/20-20000/cc70
+'''
+
+ENVELOPE_MINIMUM_PATHS = '''
+note/press/per_key/note_on
+note/release/per_key/note_off
+oscillator/frequency/per_key/note_number/note_on
+oscillator/waveform/global/sine/set
+
+amplifier/envelope/attack_level/global/0.001-1/cc85
+amplifier/envelope/attack_time/global/0.001-0.5/cc73
+amplifier/envelope/decay_time/global/0.001-0.25/cc75
+amplifier/envelope/sustain_level/global/0.001-1/cc66
+amplifier/envelope/release_time/global/0.001-1/cc72
 '''
 
 class InstrumentManager:
