@@ -13,12 +13,18 @@ from interfaces import SynthioInterfaces, WaveformMorph
 class SynthState:
     """Manages synthesizer state including waveforms and parameters."""
     def __init__(self):
+        # Waveform state
         self.global_waveform = None
         self.global_ring_waveform = None
         self.base_morph = None
         self.ring_morph = None
+        
+        # Runtime parameter values (moved from router)
         self.current_morph_position = 0.0
         self.current_ring_morph_position = 0.0
+        self.current_filter_params = {}  # frequency, resonance
+        self.current_ring_params = {}    # frequency, bend, waveform
+        self.current_envelope_params = {} # attack_time, decay_time, etc.
 
 class SynthMonitor:
     """Handles health monitoring and error recovery."""
@@ -78,8 +84,8 @@ class Synthesizer:
         """Initialize or update synthio synthesizer based on global settings."""
         try:
             self._configure_waveforms()
-            initial_envelope = self.path_parser.update_envelope()
-            log(TAG_SYNTH, f"Created initial envelope with params: {self.path_parser.current_envelope_params}")
+            initial_envelope = self._create_envelope()
+            log(TAG_SYNTH, f"Created initial envelope with params: {self.state.current_envelope_params}")
             
             # Use interface to create synthesizer
             self.synth = SynthioInterfaces.create_synthesizer(
@@ -99,6 +105,19 @@ class Synthesizer:
             log(TAG_SYNTH, f"Failed to initialize synthio: {str(e)}", is_error=True)
             raise
 
+    def _create_envelope(self):
+        """Create a new envelope with current parameters."""
+        if not self.path_parser.has_envelope_paths:
+            log(TAG_SYNTH, "No envelope paths found - using instant on/off envelope")
+            return None
+            
+        try:
+            envelope = synthio.Envelope(**self.state.current_envelope_params)
+            return envelope
+        except Exception as e:
+            log(TAG_SYNTH, f"Error creating envelope: {str(e)}", is_error=True)
+            return None
+
     def _configure_waveforms(self):
         """Configure base and ring waveforms based on path configuration."""
         # Configure base waveform
@@ -115,16 +134,17 @@ class Synthesizer:
             log(TAG_SYNTH, "No base oscillator waveform path found", is_error=True)
             raise ValueError("No base oscillator waveform path found")
             
-        # Configure ring waveform
-        if self.path_parser.current_ring_params['waveform']:
-            ring_type = self.path_parser.current_ring_params['waveform']
-            self.state.global_ring_waveform = SynthioInterfaces.create_waveform(ring_type)
-            self.state.ring_morph = None
-            log(TAG_SYNTH, f"Created fixed ring waveform: {ring_type}")
-        elif self.path_parser.ring_waveform_sequence:
-            self.state.ring_morph = WaveformMorph('ring', self.path_parser.ring_waveform_sequence)
-            self.state.global_ring_waveform = self.state.ring_morph.get_waveform(0)
-            log(TAG_SYNTH, f"Created ring morph table: {'-'.join(self.path_parser.ring_waveform_sequence)}")
+        # Configure ring waveform if ring mod is enabled
+        if self.path_parser.has_ring_mod:
+            if 'ring_waveform' in self.path_parser.fixed_values:
+                ring_type = self.path_parser.fixed_values['ring_waveform']
+                self.state.global_ring_waveform = SynthioInterfaces.create_waveform(ring_type)
+                self.state.ring_morph = None
+                log(TAG_SYNTH, f"Created fixed ring waveform: {ring_type}")
+            elif self.path_parser.ring_waveform_sequence:
+                self.state.ring_morph = WaveformMorph('ring', self.path_parser.ring_waveform_sequence)
+                self.state.global_ring_waveform = self.state.ring_morph.get_waveform(0)
+                log(TAG_SYNTH, f"Created ring morph table: {'-'.join(self.path_parser.ring_waveform_sequence)}")
 
     def _setup_midi_handlers(self):
         """Set up MIDI message handlers."""

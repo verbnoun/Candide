@@ -52,28 +52,29 @@ class MidiHandler:
             waveform = self.synth_state.global_waveform
             log(TAG_PATCH, f"Using fixed base waveform: {self.path_parser.fixed_values['waveform']}")
         elif self.synth_state.base_morph:
-            midi_value = int(self.path_parser.current_morph_position * 127)
+            midi_value = int(self.synth_state.current_morph_position * 127)
             waveform = self.synth_state.base_morph.get_waveform(midi_value)
-            log(TAG_PATCH, f"Using pre-calculated base morphed waveform at position {self.path_parser.current_morph_position}")
+            log(TAG_PATCH, f"Using pre-calculated base morphed waveform at position {self.synth_state.current_morph_position}")
         else:
             waveform = self.synth_state.global_waveform
         
         # Get ring waveform based on path configuration
-        if self.path_parser.current_ring_params['waveform']:
-            ring_waveform = self.synth_state.global_ring_waveform
-            log(TAG_PATCH, f"Using fixed ring waveform: {self.path_parser.current_ring_params['waveform']}")
-        elif self.synth_state.ring_morph:
-            midi_value = int(self.path_parser.current_ring_morph_position * 127)
-            ring_waveform = self.synth_state.ring_morph.get_waveform(midi_value)
-            log(TAG_PATCH, f"Using pre-calculated ring morphed waveform at position {self.path_parser.current_ring_morph_position}")
-        else:
-            ring_waveform = self.synth_state.global_ring_waveform
+        if self.path_parser.has_ring_mod:
+            if 'ring_waveform' in self.path_parser.fixed_values:
+                ring_waveform = self.synth_state.global_ring_waveform
+                log(TAG_PATCH, f"Using fixed ring waveform: {self.path_parser.fixed_values['ring_waveform']}")
+            elif self.synth_state.ring_morph:
+                midi_value = int(self.synth_state.current_ring_morph_position * 127)
+                ring_waveform = self.synth_state.ring_morph.get_waveform(midi_value)
+                log(TAG_PATCH, f"Using pre-calculated ring morphed waveform at position {self.synth_state.current_ring_morph_position}")
+            else:
+                ring_waveform = self.synth_state.global_ring_waveform
         
         # Create filter if filter type is specified
         filter_obj = None
         if self.path_parser.filter_type:
-            filter_freq = self.path_parser.current_filter_params['frequency']
-            filter_res = self.path_parser.current_filter_params['resonance']
+            filter_freq = self.synth_state.current_filter_params.get('frequency', 0)
+            filter_res = self.synth_state.current_filter_params.get('resonance', 0)
             
             if 'frequency' in self.path_parser.global_ranges:
                 filter_freq = self.path_parser.convert_value('frequency', filter_freq)
@@ -92,11 +93,16 @@ class MidiHandler:
         
         note_params = {
             'frequency': synthio.midi_to_hz(msg.note),
-            'waveform': waveform,
-            'ring_frequency': self.path_parser.current_ring_params['frequency'],
-            'ring_waveform': ring_waveform,
-            'ring_bend': self.path_parser.current_ring_params['bend']
+            'waveform': waveform
         }
+
+        # Only add ring mod params if ring mod is enabled
+        if self.path_parser.has_ring_mod:
+            note_params.update({
+                'ring_frequency': self.synth_state.current_ring_params.get('frequency', 0),
+                'ring_waveform': ring_waveform,
+                'ring_bend': self.synth_state.current_ring_params.get('bend', 0)
+            })
         
         # Only add filter if it was created successfully
         if filter_obj:
@@ -156,7 +162,7 @@ class MidiHandler:
         if (path_parts[0] == 'oscillator' and 
             path_parts[1] == 'waveform' and 
             path_parts[2] == 'morph'):
-            self.path_parser.current_morph_position = value
+            self.synth_state.current_morph_position = value
             if self.synth_state.base_morph:
                 new_waveform = self.synth_state.base_morph.get_waveform(midi_value)
                 for voice in self.voice_pool.voices:
@@ -168,7 +174,7 @@ class MidiHandler:
               path_parts[1] == 'ring' and 
               path_parts[2] == 'waveform' and 
               path_parts[3] == 'morph'):
-            self.path_parser.current_ring_morph_position = value
+            self.synth_state.current_ring_morph_position = value
             if self.synth_state.ring_morph:
                 new_ring_waveform = self.synth_state.ring_morph.get_waveform(midi_value)
                 for voice in self.voice_pool.voices:
@@ -183,20 +189,20 @@ class MidiHandler:
     def _update_parameter_value(self, param_name, value, synth):
         """Update specific parameter values and apply changes."""
         if param_name == 'ring_frequency':
-            self.path_parser.current_ring_params['frequency'] = value
+            self.synth_state.current_ring_params['frequency'] = value
             for voice in self.voice_pool.voices:
                 if voice.is_active():
                     self.synthesizer.handle_voice_update(voice, ring_frequency=value)
         elif param_name == 'ring_bend':
-            self.path_parser.current_ring_params['bend'] = value
+            self.synth_state.current_ring_params['bend'] = value
             for voice in self.voice_pool.voices:
                 if voice.is_active():
                     self.synthesizer.handle_voice_update(voice, ring_bend=value)
         elif param_name in ('attack_time', 'decay_time', 'release_time', 'attack_level', 'sustain_level'):
-            self.path_parser.current_envelope_params[param_name] = value
-            synth.envelope = self.path_parser.update_envelope()
+            self.synth_state.current_envelope_params[param_name] = value
+            synth.envelope = self.synthesizer._create_envelope()
         elif param_name in ('frequency', 'resonance'):
-            self.path_parser.current_filter_params[param_name] = value
+            self.synth_state.current_filter_params[param_name] = value
             self._update_filter_params(synth)
 
     def _update_filter_params(self, synth):
@@ -205,8 +211,8 @@ class MidiHandler:
             return
             
         # Convert filter parameters using ranges if available
-        filter_freq = self.path_parser.current_filter_params['frequency']
-        filter_res = self.path_parser.current_filter_params['resonance']
+        filter_freq = self.synth_state.current_filter_params.get('frequency', 0)
+        filter_res = self.synth_state.current_filter_params.get('resonance', 0)
         
         if 'frequency' in self.path_parser.global_ranges:
             filter_freq = self.path_parser.convert_value('frequency', filter_freq)

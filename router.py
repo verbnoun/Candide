@@ -40,30 +40,24 @@ class MidiRange:
 class PathParser:
     """Parses instrument paths and manages parameter conversions."""
     def __init__(self):
+        # Core collections for parameter management
         self.global_ranges = {}  # name -> MidiRange
         self.key_ranges = {}     # name -> MidiRange
-        self.fixed_values = {}   # name -> value (e.g. waveform types)
         self.midi_mappings = {}  # trigger -> (path, param_name)
         self.enabled_messages = set()
         self.enabled_ccs = set()
-        self.filter_type = None  # Current filter type
-        self.current_filter_params = {
-            'frequency': 0,
-            'resonance': 0
-        }
-        self.current_ring_params = {
-            'frequency': 20,  # Default to minimum
-            'bend': 0,       # Default to no bend
-            'waveform': None # Will be set during parsing
-        }
-        # Initialize envelope params as empty - will only be populated if envelope paths exist
-        self.current_envelope_params = {}
-        # Keep morph state separate and clear
-        self.current_morph_position = 0.0  # Base waveform morph (CC72)
-        self.current_ring_morph_position = 0.0  # Ring waveform morph (CC76)
-        self.waveform_sequence = None  # Base waveform sequence
-        self.ring_waveform_sequence = None  # Ring waveform sequence
-        self.has_envelope_paths = False  # Track if envelope paths are present
+        
+        # Feature flags - only set when corresponding paths are found
+        self.has_envelope_paths = False
+        self.has_filter = False
+        self.has_ring_mod = False
+        self.has_waveform_morph = False
+        self.has_ring_waveform_morph = False
+        
+        # Path configurations - only set when found in paths
+        self.filter_type = None
+        self.waveform_sequence = None
+        self.ring_waveform_sequence = None
         
     def parse_paths(self, paths, config_name=None):
         """Parse instrument paths to extract parameters and mappings."""
@@ -94,21 +88,21 @@ class PathParser:
             if not self.enabled_messages:
                 raise ValueError("No MIDI message types enabled in paths")
                 
+            # Log only features and parameters that were explicitly defined
             log(TAG_ROUTE, "Path parsing complete:")
             log(TAG_ROUTE, f"Global parameters: {list(self.global_ranges.keys())}")
             log(TAG_ROUTE, f"Per-key parameters: {list(self.key_ranges.keys())}")
-            log(TAG_ROUTE, f"Fixed values: {self.fixed_values}")
             log(TAG_ROUTE, f"Enabled messages: {self.enabled_messages}")
             log(TAG_ROUTE, f"Enabled CCs: {self.enabled_ccs}")
-            log(TAG_ROUTE, f"Filter type: {self.filter_type}")
-            log(TAG_ROUTE, f"Ring mod params: {self.current_ring_params}")
-            log(TAG_ROUTE, f"Has envelope paths: {self.has_envelope_paths}")
-            if self.has_envelope_paths:
-                log(TAG_ROUTE, f"Envelope params: {self.current_envelope_params}")
-            if self.waveform_sequence:
-                log(TAG_ROUTE, f"Waveform morph sequence: {'-'.join(self.waveform_sequence)}")
-            if self.ring_waveform_sequence:
-                log(TAG_ROUTE, f"Ring waveform morph sequence: {'-'.join(self.ring_waveform_sequence)}")
+            
+            if self.has_filter:
+                log(TAG_ROUTE, f"Found filter type: {self.filter_type}")
+                    
+            if self.has_waveform_morph:
+                log(TAG_ROUTE, f"Found waveform morph sequence: {'-'.join(self.waveform_sequence)}")
+                
+            if self.has_ring_waveform_morph:
+                log(TAG_ROUTE, f"Found ring waveform morph sequence: {'-'.join(self.ring_waveform_sequence)}")
                 
             log(TAG_ROUTE, "----------------------------------------")
             
@@ -120,27 +114,21 @@ class PathParser:
         """Reset all collections before parsing new paths."""
         self.global_ranges.clear()
         self.key_ranges.clear()
-        self.fixed_values.clear()
         self.midi_mappings.clear()
         self.enabled_messages.clear()
         self.enabled_ccs.clear()
+        
+        # Reset feature flags
+        self.has_envelope_paths = False
+        self.has_filter = False
+        self.has_ring_mod = False
+        self.has_waveform_morph = False
+        self.has_ring_waveform_morph = False
+        
+        # Reset path configurations
         self.filter_type = None
-        self.current_filter_params = {
-            'frequency': 0,
-            'resonance': 0
-        }
-        self.current_ring_params = {
-            'frequency': 20,  # Default to minimum
-            'bend': 0,       # Default to no bend
-            'waveform': None # Will be set during parsing
-        }
-        # Reset envelope params to empty
-        self.current_envelope_params = {}
-        self.current_morph_position = 0.0
-        self.current_ring_morph_position = 0.0
         self.waveform_sequence = None
         self.ring_waveform_sequence = None
-        self.has_envelope_paths = False
 
     def _parse_range(self, range_str):
         """Parse a range string, handling negative numbers with 'n' prefix."""
@@ -173,6 +161,7 @@ class PathParser:
         # Check for filter configuration
         if parts[0] == 'filter':
             if len(parts) >= 2 and parts[1] in ('low_pass', 'high_pass', 'band_pass', 'notch'):
+                self.has_filter = True
                 self.filter_type = parts[1]
                 log(TAG_ROUTE, f"Found filter type: {self.filter_type}")
 
@@ -186,34 +175,25 @@ class PathParser:
             if parts[1] == 'waveform':
                 # Check if this is a morphing waveform
                 if len(parts) >= 3 and parts[2] == 'morph':
+                    self.has_waveform_morph = True
                     log(TAG_ROUTE, "Found base waveform morph configuration")
                     if len(parts) >= 5 and '-' in parts[4]:
                         self.waveform_sequence = parts[4].split('-')
                         log(TAG_ROUTE, f"Found waveform sequence: {self.waveform_sequence}")
                         self.global_ranges['morph'] = MidiRange('morph', 0, 1)
-                # Fixed waveform
-                elif len(parts) >= 4 and parts[2] == 'global':
-                    waveform_type = parts[3]
-                    if waveform_type in ('triangle', 'sine', 'square', 'saw'):
-                        self.fixed_values['waveform'] = waveform_type
-                        log(TAG_ROUTE, f"Found fixed base waveform: {waveform_type}")
 
         # Handle ring modulation configuration
         if parts[0] == 'oscillator' and len(parts) >= 2 and parts[1] == 'ring':
+            self.has_ring_mod = True
             if len(parts) >= 3:
                 if parts[2] == 'waveform':
                     # Check if this is a morphing ring waveform
                     if len(parts) >= 4 and parts[3] == 'morph':
+                        self.has_ring_waveform_morph = True
                         if len(parts) >= 6 and '-' in parts[5]:
                             self.ring_waveform_sequence = parts[5].split('-')
                             log(TAG_ROUTE, f"Found ring waveform sequence: {self.ring_waveform_sequence}")
                             self.global_ranges['ring_morph'] = MidiRange('ring_morph', 0, 1)
-                    # Fixed ring waveform
-                    elif len(parts) >= 5 and parts[3] == 'global':
-                        waveform_type = parts[4]
-                        if waveform_type in ('triangle', 'sine', 'square', 'saw'):
-                            self.current_ring_params['waveform'] = waveform_type
-                            log(TAG_ROUTE, f"Found fixed ring waveform: {waveform_type}")
                         
         # Find parameter scope and name
         scope = None
@@ -283,26 +263,3 @@ class PathParser:
         if param_name not in ranges:
             raise KeyError(f"No range defined for parameter: {param_name}")
         return ranges[param_name].convert(midi_value)
-
-    def update_envelope(self):
-        """Create a new envelope with current parameters."""
-        # Only create envelope if envelope paths are present
-        if not self.has_envelope_paths:
-            log(TAG_ROUTE, "No envelope paths found - using instant on/off envelope")
-            return None
-            
-        # Ensure all required envelope parameters are present
-        required_params = ['attack_time', 'decay_time', 'release_time', 'attack_level', 'sustain_level']
-        missing_params = [p for p in required_params if p not in self.current_envelope_params]
-        if missing_params:
-            log(TAG_ROUTE, f"Missing required envelope parameters: {missing_params}", is_error=True)
-            return None
-            
-        log(TAG_ROUTE, "Creating envelope with params: {}".format(self.current_envelope_params))
-        return synthio.Envelope(
-            attack_time=self.current_envelope_params['attack_time'],
-            decay_time=self.current_envelope_params['decay_time'],
-            release_time=self.current_envelope_params['release_time'],
-            attack_level=self.current_envelope_params['attack_level'],
-            sustain_level=self.current_envelope_params['sustain_level']
-        )
