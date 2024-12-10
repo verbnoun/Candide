@@ -1,0 +1,132 @@
+# Note On Bundle - Direct Action
+note/press/per_key/note_on
+
+# Note On Bundle - Values
+oscillator/frequency/per_key/note_number/note_on
+oscillator/amplitude/per_key/velocity/note_on
+oscillator/waveform/global/sine/note_on
+oscillator/waveform/global/triangle/note_on
+oscillator/waveform/global/square/note_on
+oscillator/waveform/global/saw/note_on
+
+# Note Off Bundle - Direct Action
+note/release/per_key/note_off
+
+# Note Off Bundle - Values
+amplifier/envelope/release_time/per_key/velocity/note_off
+
+# Channel Pressure
+oscillator/amplitude/per_key/pressure/pressure
+filter/frequency/per_key/pressure/pressure
+oscillator/timbre/per_key/pressure/pressure
+
+# Pitch Bend
+oscillator/frequency/per_key/n12-12/pitch_bend
+oscillator/ring/bend/per_key/n12-12/pitch_bend
+
+# Control Change - Filter Types (FilterMode)
+filter/low_pass/frequency/global/20-20000/cc70
+filter/high_pass/frequency/global/20-20000/cc71
+filter/band_pass/frequency/global/20-20000/cc72
+filter/notch/frequency/global/20-20000/cc73
+filter/low_pass/resonance/global/0.1-2.0/cc74
+filter/high_pass/resonance/global/0.1-2.0/cc75
+filter/band_pass/resonance/global/0.1-2.0/cc76
+filter/notch/resonance/global/0.1-2.0/cc77
+
+# Control Change - Envelope
+amplifier/envelope/attack_time/global/0.001-0.5/cc20
+amplifier/envelope/attack_level/global/0.001-1.0/cc21
+amplifier/envelope/decay_time/global/0.001-0.25/cc22
+amplifier/envelope/sustain_level/global/0.001-1.0/cc23
+amplifier/envelope/release_time/global/0.001-1.0/cc24
+
+# Control Change - Ring Modulation
+oscillator/ring/frequency/global/20-2000/cc30
+oscillator/ring/frequency/per_key/20-2000/cc31
+oscillator/ring/bend/global/n12-12/cc32
+oscillator/ring/bend/per_key/n12-12/cc33
+oscillator/ring/waveform/global/sine/note_on
+oscillator/ring/waveform/global/triangle/note_on
+oscillator/ring/waveform/global/square/note_on
+oscillator/ring/waveform/global/saw/note_on
+
+# Control Change - Waveform Morph
+oscillator/waveform/morph/global/sine-triangle/cc40
+oscillator/waveform/morph/global/triangle-square/cc41
+oscillator/waveform/morph/global/square-saw/cc42
+oscillator/waveform/morph/global/sine-triangle-square-saw/cc43
+
+# Control Change - Ring Waveform Morph
+oscillator/ring/waveform/morph/global/sine-triangle/cc50
+oscillator/ring/waveform/morph/global/triangle-square/cc51
+oscillator/ring/waveform/morph/global/square-saw/cc52
+oscillator/ring/waveform/morph/global/sine-triangle-square-saw/cc53
+
+# Fixed Values
+oscillator/frequency/per_key/64/set
+oscillator/frequency/global/440/set
+filter/low_pass/frequency/global/1000/set
+filter/low_pass/resonance/global/1.5/set
+amplifier/envelope/attack_time/global/0.1/set
+oscillator/ring/frequency/global/100/set
+
+# Per-Key Variations
+filter/low_pass/frequency/per_key/20-20000/cc80
+filter/low_pass/resonance/per_key/0.1-2.0/cc81
+amplifier/envelope/attack_time/per_key/0.001-0.5/cc82
+amplifier/envelope/release_time/per_key/0.001-1.0/cc83
+
+# Multiple CCs to Same Target
+filter/low_pass/frequency/global/20-20000/cc90
+filter/low_pass/frequency/global/20-20000/cc91
+filter/low_pass/frequency/global/20-20000/cc92
+
+# MPE Paths
+oscillator/pitch/per_key/n48-48/cc85
+oscillator/timbre/per_key/0-127/cc74
+oscillator/pressure/per_key/0-127/cc67
+
+# Math Operations
+math/sum/global/0-1/cc100
+math/add_sub/global/n1-1/cc101
+math/product/global/0-2/cc102
+math/mul_div/global/0.1-10/cc103
+math/scale_offset/global/n1-1/cc104
+math/offset_scale/global/n1-1/cc105
+math/lerp/global/0-1/cc106
+math/constrained_lerp/global/0-1/cc107
+math/div_add/global/0.1-10/cc108
+math/add_div/global/0.1-10/cc109
+math/mid/global/0-1/cc110
+math/max/global/0-1/cc111
+math/min/global/0-1/cc112
+math/abs/global/n1-1/cc113
+
+# LFO Parameters
+lfo/rate/global/0.1-20/cc120
+lfo/scale/global/0-1/cc121
+lfo/offset/global/n1-1/cc122
+lfo/phase_offset/global/0-1/cc123
+lfo/once/global/0-1/cc124
+lfo/interpolate/global/0-1/cc125
+
+# LFO Waveforms
+lfo/waveform/global/sine/note_on
+lfo/waveform/global/triangle/note_on
+lfo/waveform/global/square/note_on
+lfo/waveform/global/saw/note_on
+lfo/waveform/global/noise/note_on
+lfo/waveform/global/white_noise/note_on
+
+# LFO Targets
+lfo/target/filter_frequency/global/20-20000/cc130
+lfo/target/filter_resonance/global/0.1-2.0/cc131
+lfo/target/amplitude/global/0-1/cc132
+lfo/target/ring_frequency/global/20-2000/cc133
+
+# Combined Interface Examples
+math/scale_offset/filter_frequency/global/20-20000/cc140
+lfo/target/math_output/global/0-1/cc141
+filter/low_pass/frequency/lfo_modulation/20-20000/cc142
+oscillator/ring/frequency/math_scale/20-2000/cc143

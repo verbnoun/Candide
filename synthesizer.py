@@ -99,10 +99,7 @@ class Synthesizer:
         # Update filter on all voices
         for voice in self.voice_pool.voices:
             if voice.is_active():
-                self.handle_voice_update(voice,
-                    filter_type=self.path_parser.filter_type,
-                    filter_frequency=self.state.get_value('filter_frequency'),
-                    filter_resonance=self.state.get_value('filter_resonance'))
+                self._update_voice_filter(voice)
         log(TAG_SYNTH, f"Updated global filter {param_name}={value}")
 
     def update_global_waveform(self, waveform_type):
@@ -122,7 +119,7 @@ class Synthesizer:
         if self.state.base_morph:
             for voice in self.voice_pool.voices:
                 if voice.is_active():
-                    self.handle_voice_update(voice, morph_position=midi_value)
+                    self._update_voice_morph(voice, midi_value)
         log(TAG_SYNTH, f"Updated morph position: {position} (MIDI: {midi_value})")
 
     def update_ring_modulation(self, param_name, value):
@@ -132,27 +129,61 @@ class Synthesizer:
         # Update all active voices
         for voice in self.voice_pool.voices:
             if voice.is_active():
-                if param_name == 'ring_frequency':
-                    self.handle_voice_update(voice, ring_frequency=value)
-                elif param_name == 'ring_bend':
-                    self.handle_voice_update(voice, ring_bend=value)
-                elif param_name == 'ring_morph':
-                    self.handle_voice_update(voice, ring_morph_position=value)
+                self._update_voice_ring_mod(voice, param_name, value)
         log(TAG_SYNTH, f"Updated ring modulation {param_name}={value}")
 
-    def update_voice_parameter(self, param_name, value, voice=None):
-        """Update parameter on specific voice or all active voices."""
-        if voice:
-            # Update single voice
-            if voice.is_active():
-                self.handle_voice_update(voice, **{param_name: value})
-                log(TAG_SYNTH, f"Updated voice {voice.get_address()} {param_name}={value}")
-        else:
-            # Update all active voices
-            for v in self.voice_pool.voices:
-                if v.is_active():
-                    self.handle_voice_update(v, **{param_name: value})
-            log(TAG_SYNTH, f"Updated all voices {param_name}={value}")
+    def update_voice_parameter(self, param_name, value, channel):
+        """Update parameter on voice by channel."""
+        voice = self.voice_pool.get_voice_by_channel(channel)
+        if voice and voice.is_active():
+            self._update_voice_param(voice, param_name, value)
+            log(TAG_SYNTH, f"Updated voice {voice.get_address()} {param_name}={value}")
+
+    def _update_voice_param(self, voice, param_name, value):
+        """Internal method to update voice parameter."""
+        if voice.active_note and hasattr(voice.active_note, param_name):
+            try:
+                setattr(voice.active_note, param_name, value)
+                log(TAG_SYNTH, f"Updated voice parameter {param_name} = {value}")
+            except Exception as e:
+                log(TAG_SYNTH, f"Failed to update voice parameter {param_name}: {str(e)}", is_error=True)
+
+    def _update_voice_filter(self, voice):
+        """Internal method to update voice filter."""
+        if voice.active_note:
+            try:
+                filter = SynthioInterfaces.create_filter(
+                    self.synth,
+                    self.path_parser.filter_type,
+                    self.state.get_value('filter_frequency'),
+                    self.state.get_value('filter_resonance')
+                )
+                if filter:
+                    voice.active_note.filter = filter
+            except Exception as e:
+                log(TAG_SYNTH, f"Failed to update voice filter: {str(e)}", is_error=True)
+
+    def _update_voice_morph(self, voice, midi_value):
+        """Internal method to update voice waveform morph."""
+        if voice.active_note and self.state.base_morph:
+            try:
+                voice.active_note.waveform = self.state.base_morph.get_waveform(midi_value)
+            except Exception as e:
+                log(TAG_SYNTH, f"Failed to update voice morph: {str(e)}", is_error=True)
+
+    def _update_voice_ring_mod(self, voice, param_name, value):
+        """Internal method to update voice ring modulation."""
+        if voice.active_note:
+            try:
+                if param_name == 'ring_frequency':
+                    voice.active_note.ring_frequency = value
+                elif param_name == 'ring_bend':
+                    voice.active_note.ring_bend = value
+                elif param_name == 'ring_morph':
+                    if self.state.ring_morph:
+                        voice.active_note.ring_waveform = self.state.ring_morph.get_waveform(value)
+            except Exception as e:
+                log(TAG_SYNTH, f"Failed to update voice ring mod: {str(e)}", is_error=True)
 
     def _setup_synthio(self):
         """Initialize or update synthio synthesizer based on global settings."""
@@ -439,50 +470,3 @@ class Synthesizer:
         if voice and voice.active_note:
             self.synth.release(voice.active_note)
             voice.active_note = None
-            
-    def handle_voice_update(self, voice, **params):
-        """Update voice parameters by coordinating between voice pool and synthio."""
-        if voice and voice.active_note:
-            # Handle morph position updates
-            if 'morph_position' in params:
-                morph_pos = params.pop('morph_position')
-                if self.state.base_morph:
-                    params['waveform'] = self.state.base_morph.get_waveform(morph_pos)
-                    
-            if 'ring_morph_position' in params:
-                morph_pos = params.pop('ring_morph_position')
-                if self.state.ring_morph:
-                    params['ring_waveform'] = self.state.ring_morph.get_waveform(morph_pos)
-            
-            # Create new filter if needed
-            if ('filter_type' in params and 'filter_frequency' in params and 
-                'filter_resonance' in params):
-                try:
-                    filter = SynthioInterfaces.create_filter(
-                        self.synth,
-                        params.pop('filter_type'),
-                        params.pop('filter_frequency'),
-                        params.pop('filter_resonance')
-                    )
-                    if filter:
-                        params['filter'] = filter
-                except Exception as e:
-                    log(TAG_SYNTH, f"Failed to create filter: {str(e)}", is_error=True)
-            
-            # Type check envelope parameters
-            for param in ['attack_time', 'decay_time', 'release_time', 'attack_level', 'sustain_level']:
-                if param in params:
-                    try:
-                        params[param] = float(params[param])
-                    except (TypeError, ValueError) as e:
-                        log(TAG_SYNTH, f"Invalid envelope parameter {param}: {params[param]} - {str(e)}", is_error=True)
-                        del params[param]
-            
-            # Update note parameters
-            for param, value in params.items():
-                if hasattr(voice.active_note, param):
-                    try:
-                        setattr(voice.active_note, param, value)
-                        log(TAG_SYNTH, f"Updated voice parameter {param} = {value}")
-                    except Exception as e:
-                        log(TAG_SYNTH, f"Failed to update voice parameter {param}: {str(e)}", is_error=True)

@@ -7,7 +7,6 @@ class MidiHandler:
     """Handles MIDI message processing and routing."""
     def __init__(self, synth_state, voice_pool, path_parser):
         self.synth_state = synth_state
-        self.voice_pool = voice_pool
         self.path_parser = path_parser
         self.subscription = None
         self.synthesizer = None  # Set by Synthesizer class
@@ -44,57 +43,139 @@ class MidiHandler:
             self.handle_pressure(msg, synth)
 
     def handle_note_on(self, msg, synth):
-        log(TAG_PATCH, "Targeting {}.{} with note-on".format(msg.note, msg.channel))
-        self.synthesizer.handle_note_on(msg.note, msg.channel)
+        """Handle note-on message using routing table."""
+        # Get note number from MIDI (pass through)
+        note_number = msg.note
+        log(TAG_PATCH, "Targeting {}.{} with note-on".format(note_number, msg.channel))
+        
+        # Get all actions for note_on
+        actions = self.path_parser.midi_mappings.get('note_on', [])
+        
+        # First handle press action
+        for action in actions:
+            if 'action' in action and action['action'] == 'press':
+                if action['handler'] == 'handle_press':
+                    # Let synthesizer handle voice creation and note press
+                    self.synthesizer.handle_note_on(note_number, msg.channel)
+                    break
+                    
+        # Then handle all other actions
+        for action in actions:
+            if 'action' not in action and action['handler'] != 'handle_press':  # Skip press action
+                # Get value based on source/lookup/value
+                if 'source' in action:
+                    if action['source'] == 'note_number':
+                        value = note_number
+                    elif action['source'] == 'velocity':
+                        value = msg.velocity
+                elif 'lookup' in action:
+                    value = action['lookup'].convert(msg.note)
+                else:
+                    value = action['value']
+                    
+                # Route to appropriate handler
+                handler = getattr(self.synthesizer, action['handler'])
+                if action['scope'] == 'per_key':
+                    handler(action['target'], value, msg.channel)  # Pass channel
+                else:
+                    handler(action['target'], value)
 
     def handle_note_off(self, msg, synth):
-        log(TAG_PATCH, "Targeting {}.{} with note-off".format(msg.note, msg.channel))
-        self.synthesizer.handle_note_off(msg.note, msg.channel)
+        """Handle note-off message using routing table."""
+        # Get note number from MIDI (pass through)
+        note_number = msg.note
+        log(TAG_PATCH, "Targeting {}.{} with note-off".format(note_number, msg.channel))
+        
+        # Get all actions for note_off
+        actions = self.path_parser.midi_mappings.get('note_off', [])
+        
+        # First handle release action
+        for action in actions:
+            if 'action' in action and action['action'] == 'release':
+                if action['handler'] == 'handle_release':
+                    # Let synthesizer handle voice release
+                    self.synthesizer.handle_note_off(note_number, msg.channel)
+                    break
+                    
+        # Then handle any other actions
+        for action in actions:
+            if 'action' not in action and action['handler'] != 'handle_release':  # Skip release action
+                # Get value based on source/lookup/value
+                if 'source' in action:
+                    if action['source'] == 'velocity':
+                        value = msg.velocity
+                elif 'lookup' in action:
+                    value = action['lookup'].convert(msg.velocity)
+                else:
+                    value = action['value']
+                    
+                # Route to appropriate handler
+                handler = getattr(self.synthesizer, action['handler'])
+                if action['scope'] == 'per_key':
+                    handler(action['target'], value, msg.channel)  # Pass channel
+                else:
+                    handler(action['target'], value)
 
     def handle_cc(self, msg, synth):
+        """Handle CC message using routing table."""
         cc_trigger = f"cc{msg.control}"
         if msg.control in self.path_parser.enabled_ccs:
-            path_info = self.path_parser.midi_mappings.get(cc_trigger)
-            if path_info:
-                path, param_name, routing_info = path_info
+            # Get all actions for this CC
+            actions = self.path_parser.midi_mappings.get(cc_trigger, [])
+            
+            # Execute each action
+            for action in actions:
+                # Get value based on lookup/value
+                if 'lookup' in action:
+                    value = action['lookup'].convert(msg.value)
+                else:
+                    value = action['value']
+                    
+                log(TAG_PATCH, f"CC{msg.control} -> {action['target']} = {value}")
                 
-                # Convert MIDI value using router's lookup table
-                value = self.path_parser.convert_value(param_name, msg.value, routing_info['scope'] == 'global')
-                log(TAG_PATCH, f"Updated {path} = {value}")
-                
-                # Route value based on target
-                if routing_info['target'] == 'synthio.envelope':
-                    self.synthesizer.update_global_envelope(param_name, value)
-                elif routing_info['target'] == 'synthio.filter':
-                    self.synthesizer.update_global_filter(param_name, value)
-                elif routing_info['target'] == 'synthio.morph':
-                    self.synthesizer.update_morph_position(value, msg.value)  # Pass both converted and MIDI value
-                elif routing_info['target'] == 'synthio.ring':
-                    self.synthesizer.update_ring_modulation(param_name, value)
-                elif routing_info['target'] == 'voice':
-                    self.synthesizer.update_voice_parameter(param_name, value)
+                # Route to appropriate handler
+                handler = getattr(self.synthesizer, action['handler'])
+                if action['scope'] == 'per_key':
+                    handler(action['target'], value, msg.channel)  # Pass channel
+                else:
+                    handler(action['target'], value)
 
     def handle_pitch_bend(self, msg, synth):
+        """Handle pitch bend message using routing table."""
         if 'pitchbend' in self.path_parser.enabled_messages:
             midi_value = (msg.pitch_bend >> 7) & 0x7F
-            voice = self.voice_pool.get_voice_by_channel(msg.channel)
-            if voice:
-                for param_name, route in self.path_parser.key_ranges.items():
-                    if 'pitch_bend' in self.path_parser.midi_mappings:
-                        # Convert MIDI value using router's lookup table
-                        value = route.convert(midi_value)
-                        # Use routing info to determine target
-                        if route.routing_info['target'] == 'voice':
-                            self.synthesizer.update_voice_parameter(param_name, value, voice)
+            
+            # Get all actions for pitch_bend
+            actions = self.path_parser.midi_mappings.get('pitch_bend', [])
+            
+            # Execute each action
+            for action in actions:
+                # Get value based on lookup
+                if 'lookup' in action:
+                    value = action['lookup'].convert(midi_value)
+                    
+                    # Route to appropriate handler
+                    handler = getattr(self.synthesizer, action['handler'])
+                    if action['scope'] == 'per_key':
+                        handler(action['target'], value, msg.channel)  # Pass channel
+                    else:
+                        handler(action['target'], value)
 
     def handle_pressure(self, msg, synth):
+        """Handle pressure message using routing table."""
         if 'pressure' in self.path_parser.enabled_messages:
-            voice = self.voice_pool.get_voice_by_channel(msg.channel)
-            if voice:
-                for param_name, route in self.path_parser.key_ranges.items():
-                    if 'pressure' in self.path_parser.midi_mappings:
-                        # Convert MIDI value using router's lookup table
-                        value = route.convert(msg.pressure)
-                        # Use routing info to determine target
-                        if route.routing_info['target'] == 'voice':
-                            self.synthesizer.update_voice_parameter(param_name, value, voice)
+            # Get all actions for pressure
+            actions = self.path_parser.midi_mappings.get('pressure', [])
+            
+            # Execute each action
+            for action in actions:
+                # Get value based on lookup
+                if 'lookup' in action:
+                    value = action['lookup'].convert(msg.pressure)
+                    
+                    # Route to appropriate handler
+                    handler = getattr(self.synthesizer, action['handler'])
+                    if action['scope'] == 'per_key':
+                        handler(action['target'], value, msg.channel)  # Pass channel
+                    else:
+                        handler(action['target'], value)
