@@ -13,18 +13,22 @@ from interfaces import SynthioInterfaces, WaveformMorph
 class SynthState:
     """Manages synthesizer state including waveforms and parameters."""
     def __init__(self):
-        # Waveform state
+        # Waveform objects (not values - these are the actual waveform buffers)
         self.global_waveform = None
         self.global_ring_waveform = None
         self.base_morph = None
         self.ring_morph = None
         
-        # Runtime parameter values (moved from router)
-        self.current_morph_position = 0.0
-        self.current_ring_morph_position = 0.0
-        self.current_filter_params = {}  # frequency, resonance
-        self.current_ring_params = {}    # frequency, bend, waveform
-        self.current_envelope_params = {} # attack_time, decay_time, etc.
+        # All mutable values in one place
+        self.set_values = {}
+
+    def update_value(self, name, value):
+        """Update any value in state. Creates new value if it doesn't exist."""
+        self.set_values[name] = value
+
+    def get_value(self, name):
+        """Get any value from state. Returns None if value doesn't exist."""
+        return self.set_values.get(name)
 
 class SynthMonitor:
     """Handles health monitoring and error recovery."""
@@ -85,7 +89,16 @@ class Synthesizer:
         try:
             self._configure_waveforms()
             initial_envelope = self._create_envelope()
-            log(TAG_SYNTH, f"Created initial envelope with params: {self.state.current_envelope_params}")
+            
+            # Get envelope params for logging
+            envelope_params = {
+                'attack_time': self.state.get_value('attack_time'),
+                'decay_time': self.state.get_value('decay_time'),
+                'release_time': self.state.get_value('release_time'),
+                'attack_level': self.state.get_value('attack_level'),
+                'sustain_level': self.state.get_value('sustain_level')
+            }
+            log(TAG_SYNTH, f"Created initial envelope with params: {envelope_params}")
             
             # Use interface to create synthesizer
             self.synth = SynthioInterfaces.create_synthesizer(
@@ -112,7 +125,14 @@ class Synthesizer:
             return None
             
         try:
-            envelope = synthio.Envelope(**self.state.current_envelope_params)
+            envelope_params = {
+                'attack_time': self.state.get_value('attack_time'),
+                'decay_time': self.state.get_value('decay_time'),
+                'release_time': self.state.get_value('release_time'),
+                'attack_level': self.state.get_value('attack_level'),
+                'sustain_level': self.state.get_value('sustain_level')
+            }
+            envelope = synthio.Envelope(**envelope_params)
             return envelope
         except Exception as e:
             log(TAG_SYNTH, f"Error creating envelope: {str(e)}", is_error=True)
@@ -120,12 +140,16 @@ class Synthesizer:
 
     def _configure_waveforms(self):
         """Configure base and ring waveforms based on path configuration."""
+        # Store values from paths in state
+        for name, value in self.path_parser.set_values.items():
+            self.state.update_value(name, value)
+            
         # Configure base waveform
-        if 'waveform' in self.path_parser.fixed_values:
-            waveform_type = self.path_parser.fixed_values['waveform']
+        if 'waveform' in self.path_parser.set_values:
+            waveform_type = self.state.get_value('waveform')
             self.state.global_waveform = SynthioInterfaces.create_waveform(waveform_type)
             self.state.base_morph = None
-            log(TAG_SYNTH, f"Created fixed base waveform: {waveform_type}")
+            log(TAG_SYNTH, f"Created base waveform: {waveform_type}")
         elif self.path_parser.waveform_sequence:
             self.state.base_morph = WaveformMorph('base', self.path_parser.waveform_sequence)
             self.state.global_waveform = self.state.base_morph.get_waveform(0)
@@ -136,11 +160,11 @@ class Synthesizer:
             
         # Configure ring waveform if ring mod is enabled
         if self.path_parser.has_ring_mod:
-            if 'ring_waveform' in self.path_parser.fixed_values:
-                ring_type = self.path_parser.fixed_values['ring_waveform']
+            if 'ring_waveform' in self.path_parser.set_values:
+                ring_type = self.state.get_value('ring_waveform')
                 self.state.global_ring_waveform = SynthioInterfaces.create_waveform(ring_type)
                 self.state.ring_morph = None
-                log(TAG_SYNTH, f"Created fixed ring waveform: {ring_type}")
+                log(TAG_SYNTH, f"Created ring waveform: {ring_type}")
             elif self.path_parser.ring_waveform_sequence:
                 self.state.ring_morph = WaveformMorph('ring', self.path_parser.ring_waveform_sequence)
                 self.state.global_ring_waveform = self.state.ring_morph.get_waveform(0)
@@ -270,9 +294,17 @@ class Synthesizer:
         
         # Update voice with the note
         voice.active_note = note
-        
-    def handle_note_off(self, note_number):
+
+    def handle_note_off(self, note_number, channel):
         """Handle note-off by coordinating between voice pool and synthio."""
+        # First try to find voice by exact note and channel
+        voice = self.voice_pool.get_voice_by_channel(channel)
+        if voice and voice.note_number == note_number:
+            self.synth.release(voice.active_note)
+            self.voice_pool.release_note(note_number)
+            return
+            
+        # Fallback to just note number if channel match fails
         voice = self.voice_pool.release_note(note_number)
         if voice and voice.active_note:
             self.synth.release(voice.active_note)

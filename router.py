@@ -5,8 +5,8 @@ import sys
 import array
 from logging import log, TAG_ROUTE
 
-class MidiRange:
-    """Handles parameter range conversion and lookup table generation."""
+class Route:
+    """Creates a route that maps MIDI values to parameter values using a lookup table."""
     def __init__(self, name, min_val, max_val, is_integer=False):
         self.name = name
         self.min_val = float(min_val)
@@ -14,7 +14,7 @@ class MidiRange:
         self.is_integer = is_integer
         self.lookup_table = array.array('f', [0] * 128)
         self._build_lookup()
-        log(TAG_ROUTE, "Created MIDI range: {} [{} to {}] {}".format(
+        log(TAG_ROUTE, "Created route: {} [{} to {}] {}".format(
             name, min_val, max_val, '(integer)' if is_integer else ''))
         
     def _build_lookup(self):
@@ -41,8 +41,9 @@ class PathParser:
     """Parses instrument paths and manages parameter conversions."""
     def __init__(self):
         # Core collections for parameter management
-        self.global_ranges = {}  # name -> MidiRange
-        self.key_ranges = {}     # name -> MidiRange
+        self.global_ranges = {}  # name -> Route
+        self.key_ranges = {}     # name -> Route
+        self.set_values = {}     # Values that have been set
         self.midi_mappings = {}  # trigger -> (path, param_name)
         self.enabled_messages = set()
         self.enabled_ccs = set()
@@ -92,6 +93,7 @@ class PathParser:
             log(TAG_ROUTE, "Path parsing complete:")
             log(TAG_ROUTE, f"Global parameters: {list(self.global_ranges.keys())}")
             log(TAG_ROUTE, f"Per-key parameters: {list(self.key_ranges.keys())}")
+            log(TAG_ROUTE, f"Set values: {self.set_values}")
             log(TAG_ROUTE, f"Enabled messages: {self.enabled_messages}")
             log(TAG_ROUTE, f"Enabled CCs: {self.enabled_ccs}")
             
@@ -114,6 +116,7 @@ class PathParser:
         """Reset all collections before parsing new paths."""
         self.global_ranges.clear()
         self.key_ranges.clear()
+        self.set_values.clear()
         self.midi_mappings.clear()
         self.enabled_messages.clear()
         self.enabled_ccs.clear()
@@ -163,6 +166,7 @@ class PathParser:
             if len(parts) >= 2 and parts[1] in ('low_pass', 'high_pass', 'band_pass', 'notch'):
                 self.has_filter = True
                 self.filter_type = parts[1]
+                self.set_values['filter_type'] = parts[1]
                 log(TAG_ROUTE, f"Found filter type: {self.filter_type}")
 
         # Check for envelope paths
@@ -180,7 +184,13 @@ class PathParser:
                     if len(parts) >= 5 and '-' in parts[4]:
                         self.waveform_sequence = parts[4].split('-')
                         log(TAG_ROUTE, f"Found waveform sequence: {self.waveform_sequence}")
-                        self.global_ranges['morph'] = MidiRange('morph', 0, 1)
+                        self.global_ranges['morph'] = Route('morph', 0, 1)
+                # Fixed waveform
+                elif len(parts) >= 4 and parts[2] == 'global':
+                    waveform_type = parts[3]
+                    if waveform_type in ('triangle', 'sine', 'square', 'saw'):
+                        self.set_values['waveform'] = waveform_type
+                        log(TAG_ROUTE, f"Found base waveform: {waveform_type}")
 
         # Handle ring modulation configuration
         if parts[0] == 'oscillator' and len(parts) >= 2 and parts[1] == 'ring':
@@ -193,7 +203,13 @@ class PathParser:
                         if len(parts) >= 6 and '-' in parts[5]:
                             self.ring_waveform_sequence = parts[5].split('-')
                             log(TAG_ROUTE, f"Found ring waveform sequence: {self.ring_waveform_sequence}")
-                            self.global_ranges['ring_morph'] = MidiRange('ring_morph', 0, 1)
+                            self.global_ranges['ring_morph'] = Route('ring_morph', 0, 1)
+                    # Fixed ring waveform
+                    elif len(parts) >= 5 and parts[3] == 'global':
+                        waveform_type = parts[4]
+                        if waveform_type in ('triangle', 'sine', 'square', 'saw'):
+                            self.set_values['ring_waveform'] = waveform_type
+                            log(TAG_ROUTE, f"Found ring waveform: {waveform_type}")
                         
         # Find parameter scope and name
         scope = None
@@ -248,18 +264,18 @@ class PathParser:
         if range_str:
             try:
                 min_val, max_val = self._parse_range(range_str)
-                range_obj = MidiRange(param_name, min_val, max_val)
+                route = Route(param_name, min_val, max_val)
                 
                 if scope == 'global':
-                    self.global_ranges[param_name] = range_obj
+                    self.global_ranges[param_name] = route
                 else:
-                    self.key_ranges[param_name] = range_obj
+                    self.key_ranges[param_name] = route
             except ValueError as e:
                 raise ValueError(f"Invalid range format {range_str}: {str(e)}")
     
     def convert_value(self, param_name, midi_value, is_global=True):
-        """Convert MIDI value using appropriate range."""
-        ranges = self.global_ranges if is_global else self.key_ranges
-        if param_name not in ranges:
-            raise KeyError(f"No range defined for parameter: {param_name}")
-        return ranges[param_name].convert(midi_value)
+        """Convert MIDI value using appropriate route."""
+        routes = self.global_ranges if is_global else self.key_ranges
+        if param_name not in routes:
+            raise KeyError(f"No route defined for parameter: {param_name}")
+        return routes[param_name].convert(midi_value)
