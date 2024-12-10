@@ -4,21 +4,11 @@
 import sys
 from logging import log, TAG_INST
 
-FILTER_MINIMUM_PATHS = '''
-note/press/per_key/note_on
-note/release/per_key/note_off
-oscillator/frequency/per_key/note_number/note_on
-oscillator/waveform/global/saw/note_on
-
-filter/high_pass/resonance/global/0.1-2.0/cc71
-filter/high_pass/frequency/global/20-20000/cc70
-'''
-
 ENVELOPE_MINIMUM_PATHS = '''
 note/press/per_key/note_on
 note/release/per_key/note_off
 oscillator/frequency/per_key/note_number/note_on
-oscillator/waveform/morph/global/sine-triangle-square-saw/cc2
+oscillator/waveform/global/sine/set
 
 amplifier/envelope/attack_level/global/0.001-1/cc85
 amplifier/envelope/attack_time/global/0.001-0.5/cc73
@@ -99,6 +89,16 @@ note/press/per_key/note_on
 note/release/per_key/note_off
 oscillator/frequency/per_key/note_number/note_on
 oscillator/waveform/global/square/note_on
+'''
+
+FILTER_MINIMUM_PATHS = '''
+note/press/per_key/note_on
+note/release/per_key/note_off
+oscillator/frequency/per_key/note_number/note_on
+oscillator/waveform/global/saw/note_on
+
+filter/high_pass/resonance/global/0.1-2.0/cc71
+filter/high_pass/frequency/global/20-20000/cc70
 '''
 
 class InstrumentManager:

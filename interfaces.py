@@ -4,7 +4,7 @@ import synthio
 import array
 import math
 from constants import SAMPLE_RATE, AUDIO_CHANNEL_COUNT, STATIC_WAVEFORM_SAMPLES, MORPHED_WAVEFORM_SAMPLES
-from logging import log, TAG_SYNTH
+from logging import log, TAG_IFACE
 
 class FilterMode:
     """The type of filter, matching synthio.FilterMode."""
@@ -192,54 +192,48 @@ class SynthioInterfaces:
             note = synthio.Note(**kwargs)
             return note
         except Exception as e:
-            log(TAG_SYNTH, f"Error creating note: {str(e)}", is_error=True)
+            log(TAG_IFACE, f"Error creating note: {str(e)}", is_error=True)
             raise
 
     @staticmethod
-    def create_envelope(attack_time=0.1, decay_time=0.05, release_time=0.2, 
-                       attack_level=1.0, sustain_level=0.8):
-        """Create a synthio envelope with the given parameters."""
+    def create_envelope(**kwargs):
+        """Create a synthio envelope with the given parameters.
+        
+        Optional keyword arguments:
+        - attack_time: Attack time in seconds (float)
+        - decay_time: Decay time in seconds (float)
+        - release_time: Release time in seconds (float)
+        - attack_level: Attack peak level (float)
+        - sustain_level: Sustain level (float)
+        
+        All parameters are optional and will use synthio defaults if not provided.
+        Values must be floats if provided.
+        """
         try:
-            envelope = synthio.Envelope(
-                attack_time=attack_time,
-                decay_time=decay_time, 
-                release_time=release_time,
-                attack_level=attack_level,
-                sustain_level=sustain_level
-            )
+            # Type check any provided parameters
+            for param, value in kwargs.items():
+                if not isinstance(value, float):
+                    raise TypeError(f"Envelope parameter {param} must be float, got {type(value)}")
+            
+            envelope = synthio.Envelope(**kwargs)
             return envelope
         except Exception as e:
-            log(TAG_SYNTH, f"Error creating envelope: {str(e)}", is_error=True)
+            log(TAG_IFACE, f"Error creating envelope: {str(e)}", is_error=True)
             raise
 
     @staticmethod
     def create_filter(synth, filter_type, frequency, Q=0.7071067811865475):
         """Create a synthio filter with the given parameters."""
         try:
-            filter_mode = filter_type
-            if hasattr(filter_type, 'value'):  # For backward compatibility
-                filter_mode = filter_type.value
-            
-            filter = synthio.Filter(mode=filter_mode, frequency=frequency, Q=Q)
-            
-            # Add resonance alias for Q
-            filter.resonance = filter.Q
-            
-            # Add property getters/setters
-            @property
-            def get_frequency(self):
-                return self.frequency
-                
-            @frequency.setter
-            def set_frequency(self, value):
-                self.frequency = value
-                
-            filter.get_frequency = get_frequency
-            filter.set_frequency = set_frequency
-            
+            # Create a dynamic filter using BlockBiquad
+            filter = synthio.BlockBiquad(
+                mode=getattr(FilterMode, filter_type.upper()),
+                frequency=frequency,
+                Q=Q
+            )
             return filter
         except Exception as e:
-            log(TAG_SYNTH, f"Error creating filter: {str(e)}", is_error=True)
+            log(TAG_IFACE, f"Error creating filter: {str(e)}", is_error=True)
             raise
 
     @staticmethod
@@ -247,7 +241,7 @@ class SynthioInterfaces:
         """Get or create a waveform from cache."""
         if waveform_type not in SynthioInterfaces._waveform_cache:
             SynthioInterfaces._waveform_cache[waveform_type] = SynthioInterfaces.create_waveform(waveform_type)
-            log(TAG_SYNTH, f"Created and cached {waveform_type} waveform")
+            log(TAG_IFACE, f"Created and cached {waveform_type} waveform")
         return SynthioInterfaces._waveform_cache[waveform_type]
 
     @staticmethod
@@ -297,7 +291,7 @@ class SynthioInterfaces:
             
             return buffer
         except Exception as e:
-            log(TAG_SYNTH, f"Error creating waveform: {str(e)}", is_error=True)
+            log(TAG_IFACE, f"Error creating waveform: {str(e)}", is_error=True)
             raise
 
     @staticmethod
@@ -336,7 +330,7 @@ class SynthioInterfaces:
             synth = synthio.Synthesizer(**params)
             return synth
         except Exception as e:
-            log(TAG_SYNTH, f"Error creating synthesizer: {str(e)}", is_error=True)
+            log(TAG_IFACE, f"Error creating synthesizer: {str(e)}", is_error=True)
             raise
 
     @staticmethod
@@ -376,11 +370,11 @@ class SynthioInterfaces:
                 value = int(waveform1[idx1] * (1-t) + waveform2[idx2] * t)
                 morphed.append(value)
             
-            log(TAG_SYNTH, f"Created morphed waveform at position {morph_position}")
+            log(TAG_IFACE, f"Created morphed waveform at position {morph_position}")
             return morphed
             
         except Exception as e:
-            log(TAG_SYNTH, f"Error creating morphed waveform: {str(e)}", is_error=True)
+            log(TAG_IFACE, f"Error creating morphed waveform: {str(e)}", is_error=True)
             raise
 
 class WaveformMorph:
@@ -390,14 +384,14 @@ class WaveformMorph:
         self.waveform_sequence = waveform_sequence or ['sine', 'triangle', 'square', 'saw']
         self.lookup_table = []  # Will be 128 morphed waveforms
         self._build_lookup()
-        log(TAG_SYNTH, f"Created waveform morph: {name}")
+        log(TAG_IFACE, f"Created waveform morph: {name}")
         
     def _build_lookup(self):
         """Build lookup table of 128 morphed waveforms for MIDI control."""
         cache_key = '-'.join(self.waveform_sequence)
         if cache_key in SynthioInterfaces._morphed_waveform_cache:
             self.lookup_table = SynthioInterfaces._morphed_waveform_cache[cache_key]
-            log(TAG_SYNTH, f"Using cached morph table for {cache_key}")
+            log(TAG_IFACE, f"Using cached morph table for {cache_key}")
             return
             
         samples = MORPHED_WAVEFORM_SAMPLES
@@ -415,11 +409,11 @@ class WaveformMorph:
             
         # Cache the computed morph table
         SynthioInterfaces._morphed_waveform_cache[cache_key] = self.lookup_table
-        log(TAG_SYNTH, f"Cached morph table for {cache_key}")
+        log(TAG_IFACE, f"Cached morph table for {cache_key}")
     
     def get_waveform(self, midi_value):
         """Get pre-calculated morphed waveform for MIDI value."""
         if not 0 <= midi_value <= 127:
-            log(TAG_SYNTH, f"Invalid MIDI value {midi_value}", is_error=True)
+            log(TAG_IFACE, f"Invalid MIDI value {midi_value}", is_error=True)
             raise ValueError(f"MIDI value must be between 0 and 127")
         return self.lookup_table[midi_value]

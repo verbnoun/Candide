@@ -5,17 +5,25 @@ import sys
 import array
 from logging import log, TAG_ROUTE
 
+# Parameters that should stay as integers
+INTEGER_PARAMS = {
+    'note_number',      # MIDI note numbers are integers
+    'morph_position',   # Used as MIDI value (0-127) for waveform lookup
+    'ring_morph_position'  # Used as MIDI value (0-127) for waveform lookup
+}
+
 class Route:
     """Creates a route that maps MIDI values to parameter values using a lookup table."""
-    def __init__(self, name, min_val, max_val, is_integer=False):
+    def __init__(self, name, min_val, max_val, routing_info, is_integer=False):
         self.name = name
         self.min_val = float(min_val)
         self.max_val = float(max_val)
+        self.routing_info = routing_info  # Complete routing info from path
         self.is_integer = is_integer
         self.lookup_table = array.array('f', [0] * 128)
         self._build_lookup()
-        log(TAG_ROUTE, "Created route: {} [{} to {}] {}".format(
-            name, min_val, max_val, '(integer)' if is_integer else ''))
+        log(TAG_ROUTE, "Created route: {} [{} to {}] {} routing={}".format(
+            name, min_val, max_val, '(integer)' if is_integer else '', routing_info))
         
     def _build_lookup(self):
         """Build MIDI value lookup table for fast conversion."""
@@ -34,7 +42,17 @@ class Route:
         if not 0 <= midi_value <= 127:
             log(TAG_ROUTE, "Invalid MIDI value {} for {}".format(midi_value, self.name), is_error=True)
             raise ValueError("MIDI value must be between 0 and 127, got {}".format(midi_value))
+            
         value = self.lookup_table[midi_value]
+        
+        # Convert to float unless parameter is in INTEGER_PARAMS
+        if self.name not in INTEGER_PARAMS:
+            try:
+                value = float(value)
+            except (TypeError, ValueError) as e:
+                log(TAG_ROUTE, f"Failed to convert parameter {self.name} to float: {str(e)}", is_error=True)
+                raise
+                
         return value
 
 class PathParser:
@@ -44,7 +62,7 @@ class PathParser:
         self.global_ranges = {}  # name -> Route
         self.key_ranges = {}     # name -> Route
         self.set_values = {}     # Values that have been set
-        self.midi_mappings = {}  # trigger -> (path, param_name)
+        self.midi_mappings = {}  # trigger -> (path, param_name, routing_info)
         self.enabled_messages = set()
         self.enabled_ccs = set()
         
@@ -86,8 +104,17 @@ class PathParser:
                     raise
                     
             # Validate required paths are present
-            if not self.enabled_messages:
-                raise ValueError("No MIDI message types enabled in paths")
+            if not self.enabled_messages and not any('set' in path for path in paths.split('\n')):
+                raise ValueError("No MIDI message types or set values enabled in paths")
+                
+            # Log complete routing table
+            log(TAG_ROUTE, "Complete routing table:")
+            for trigger, (path, param_name, routing_info) in self.midi_mappings.items():
+                log(TAG_ROUTE, f"  {trigger}: {path} -> {routing_info}")
+            for param_name, route in self.global_ranges.items():
+                log(TAG_ROUTE, f"  Global route {param_name}: {route.routing_info}")
+            for param_name, route in self.key_ranges.items():
+                log(TAG_ROUTE, f"  Per-key route {param_name}: {route.routing_info}")
                 
             # Log only features and parameters that were explicitly defined
             log(TAG_ROUTE, "Path parsing complete:")
@@ -152,6 +179,61 @@ class PathParser:
             
         except ValueError as e:
             raise ValueError(f"Invalid range format {range_str}: {str(e)}")
+            
+    def _parse_routing(self, parts):
+        """Parse path right-to-left to build routing info."""
+        routing = {}
+        
+        # Start from right - determine trigger
+        if parts[-1] == 'set':
+            routing['trigger'] = 'set'
+            routing['value'] = parts[-2]
+        elif parts[-1].startswith('cc'):
+            routing['trigger'] = 'cc'
+            routing['cc_number'] = int(parts[-1][2:])
+        elif parts[-1] in ('note_on', 'note_off', 'pressure', 'velocity', 'note_number'):
+            routing['trigger'] = parts[-1]
+            routing['address'] = 'channel+note'
+            
+        # Get scope and parameter info
+        for i, part in reversed(list(enumerate(parts))):
+            if part in ('global', 'per_key'):
+                routing['scope'] = part
+                # Get parameter and range
+                routing['param_name'] = parts[i-1]
+                if i+1 < len(parts) and '-' in parts[i+1]:
+                    min_val, max_val = self._parse_range(parts[i+1])
+                    routing['range'] = {'min': min_val, 'max': max_val}
+                break
+                
+        # Finally determine target from left parts
+        if parts[0] == 'amplifier':
+            if parts[1] == 'envelope':
+                routing['target'] = 'synthio.envelope'
+                routing['method'] = 'update'
+        elif parts[0] == 'oscillator':
+            if parts[1] == 'waveform':
+                if len(parts) >= 3 and parts[2] == 'morph':
+                    routing['target'] = 'synthio.morph'
+                    routing['method'] = 'update_morph'
+                else:
+                    routing['target'] = 'synthio.synthesizer'
+                    routing['method'] = 'set_waveform'
+            elif parts[1] == 'ring':
+                routing['target'] = 'synthio.ring'
+                routing['method'] = 'update_ring'
+        elif parts[0] == 'filter':
+            routing['target'] = 'synthio.filter'
+            routing['method'] = 'update_filter'
+        elif parts[0] == 'note':
+            if parts[1] == 'press':
+                routing['target'] = 'voice'
+                routing['method'] = 'press'
+            elif parts[1] == 'release':
+                routing['target'] = 'voice'
+                routing['method'] = 'release'
+                
+        return routing
     
     def _parse_line(self, parts):
         """Parse a single path line to extract parameter information."""
@@ -160,6 +242,9 @@ class PathParser:
             
         # Store original path for parameter mapping
         original_path = '/'.join(parts)
+            
+        # Get complete routing info
+        routing_info = self._parse_routing(parts)
             
         # Check for filter configuration
         if parts[0] == 'filter':
@@ -184,7 +269,7 @@ class PathParser:
                     if len(parts) >= 5 and '-' in parts[4]:
                         self.waveform_sequence = parts[4].split('-')
                         log(TAG_ROUTE, f"Found waveform sequence: {self.waveform_sequence}")
-                        self.global_ranges['morph'] = Route('morph', 0, 1)
+                        self.global_ranges['morph'] = Route('morph', 0, 1, routing_info)
                 # Fixed waveform
                 elif len(parts) >= 4 and parts[2] == 'global':
                     waveform_type = parts[3]
@@ -203,7 +288,7 @@ class PathParser:
                         if len(parts) >= 6 and '-' in parts[5]:
                             self.ring_waveform_sequence = parts[5].split('-')
                             log(TAG_ROUTE, f"Found ring waveform sequence: {self.ring_waveform_sequence}")
-                            self.global_ranges['ring_morph'] = Route('ring_morph', 0, 1)
+                            self.global_ranges['ring_morph'] = Route('ring_morph', 0, 1, routing_info)
                     # Fixed ring waveform
                     elif len(parts) >= 5 and parts[3] == 'global':
                         waveform_type = parts[4]
@@ -246,10 +331,29 @@ class PathParser:
                     elif p == 'pitch_bend':
                         trigger = p
                         self.enabled_messages.add('pitchbend')
+                    elif p == 'set':
+                        trigger = p
+                        if parts.index(p) != len(parts) - 1:
+                            raise ValueError(f"'set' must be the last part of path: {original_path}")
+                        if parts.index(p) - 1 < 0:
+                            raise ValueError(f"No value found before 'set' in path: {original_path}")
+                        value = parts[parts.index(p) - 1]
+                        
+                        # Convert numeric values to float unless in INTEGER_PARAMS
+                        try:
+                            if param_name not in INTEGER_PARAMS:
+                                value = float(value)
+                        except ValueError:
+                            # Not a numeric value, leave as-is (e.g., waveform types)
+                            pass
+                            
+                        log(TAG_ROUTE, f"Found set value for {param_name}: {value}")
+                        self.set_values[param_name] = value
                 
                 if trigger:
-                    # Store full path info with parameter
-                    self.midi_mappings[trigger] = (original_path, param_name)
+                    if trigger != 'set':
+                        # Store MIDI mappings with routing info
+                        self.midi_mappings[trigger] = (original_path, param_name, routing_info)
                 else:
                     raise ValueError(f"No trigger found in path: {original_path}")
                 
@@ -261,10 +365,11 @@ class PathParser:
         if not param_name:
             raise ValueError(f"No parameter name found in: {original_path}")
             
-        if range_str:
+        if range_str and trigger != 'set':
+            # Only create routes for MIDI-triggered paths
             try:
                 min_val, max_val = self._parse_range(range_str)
-                route = Route(param_name, min_val, max_val)
+                route = Route(param_name, min_val, max_val, routing_info)
                 
                 if scope == 'global':
                     self.global_ranges[param_name] = route
