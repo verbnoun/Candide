@@ -1,14 +1,14 @@
 """High-level synthesizer coordination module."""
 
-from modules import create_waveform, create_morphed_waveform, WaveformMorph
-from voices import VoicePool
-from router import PathParser
-from patcher import MidiHandler
 import synthio
 import sys
 import time
 from constants import SAMPLE_RATE, AUDIO_CHANNEL_COUNT
 from logging import log, TAG_SYNTH
+from voices import VoicePool
+from router import PathParser
+from patcher import MidiHandler
+from interfaces import SynthioInterfaces, WaveformMorph
 
 class SynthState:
     """Manages synthesizer state including waveforms and parameters."""
@@ -30,7 +30,7 @@ class SynthMonitor:
         current_time = time.monotonic()
         if current_time - self.last_health_check >= self.health_check_interval:
             log(TAG_SYNTH, "Performing synthesizer health check")
-            voice_pool.check_health(synth)
+            voice_pool.check_health()
             if synth is None:
                 log(TAG_SYNTH, "Synthesizer object is None", is_error=True)
                 return False
@@ -51,6 +51,7 @@ class Synthesizer:
         # Initialize components
         self.state = SynthState()
         self.midi_handler = MidiHandler(self.state, self.voice_pool, self.path_parser)
+        self.midi_handler.synthesizer = self  # Add this line to set the reference
         self.monitor = SynthMonitor()
         
         log(TAG_SYNTH, "Synthesizer initialized")
@@ -80,11 +81,13 @@ class Synthesizer:
             initial_envelope = self.path_parser.update_envelope()
             log(TAG_SYNTH, f"Created initial envelope with params: {self.path_parser.current_envelope_params}")
             
-            self.synth = synthio.Synthesizer(
+            # Use interface to create synthesizer
+            self.synth = SynthioInterfaces.create_synthesizer(
                 sample_rate=SAMPLE_RATE,
                 channel_count=AUDIO_CHANNEL_COUNT,
                 waveform=self.state.global_waveform,
-                envelope=initial_envelope)
+                envelope=initial_envelope
+            )
             
             if self.audio_system and self.audio_system.mixer:
                 self.audio_system.mixer.voice[0].play(self.synth)
@@ -101,7 +104,7 @@ class Synthesizer:
         # Configure base waveform
         if 'waveform' in self.path_parser.fixed_values:
             waveform_type = self.path_parser.fixed_values['waveform']
-            self.state.global_waveform = create_waveform(waveform_type)
+            self.state.global_waveform = SynthioInterfaces.create_waveform(waveform_type)
             self.state.base_morph = None
             log(TAG_SYNTH, f"Created fixed base waveform: {waveform_type}")
         elif self.path_parser.waveform_sequence:
@@ -115,7 +118,7 @@ class Synthesizer:
         # Configure ring waveform
         if self.path_parser.current_ring_params['waveform']:
             ring_type = self.path_parser.current_ring_params['waveform']
-            self.state.global_ring_waveform = create_waveform(ring_type)
+            self.state.global_ring_waveform = SynthioInterfaces.create_waveform(ring_type)
             self.state.ring_morph = None
             log(TAG_SYNTH, f"Created fixed ring waveform: {ring_type}")
         elif self.path_parser.ring_waveform_sequence:
@@ -161,7 +164,7 @@ class Synthesizer:
         
         try:
             if self.voice_pool:
-                self.voice_pool.release_all(self.synth)
+                self.voice_pool.release_all()
                 log(TAG_SYNTH, "Released all voices during reconfiguration")
             
             self.path_parser.parse_paths(paths, config_name)
@@ -180,8 +183,8 @@ class Synthesizer:
         """Perform emergency cleanup in case of critical errors."""
         log(TAG_SYNTH, "Performing emergency cleanup", is_error=True)
         try:
-            if self.voice_pool and self.synth:
-                self.voice_pool.release_all(self.synth)
+            if self.voice_pool:
+                self.voice_pool.release_all()
                 log(TAG_SYNTH, "Emergency released all voices")
             
             if self.midi_handler.subscription:
@@ -214,8 +217,8 @@ class Synthesizer:
         """Clean up resources."""
         log(TAG_SYNTH, "Cleaning up synthesizer...")
         try:
-            if self.voice_pool and self.synth:
-                self.voice_pool.release_all(self.synth)
+            if self.voice_pool:
+                self.voice_pool.release_all()
                 log(TAG_SYNTH, "Released all voices during cleanup")
             
             if self.midi_handler.subscription:
@@ -233,3 +236,44 @@ class Synthesizer:
         except Exception as e:
             log(TAG_SYNTH, f"Error during cleanup: {str(e)}", is_error=True)
             self._emergency_cleanup()
+
+    def handle_note_on(self, note_number, channel, **params):
+        """Handle note-on by coordinating between voice pool and synthio."""
+        # Get voice from voice pool
+        voice = self.voice_pool.press_note(note_number, channel)
+        if not voice:
+            return
+            
+        # Create synthio note
+        note = SynthioInterfaces.create_note(**params)
+        self.synth.press(note)
+        
+        # Update voice with the note
+        voice.active_note = note
+        
+    def handle_note_off(self, note_number):
+        """Handle note-off by coordinating between voice pool and synthio."""
+        voice = self.voice_pool.release_note(note_number)
+        if voice and voice.active_note:
+            self.synth.release(voice.active_note)
+            voice.active_note = None
+            
+    def handle_voice_update(self, voice, **params):
+        """Update voice parameters by coordinating between voice pool and synthio."""
+        if voice and voice.active_note:
+            # Create new filter if needed
+            if ('filter_type' in params and 'filter_frequency' in params and 
+                'filter_resonance' in params):
+                filter = SynthioInterfaces.create_filter(
+                    self.synth,
+                    params.pop('filter_type'),
+                    params.pop('filter_frequency'),
+                    params.pop('filter_resonance')
+                )
+                if filter:
+                    params['filter'] = filter
+            
+            # Update note parameters
+            for param, value in params.items():
+                if hasattr(voice.active_note, param):
+                    setattr(voice.active_note, param, value)
