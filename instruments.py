@@ -1,32 +1,4 @@
 """Instrument configuration management system defining synthesizer paths and parameter mappings.
-
-Available Filter Path Configurations:
-
-Low Pass Filter:
-    filter/low_pass/frequency/global/20-20000/cc70
-    filter/low_pass/resonance/global/0.1-2.0/cc71
-    Description: Allows frequencies below cutoff to pass through. Higher resonance creates a peak at cutoff.
-
-High Pass Filter:
-    filter/high_pass/frequency/global/20-20000/cc70
-    filter/high_pass/resonance/global/0.1-2.0/cc71
-    Description: Allows frequencies above cutoff to pass through. Higher resonance creates a peak at cutoff.
-
-Band Pass Filter:
-    filter/band_pass/frequency/global/20-20000/cc70
-    filter/band_pass/resonance/global/0.1-2.0/cc71
-    Description: Allows frequencies near center frequency to pass through. Higher resonance narrows the band.
-
-Notch Filter:
-    filter/notch/frequency/global/20-20000/cc70
-    filter/notch/resonance/global/0.1-2.0/cc71
-    Description: Blocks frequencies near center frequency. Higher resonance narrows the notch.
-
-Filter parameters:
-- frequency: Center/cutoff frequency in Hz (20-20000 Hz range)
-- resonance: Filter resonance/Q factor (0.1-2.0 range)
-- Both parameters are global, affecting all active notes
-- CC70 controls frequency, CC71 controls resonance
 """
 
 import sys
@@ -127,38 +99,6 @@ amplifier/envelope/attack_time/global/0.001-0.5/cc73
 amplifier/envelope/decay_time/global/0.001-0.25/cc75
 amplifier/envelope/sustain_level/global/0.001-1/cc66
 amplifier/envelope/release_time/global/0.001-1/cc72
-'''
-
-ALL_SYNTHIO_PATHS = '''
-note/press/per_key/note_on
-note/release/per_key/note_off
-oscillator/frequency/per_key/note_number/note_on
-oscillator/waveform/global/triangle/note_on
-note/panning/per_key/-1-1/pitch_bend
-
-filter/low_pass/resonance/global/0.1-2.0/cc71
-filter/low_pass/frequency/global/20-20000/cc70
-
-oscilator/amplitude/per_key/0.001-1/velocity/note_on
-oscillator/frequency/per_key/note_number/note_on
-oscillator/waveform/global/saw/note_on
-oscillator/bend/per_key/-12-12/pitch_bend
-oscillator/ring/frequency/global/20-2000/cc74
-oscillator/ring/waveform/global/triangle/note_on
-oscillator/ring/bend/per_key/-12-12/pitch_bend
-
-amplifier/envelope/attack_level/per_key/0.001-1/velocity/note_on
-amplifier/envelope/attack_time/global/0.001-0.5/cc73
-amplifier/envelope/decay_time/global/0.001-0.25/cc75
-amplifier/envelope/sustain_level/per_key/0-1/pressure
-amplifier/envelope/release_time/global/0.001-3/cc72
-
-lfo/rate/tremolo_lfo/global/0.1-10/cc102
-lfo/scale/tremolo_lfo/global/0-1/cc103
-lfo/offset/tremolo_lfo/global/-1-1/cc104
-lfo/phase_offset/tremolo_lfo/global/0-1/cc105
-lfo/once/tremolo_lfo/global/0-1/cc106
-lfo/interpolate/tremolo_lfo/global/0-1/cc107
 '''
 
 class InstrumentManager:

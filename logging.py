@@ -55,14 +55,14 @@ LOG_ENABLE = {
     TAG_CONNECT: False,
     TAG_CONST: False,
     TAG_HARD: False,
-    TAG_INST: False,
-    TAG_MIDI: False,
-    TAG_MODU: False,
-    TAG_PATCH: False,
-    TAG_ROUTE: False,
-    TAG_SYNTH: False,
+    TAG_INST: True,
+    TAG_MIDI: True,
+    TAG_MODU: True,
+    TAG_PATCH: True,
+    TAG_ROUTE: True,
+    TAG_SYNTH: True,
     TAG_UART: False,
-    TAG_VOICES: False,
+    TAG_VOICES: True,
 }
 
 # Special debug flags
