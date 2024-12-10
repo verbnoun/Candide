@@ -28,11 +28,10 @@ TAG_INST = 'INST   '     # instruments.py
 TAG_MIDI = 'MIDI   '     # midi.py
 TAG_MODU = 'MODU   '     # modules.py
 TAG_PATCH = 'PATCH  '    # patcher.py
-TAG_POOL = 'POOL   '     # pool.py
 TAG_ROUTE = 'ROUTE  '    # router.py
 TAG_SYNTH = 'SYNTH  '    # synthesizer.py
 TAG_UART = 'UART   '     # uart.py
-TAG_VOICE = 'VOICE  '    # voice.py
+TAG_VOICES = 'VOICES '    # voices.py
 
 # Map tags to colors - Alphabetically ordered by file name tag
 TAG_COLORS = {
@@ -44,11 +43,10 @@ TAG_COLORS = {
     TAG_MIDI: COLOR_GREEN,        # midi.py
     TAG_MODU: COLOR_SPRING,       # modules.py
     TAG_PATCH: COLOR_CYAN,        # patcher.py
-    TAG_POOL: COLOR_AZURE,        # pool.py
     TAG_ROUTE: COLOR_BLUE,        # router.py
     TAG_SYNTH: COLOR_INDIGO,      # synthesizer.py
     TAG_UART: COLOR_VIOLET,       # uart.py
-    TAG_VOICE: COLOR_MAGENTA,     # voice.py
+    TAG_VOICES: COLOR_MAGENTA,     # voice.py
 }
 
 # Enable flags for each module's logging - Alphabetically ordered
@@ -61,11 +59,10 @@ LOG_ENABLE = {
     TAG_MIDI: False,
     TAG_MODU: False,
     TAG_PATCH: False,
-    TAG_POOL: False,
     TAG_ROUTE: False,
     TAG_SYNTH: False,
     TAG_UART: False,
-    TAG_VOICE: False,
+    TAG_VOICES: False,
 }
 
 # Special debug flags

@@ -4,8 +4,7 @@ import array
 import math
 import time
 import synthio
-from voice import Voice
-from logging import log, TAG_POOL
+from logging import log, TAG_VOICES
 
 class VoicePool:
     """Manages voices that can be targeted by MIDI address."""
@@ -23,9 +22,9 @@ class VoicePool:
             self.amplitude_scaling.append(1.0 / math.sqrt(i))
         
         # Log the amplitude scaling table
-        log(TAG_POOL, "Amplitude scaling table:")
+        log(TAG_VOICES, "Amplitude scaling table:")
         for i, amp in enumerate(self.amplitude_scaling):
-            log(TAG_POOL, f"  {i} notes: {amp:.4f}")
+            log(TAG_VOICES, f"  {i} notes: {amp:.4f}")
         
         # Toddler mode tracking
         self.last_steal_time = 0
@@ -35,7 +34,7 @@ class VoicePool:
         self.toddler_timeout = 0  # When toddler mode ends
         self.last_cleanup_time = 0  # Last time we cleaned up voices during timeout
         
-        log(TAG_POOL, "Voice pool initialized with {} voices".format(size))
+        log(TAG_VOICES, "Voice pool initialized with {} voices".format(size))
 
     def get_active_note_count(self, synth):
         """Get count of currently active notes (not including releasing notes)."""
@@ -57,7 +56,7 @@ class VoicePool:
 
         # Get pre-calculated amplitude for this number of notes
         new_amplitude = self.amplitude_scaling[active_count]
-        log(TAG_POOL, "Adjusting amplitudes: {} active notes, new amplitude: {:.4f}".format(
+        log(TAG_VOICES, "Adjusting amplitudes: {} active notes, new amplitude: {:.4f}".format(
             active_count, new_amplitude))
 
         # Update all active notes
@@ -76,7 +75,7 @@ class VoicePool:
             # Check if we need to do periodic cleanup
             if current_time - self.last_cleanup_time >= 1.0:  # Every second
                 seconds_left = int(self.toddler_timeout - current_time)
-                log(TAG_POOL, "Stop that! Timeout: {} seconds remaining...".format(seconds_left))
+                log(TAG_VOICES, "Stop that! Timeout: {} seconds remaining...".format(seconds_left))
                 self.release_all(synth)
                 self.last_cleanup_time = current_time
                 
@@ -93,7 +92,7 @@ class VoicePool:
             if current_time - self.last_steal_time < 0.1:  # 100ms between steals
                 self.rapid_steal_count += 1
                 if self.rapid_steal_count >= 3:  # 3 rapid steals triggers
-                    log(TAG_POOL, "Stop that! Starting 3 second timeout...")
+                    log(TAG_VOICES, "Stop that! Starting 3 second timeout...")
                     self.toddler_mode = True
                     self.toddler_start_time = current_time
                     self.toddler_timeout = current_time + 3.0  # 3 second timeout
@@ -109,21 +108,21 @@ class VoicePool:
         
     def _log_all_voices(self, synth, trigger=""):
         """Log the state of all voices."""
-        log(TAG_POOL, "Voice pool state {}:".format(trigger))
+        log(TAG_VOICES, "Voice pool state {}:".format(trigger))
         for i, voice in enumerate(self.voices):
             if voice.active_note:
                 state, _ = synth.note_info(voice.active_note)
                 addr = voice.get_address()
-                log(TAG_POOL, "  Voice {}: {} {}".format(i, addr, state))
+                log(TAG_VOICES, "  Voice {}: {} {}".format(i, addr, state))
             else:
-                log(TAG_POOL, "  Voice {}: inactive".format(i))
+                log(TAG_VOICES, "  Voice {}: inactive".format(i))
         
         # Log channel map
         channels = []
         for ch, v in self.channel_map.items():
             addr = v.get_address() if v else "None"
             channels.append("{} -> {}".format(ch, addr))
-        log(TAG_POOL, "  Channels: {}".format(", ".join(channels) if channels else "none"))
+        log(TAG_VOICES, "  Channels: {}".format(", ".join(channels) if channels else "none"))
         
     def _get_voice(self, synth):
         """Get unused voice or steal oldest one."""
@@ -147,7 +146,7 @@ class VoicePool:
                 oldest_timestamp = voice.timestamp
                 
         if oldest_voice.get_address():
-            log(TAG_POOL, "Stealing voice {}".format(oldest_voice.get_address()))
+            log(TAG_VOICES, "Stealing voice {}".format(oldest_voice.get_address()))
             oldest_voice.steal_voice(synth)
             
         return oldest_voice
@@ -235,5 +234,138 @@ class VoicePool:
         
     def check_health(self, synth):
         """Check voice pool health."""
-        log(TAG_POOL, "Performing voice pool health check")
+        log(TAG_VOICES, "Performing voice pool health check")
         self._log_all_voices(synth)
+
+class Voice:
+    """A voice that can be targeted by MIDI address."""
+    def __init__(self):
+        self.channel = None
+        self.note_number = None
+        self.active_note = None
+        self.timestamp = 0
+        
+    def get_address(self):
+        """Get voice's current address (note_number.channel)."""
+        if self.note_number is not None and self.channel is not None:
+            return "{}.{}".format(self.note_number, self.channel)
+        return None
+        
+    def _log_state(self, synth, action=""):
+        """Log voice state showing note counts by state."""
+        addr = self.get_address()
+        if not addr:
+            log(TAG_VOICES, "Voice has no address")
+            return
+            
+        # Get note states from synth
+        active_count = 1 if self.active_note else 0
+        releasing_count = 0
+        
+        if self.active_note:
+            state, _ = synth.note_info(self.active_note)
+            if state == synthio.EnvelopeState.RELEASE:
+                active_count = 0
+                releasing_count = 1
+            
+        if action:
+            action = " " + action
+            
+        state = []
+        if active_count > 0:
+            state.append("{} active".format(active_count))
+        if releasing_count > 0:
+            state.append("{} releasing".format(releasing_count))
+            
+        log(TAG_VOICES, "Voice {}{}: has {}".format(
+            addr,
+            action,
+            ", ".join(state) if state else "no notes"
+        ))
+
+    def _create_filter(self, synth, filter_type, frequency, resonance):
+        """Create a filter based on type with current parameters."""
+        if filter_type == 'low_pass':
+            return synth.low_pass_filter(frequency, resonance)
+        elif filter_type == 'high_pass':
+            return synth.high_pass_filter(frequency, resonance)
+        elif filter_type == 'band_pass':
+            return synth.band_pass_filter(frequency, resonance)
+        elif filter_type == 'notch':
+            return synth.notch_filter(frequency, resonance)
+        return None
+        
+    def press_note(self, note_number, channel, synth, **note_params):
+        """Target this voice with a note-on."""
+        if self.active_note:
+            synth.release(self.active_note)
+            
+        # Set new address
+        self.note_number = note_number
+        self.channel = channel
+        
+        # Create filter if parameters provided
+        if 'filter_type' in note_params and 'filter_frequency' in note_params and 'filter_resonance' in note_params:
+            filter = self._create_filter(
+                synth,
+                note_params.pop('filter_type'),
+                note_params.pop('filter_frequency'),
+                note_params.pop('filter_resonance')
+            )
+            if filter:
+                note_params['filter'] = filter
+        
+        # Ensure amplitude is set
+        if 'amplitude' not in note_params:
+            note_params['amplitude'] = 1.0
+            
+        # Create new active note - will use synth's global envelope
+        self.active_note = synthio.Note(**note_params)
+        synth.press(self.active_note)
+        self._log_state(synth, "pressed")
+        
+    def release_note(self, synth, forced=False):
+        """Target this voice with a note-off."""
+        if self.active_note:
+            addr = self.get_address()
+            synth.release(self.active_note)
+            action = "forced release" if forced else "released"
+            self._log_state(synth, action)
+            self.active_note = None
+            self.note_number = None
+            self.channel = None
+            
+    def steal_voice(self, synth):
+        """Release voice during stealing."""
+        if self.active_note:
+            addr = self.get_address()
+            synth.release(self.active_note)
+            self._log_state(synth, "forced release")
+            self.active_note = None
+            self.note_number = None
+            self.channel = None
+            
+    def update_active_note(self, synth, **params):
+        """Update parameters of active note."""
+        if self.active_note:
+            # Handle filter updates
+            if ('filter_type' in params and 'filter_frequency' in params and 
+                'filter_resonance' in params):
+                filter = self._create_filter(
+                    synth,
+                    params.pop('filter_type'),
+                    params.pop('filter_frequency'),
+                    params.pop('filter_resonance')
+                )
+                if filter:
+                    params['filter'] = filter
+            
+            # Update note parameters including ring modulation
+            for param, value in params.items():
+                if hasattr(self.active_note, param):
+                    setattr(self.active_note, param, value)
+            self._log_state(synth, "changed")
+            
+    def is_active(self):
+        """Check if voice has active note."""
+        return self.active_note is not None
