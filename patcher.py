@@ -4,12 +4,57 @@ import sys
 from logging import log, TAG_PATCH
 
 class MidiHandler:
-    """Handles MIDI message processing and routing."""
+    """Handles MIDI message processing, routing, and setup."""
     def __init__(self, synth_state, path_parser):
         self.synth_state = synth_state
         self.path_parser = path_parser
+        self.midi_interface = None
         self.subscription = None
         self.synthesizer = None  # Set by Synthesizer class
+        self.ready_callback = None
+
+    def setup_handlers(self):
+        """Set up MIDI message handlers."""
+        if self.subscription:
+            self.midi_interface.unsubscribe(self.subscription)
+            self.subscription = None
+            
+        log(TAG_PATCH, "Setting up MIDI handlers...")
+            
+        message_types = [msg_type for msg_type in 
+                        ('noteon', 'noteoff', 'cc', 'pitchbend', 'channelpressure')
+                        if msg_type in self.path_parser.enabled_messages]
+            
+        if not message_types:
+            raise ValueError("No MIDI message types enabled in paths")
+            
+        self.subscription = self.midi_interface.subscribe(
+            self.handle_message,
+            message_types=message_types,
+            cc_numbers=self.path_parser.enabled_ccs if 'cc' in self.path_parser.enabled_messages else None
+        )
+        log(TAG_PATCH, f"MIDI handlers configured for: {self.path_parser.enabled_messages}")
+        
+        if self.ready_callback:
+            log(TAG_PATCH, "Configuration complete - signaling ready")
+            self.ready_callback()
+
+    def cleanup(self):
+        """Clean up MIDI subscription."""
+        if self.subscription:
+            self.midi_interface.unsubscribe(self.subscription)
+            self.subscription = None
+            log(TAG_PATCH, "Unsubscribed from MIDI messages")
+
+    def register_ready_callback(self, callback):
+        """Register a callback to be notified when synth is ready."""
+        self.ready_callback = callback
+        log(TAG_PATCH, "Ready callback registered")
+
+    def set_midi_interface(self, midi_interface):
+        """Set the MIDI interface to use."""
+        self.midi_interface = midi_interface
+        log(TAG_PATCH, "MIDI interface set")
 
     def handle_message(self, msg):
         """Log and route incoming MIDI messages."""

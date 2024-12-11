@@ -62,70 +62,6 @@ class SynthMonitor:
             return True
         return True
 
-class MidiSetup:
-    """Handles MIDI setup and subscription management."""
-    def __init__(self, midi_interface, synthesizer):
-        self.midi_interface = midi_interface
-        self.synthesizer = synthesizer
-        self.subscription = None
-        self.ready_callback = None
-        
-    def handle_message(self, msg):
-        """Handle incoming MIDI messages."""
-        try:
-            if not self.synthesizer.monitor.check_health(self.synthesizer.synth, self.synthesizer.voice_pool):
-                self.synthesizer._emergency_cleanup()
-                return
-
-            if not self.synthesizer.synth:
-                log(TAG_SYNTH, "No synthesizer available", is_error=True)
-                return
-
-            if msg.type in self.synthesizer.path_parser.enabled_messages:
-                self.synthesizer.midi_handler.handle_message(msg)
-
-        except Exception as e:
-            log(TAG_SYNTH, f"Error handling MIDI message: {str(e)}", is_error=True)
-            self.synthesizer._emergency_cleanup()
-            
-    def setup_handlers(self):
-        """Set up MIDI message handlers."""
-        if self.subscription:
-            self.midi_interface.unsubscribe(self.subscription)
-            self.subscription = None
-            
-        log(TAG_SYNTH, "Setting up MIDI handlers...")
-            
-        message_types = [msg_type for msg_type in 
-                        ('noteon', 'noteoff', 'cc', 'pitchbend', 'channelpressure')
-                        if msg_type in self.synthesizer.path_parser.enabled_messages]
-            
-        if not message_types:
-            raise ValueError("No MIDI message types enabled in paths")
-            
-        self.subscription = self.midi_interface.subscribe(
-            self.handle_message,
-            message_types=message_types,
-            cc_numbers=self.synthesizer.path_parser.enabled_ccs if 'cc' in self.synthesizer.path_parser.enabled_messages else None
-        )
-        log(TAG_SYNTH, f"MIDI handlers configured for: {self.synthesizer.path_parser.enabled_messages}")
-        
-        if self.ready_callback:
-            log(TAG_SYNTH, "Configuration complete - signaling ready")
-            self.ready_callback()
-            
-    def cleanup(self):
-        """Clean up MIDI subscription."""
-        if self.subscription:
-            self.midi_interface.unsubscribe(self.subscription)
-            self.subscription = None
-            log(TAG_SYNTH, "Unsubscribed from MIDI messages")
-            
-    def register_ready_callback(self, callback):
-        """Register a callback to be notified when synth is ready."""
-        self.ready_callback = callback
-        log(TAG_SYNTH, "Ready callback registered")
-
 class Synthesizer:
     """Main synthesizer class coordinating sound generation."""
     def __init__(self, midi_interface, audio_system=None):
@@ -137,15 +73,12 @@ class Synthesizer:
         self.synth = components['synth']
         self.voice_pool = components['voice_pool']
         self.path_parser = components['path_parser']
-        self.state = components['state']  # Now using combined SynthState
+        self.state = components['state']
         self.monitor = components['monitor']
         self.midi_handler = components['midi_handler']
         
         # Set synthesizer reference in midi_handler
         self.midi_handler.synthesizer = self
-        
-        # Initialize MIDI setup
-        self.midi_setup = MidiSetup(midi_interface, self)
         
         log(TAG_SYNTH, "Synthesizer initialized")
 
@@ -180,7 +113,8 @@ class Synthesizer:
                 self.voice_pool.release_all()
                 log(TAG_SYNTH, "Emergency released all voices")
             
-            self.midi_setup.cleanup()
+            if self.midi_handler:
+                self.midi_handler.cleanup()
                 
             if self.synth:
                 try:
@@ -189,11 +123,11 @@ class Synthesizer:
                     log(TAG_SYNTH, f"Error deinitializing synth: {str(e)}", is_error=True)
             self.synth = None
             
-            self.state.clear()  # Clear stored values during cleanup
+            self.state.clear()
                 
             try:
-                self.synth = self.setup.setup_synthio(self.state, self.state, self.path_parser)  # Using state for both parameters
-                self.midi_setup.setup_handlers()
+                self.synth = self.setup.setup_synthio(self.state, self.state, self.path_parser)
+                self.midi_handler.setup_handlers()
                 log(TAG_SYNTH, "Successfully re-initialized synthesizer after emergency")
             except Exception as e:
                 log(TAG_SYNTH, f"Failed to re-initialize synth: {str(e)}", is_error=True)
@@ -205,7 +139,7 @@ class Synthesizer:
 
     def store_value(self, name, value, use_now=True):
         """Store a value and optionally use it immediately."""
-        self.state.store(name, value)  # Using combined state
+        self.state.store(name, value)
         if use_now:
             self._handle_value_update(name, value)
     
@@ -303,10 +237,10 @@ class Synthesizer:
         except Exception as e:
             log(TAG_SYNTH, f"Failed to update global waveform: {str(e)}", is_error=True)
 
-    def update_morph_position(self, position, midi_value):
+    def update_morph_position(self, position, value):
         """Update waveform morph position."""
-        # Store both position and MIDI value
-        self.state.store('morph_position', midi_value)
+        # Store both position and value
+        self.state.store('morph_position', value)
         self.state.store('morph', position)
         
         # Check if we have a base morph to work with
@@ -318,7 +252,7 @@ class Synthesizer:
                 if voice.active_note:
                     try:
                         # Update base waveform morph
-                        voice.active_note.waveform = self.state.base_morph.get_waveform(midi_value)
+                        voice.active_note.waveform = self.state.base_morph.get_waveform(value)
                         
                         # If ring morph exists and we have a value, update it too
                         if ring_morph is not None and self.state.ring_morph:
@@ -327,7 +261,7 @@ class Synthesizer:
                         log(TAG_SYNTH, f"Failed to update voice morph: {str(e)}", is_error=True)
             
             self.voice_pool.for_each_active_voice(update_voice)
-            log(TAG_SYNTH, f"Updated morph position: {position} (MIDI: {midi_value})")
+            log(TAG_SYNTH, f"Updated morph position: {position} (Value: {value})")
 
     def update_ring_modulation(self, param_name, value):
         """Update ring modulation parameters."""
@@ -387,11 +321,11 @@ class Synthesizer:
             except Exception as e:
                 log(TAG_SYNTH, f"Failed to update voice filter: {str(e)}", is_error=True)
 
-    def _update_voice_morph(self, voice, midi_value):
+    def _update_voice_morph(self, voice, value):
         """Internal method to update voice waveform morph."""
         if voice.active_note and self.state.base_morph:
             try:
-                voice.active_note.waveform = self.state.base_morph.get_waveform(midi_value)
+                voice.active_note.waveform = self.state.base_morph.get_waveform(value)
             except Exception as e:
                 log(TAG_SYNTH, f"Failed to update voice morph: {str(e)}", is_error=True)
 
@@ -409,57 +343,13 @@ class Synthesizer:
             except Exception as e:
                 log(TAG_SYNTH, f"Failed to update voice ring mod: {str(e)}", is_error=True)
 
-    def _build_note_params(self, value):
-        """Build note parameters from stored values and value."""
-        params = {}
-        params['frequency'] = synthio.midi_to_hz(value)
-        
-        if self.path_parser.filter_type:
-            filter_freq = self.state.get('filter_frequency', 0)
-            filter_res = self.state.get('filter_resonance', 0)
-            try:
-                filter = SynthioInterfaces.create_filter(
-                    self.synth,
-                    self.path_parser.filter_type,
-                    filter_freq,
-                    filter_res
-                )
-                if filter:
-                    params['filter'] = filter
-            except Exception as e:
-                log(TAG_SYNTH, f"Failed to create filter: {str(e)}", is_error=True)
-        
-        waveform = self.state.get('waveform')
-        if waveform:
-            params['waveform'] = self.state.global_waveform
-        elif self.state.base_morph:
-            morph_pos = self.state.get('morph_position', 0)
-            params['waveform'] = self.state.base_morph.get_waveform(morph_pos)
-                
-        if self.path_parser.has_ring_mod:
-            ring_freq = self.state.get('ring_frequency')
-            ring_bend = self.state.get('ring_bend')
-            if ring_freq is not None:
-                params['ring_frequency'] = ring_freq
-            if ring_bend is not None:
-                params['ring_bend'] = ring_bend
-                
-            ring_waveform = self.state.get('ring_waveform')
-            if ring_waveform:
-                params['ring_waveform'] = self.state.global_ring_waveform
-            elif self.state.ring_morph:
-                morph_pos = self.state.get('ring_morph_position', 0)
-                params['ring_waveform'] = self.state.ring_morph.get_waveform(morph_pos)
-                
-        return params
-
-    def press(self, note_number, channel, value):
-        """Press note with router-provided value."""
+    def press(self, note_number, channel, frequency_value):
+        """Press note with given frequency value."""
         voice = self.voice_pool.press_note(note_number, channel)
         if not voice:
             return
             
-        params = self._build_note_params(value)
+        params = self._build_note_params(frequency_value)
         
         try:
             note = SynthioInterfaces.create_note(**params)
@@ -500,8 +390,8 @@ class Synthesizer:
                 log(TAG_SYNTH, "Failed to initialize set values", is_error=True)
                 raise ValueError("Failed to initialize set values")
                 
-            self.synth = self.setup.setup_synthio(self.state, self.state, self.path_parser)  # Using state for both parameters
-            self.midi_setup.setup_handlers()
+            self.synth = self.setup.setup_synthio(self.state, self.state, self.path_parser)
+            self.midi_handler.setup_handlers()
             
             log(TAG_SYNTH, "----------------------------------------")
             log(TAG_SYNTH, "Instrument update complete")
@@ -517,4 +407,48 @@ class Synthesizer:
     
     def register_ready_callback(self, callback):
         """Register a callback to be notified when synth is ready."""
-        self.midi_setup.register_ready_callback(callback)
+        self.midi_handler.register_ready_callback(callback)
+
+    def _build_note_params(self, frequency_value):
+        """Build note parameters from stored values and frequency value."""
+        params = {}
+        params['frequency'] = synthio.midi_to_hz(frequency_value)
+        
+        if self.path_parser.filter_type:
+            filter_freq = self.state.get('filter_frequency', 0)
+            filter_res = self.state.get('filter_resonance', 0)
+            try:
+                filter = SynthioInterfaces.create_filter(
+                    self.synth,
+                    self.path_parser.filter_type,
+                    filter_freq,
+                    filter_res
+                )
+                if filter:
+                    params['filter'] = filter
+            except Exception as e:
+                log(TAG_SYNTH, f"Failed to create filter: {str(e)}", is_error=True)
+        
+        waveform = self.state.get('waveform')
+        if waveform:
+            params['waveform'] = self.state.global_waveform
+        elif self.state.base_morph:
+            morph_pos = self.state.get('morph_position', 0)
+            params['waveform'] = self.state.base_morph.get_waveform(morph_pos)
+                
+        if self.path_parser.has_ring_mod:
+            ring_freq = self.state.get('ring_frequency')
+            ring_bend = self.state.get('ring_bend')
+            if ring_freq is not None:
+                params['ring_frequency'] = ring_freq
+            if ring_bend is not None:
+                params['ring_bend'] = ring_bend
+                
+            ring_waveform = self.state.get('ring_waveform')
+            if ring_waveform:
+                params['ring_waveform'] = self.state.global_ring_waveform
+            elif self.state.ring_morph:
+                morph_pos = self.state.get('ring_morph_position', 0)
+                params['ring_waveform'] = self.state.ring_morph.get_waveform(morph_pos)
+                
+        return params

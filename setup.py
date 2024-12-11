@@ -27,11 +27,13 @@ class SynthesizerSetup:
             'monitor': SynthMonitor()
         }
         
-        # Initialize MidiHandler
-        synth_components['midi_handler'] = MidiHandler(
+        # Initialize MidiHandler with midi_interface
+        midi_handler = MidiHandler(
             synth_components['state'], 
             synth_components['path_parser']
         )
+        midi_handler.set_midi_interface(self.midi_interface)
+        synth_components['midi_handler'] = midi_handler
         
         return synth_components
         
@@ -114,7 +116,8 @@ class SynthesizerSetup:
                 synthesizer.voice_pool.release_all()
                 log(TAG_SYNTH, "Released all voices during cleanup")
             
-            synthesizer.midi_setup.cleanup()
+            if synthesizer.midi_handler:
+                synthesizer.midi_handler.cleanup()
                 
             if synthesizer.synth:
                 synthesizer.synth.deinit()
