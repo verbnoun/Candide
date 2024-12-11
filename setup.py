@@ -43,16 +43,31 @@ class SynthesizerSetup:
         try:
             self._configure_waveforms(synth_state, store, path_parser)
             
-            # Create initial envelope using synthesizer's method
-            from synthesizer import Synthesizer
-            initial_envelope = Synthesizer._create_envelope(None, store, path_parser)
+            # Collect envelope parameters if they exist
+            envelope_params = {}
+            if path_parser.has_envelope_paths:
+                for param in ['attack_time', 'decay_time', 'release_time', 
+                            'attack_level', 'sustain_level']:
+                    value = store.get(param)
+                    if value is not None:
+                        try:
+                            envelope_params[param] = float(value)
+                        except (TypeError, ValueError) as e:
+                            log(TAG_SYNTH, f"Invalid envelope parameter {param}: {value}", is_error=True)
+                            continue
+
+            # Create synth with optional envelope
+            params = {
+                'sample_rate': SAMPLE_RATE,
+                'channel_count': AUDIO_CHANNEL_COUNT,
+                'waveform': synth_state.global_waveform
+            }
             
-            synth = SynthioInterfaces.create_synthesizer(
-                sample_rate=SAMPLE_RATE,
-                channel_count=AUDIO_CHANNEL_COUNT,
-                waveform=synth_state.global_waveform,
-                envelope=initial_envelope
-            )
+            # Only include envelope if we have parameters
+            if envelope_params:
+                params['envelope'] = SynthioInterfaces.create_envelope(**envelope_params)
+                
+            synth = SynthioInterfaces.create_synthesizer(**params)
             
             if self.audio_system and self.audio_system.mixer:
                 self.audio_system.mixer.voice[0].play(synth)

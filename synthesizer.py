@@ -64,6 +64,8 @@ class SynthMonitor:
 
 class Synthesizer:
     """Main synthesizer class coordinating sound generation."""
+    
+    # Core Methods
     def __init__(self, midi_interface, audio_system=None):
         # Initialize setup
         self.setup = SynthesizerSetup(midi_interface, audio_system)
@@ -85,138 +87,21 @@ class Synthesizer:
         
         log(TAG_SYNTH, "Synthesizer initialized")
 
-    def _create_envelope(self, store, path_parser):
-        """Create a new envelope with stored parameters."""
-        if not path_parser.has_envelope_paths:
-            return None
-            
-        try:
-            envelope_params = {}
-            for param in ['attack_time', 'decay_time', 'release_time', 
-                         'attack_level', 'sustain_level']:
-                value = store.get(param)
-                if value is not None:
-                    try:
-                        envelope_params[param] = float(value)
-                    except (TypeError, ValueError) as e:
-                        log(TAG_SYNTH, f"Invalid envelope parameter {param}: {value}", is_error=True)
-                        continue
-            
-            envelope = synthio.Envelope(**envelope_params)
-            return envelope
-        except Exception as e:
-            log(TAG_SYNTH, f"Error creating envelope: {str(e)}", is_error=True)
-            return None
-
-    def _emergency_cleanup(self):
-        """Perform emergency cleanup in case of critical errors."""
-        log(TAG_SYNTH, "Performing emergency cleanup", is_error=True)
-        try:
-            if self.voice_pool:
-                self.voice_pool.release_all()
-                log(TAG_SYNTH, "Emergency released all voices")
-            
-            if self.midi_handler:
-                self.midi_handler.cleanup()
-                
-            if self.synth:
-                try:
-                    self.synth.deinit()
-                except Exception as e:
-                    log(TAG_SYNTH, f"Error deinitializing synth: {str(e)}", is_error=True)
-            self.synth = None
-            
-            self.state.clear()
-                
-            try:
-                self.synth = self.setup.setup_synthio(self.state, self.state, self.path_parser)
-                self.midi_handler.setup_handlers()
-                log(TAG_SYNTH, "Successfully re-initialized synthesizer after emergency")
-            except Exception as e:
-                log(TAG_SYNTH, f"Failed to re-initialize synth: {str(e)}", is_error=True)
-                
-            log(TAG_SYNTH, "Emergency cleanup complete")
-            
-        except Exception as e:
-            log(TAG_SYNTH, f"Error during emergency cleanup: {str(e)}", is_error=True)
-
-    def store_value(self, name, value, use_now=True):
-        """Store a value and optionally use it immediately."""
-        self.state.store(name, value)
-        if use_now:
-            self._handle_value_update(name, value)
+    def cleanup(self):
+        """Clean up resources."""
+        self.setup.cleanup(self)
     
-    def _handle_value_update(self, name, value):
-        """Handle a value update based on parameter type."""
-        try:
-            if name.startswith('filter_'):
-                self.update_global_filter(name, value)
-            elif name.startswith('math_'):
-                self._update_math(name, value)
-            elif name.startswith('lfo_'):
-                self._update_lfo(name, value)
-            elif name in ('attack_time', 'decay_time', 'release_time', 
-                         'attack_level', 'sustain_level'):
-                self.update_global_envelope(name, value)
-            elif name.startswith('ring_'):
-                self.update_ring_modulation(name, value)
-            elif name == 'morph':
-                self.update_morph_position(value, self.state.get('morph_position', 0))
-            elif name == 'waveform':
-                self.update_global_waveform(value)
-            else:
-                log(TAG_SYNTH, f"No immediate handler for {name}={value}")
-        except Exception as e:
-            log(TAG_SYNTH, f"Error handling value update for {name}: {str(e)}", is_error=True)
+    def register_ready_callback(self, callback):
+        """Register a callback to be notified when synth is ready."""
+        self.midi_handler.register_ready_callback(callback)
 
-    def _update_math(self, name, value):
-        """Handle math operation updates."""
-        log(TAG_SYNTH, f"Math update: {name}={value}")
-        # TODO: Implement math operations
-
-    def _update_lfo(self, name, value):
-        """Handle LFO parameter updates."""
-        log(TAG_SYNTH, f"LFO update: {name}={value}")
-        # TODO: Implement LFO operations
-
-    def update_global_envelope(self, param_name, value):
-        """Update global envelope with new parameter."""
-        self.state.store(param_name, value)
-        envelope = self._create_envelope(self.state, self.path_parser)
-        if envelope:
-            self.synth.envelope = envelope
-            log(TAG_SYNTH, f"Updated global envelope {param_name}={value}")
-
-    def update_global_filter(self, param_name, value):
-        """Update global filter with new parameter."""
-        # Store the incoming parameter
-        self.state.store(param_name, value)
-        
-        # Check state for all required filter parameters
-        filter_freq = self.state.get('filter_frequency')
-        filter_res = self.state.get('filter_resonance')
-        filter_type = self.path_parser.filter_type
-        
-        # All three parameters are required for a filter
-        if filter_freq is not None and filter_res is not None and filter_type:
-            def update_voice(voice):
-                if voice.active_note:
-                    try:
-                        filter = SynthioInterfaces.create_filter(
-                            self.synth,
-                            filter_type,
-                            filter_freq,
-                            filter_res
-                        )
-                        if filter:
-                            voice.active_note.filter = filter
-                    except Exception as e:
-                        log(TAG_SYNTH, f"Failed to update voice filter: {str(e)}", is_error=True)
-                        
-            self.voice_pool.for_each_active_voice(update_voice)
-            log(TAG_SYNTH, f"Updated global filter freq={filter_freq} res={filter_res} type={filter_type}")
-        else:
-            log(TAG_SYNTH, "Missing required filter parameters", is_error=True)
+    # Action Handlers (public interface)
+    def update_voice_parameter(self, param_name, value, channel):
+        """Update parameter on voice by channel."""
+        voice = self.voice_pool.get_voice_by_channel(channel)
+        if voice and voice.is_active():
+            self._update_voice_param(param_name, value, voice)
+            log(TAG_SYNTH, f"Updated voice {voice.get_address()} {param_name}={value}")
 
     def update_global_waveform(self, waveform_type):
         """Update global waveform."""
@@ -293,12 +178,140 @@ class Synthesizer:
             self.voice_pool.for_each_active_voice(update_voice)
             log(TAG_SYNTH, f"Updated ring modulation {param_name}={value}")
 
-    def update_voice_parameter(self, param_name, value, channel):
-        """Update parameter on voice by channel."""
+    def update_global_filter(self, param_name, value):
+        """Update global filter with new parameter."""
+        # Store the incoming parameter
+        self.state.store(param_name, value)
+        
+        # Check state for all required filter parameters
+        filter_freq = self.state.get('filter_frequency')
+        filter_res = self.state.get('filter_resonance')
+        filter_type = self.path_parser.filter_type
+        
+        # All three parameters are required for a filter
+        if filter_freq is not None and filter_res is not None and filter_type:
+            def update_voice(voice):
+                if voice.active_note:
+                    try:
+                        filter = SynthioInterfaces.create_filter(
+                            self.synth,
+                            filter_type,
+                            filter_freq,
+                            filter_res
+                        )
+                        if filter:
+                            voice.active_note.filter = filter
+                    except Exception as e:
+                        log(TAG_SYNTH, f"Failed to update voice filter: {str(e)}", is_error=True)
+                        
+            self.voice_pool.for_each_active_voice(update_voice)
+            log(TAG_SYNTH, f"Updated global filter freq={filter_freq} res={filter_res} type={filter_type}")
+        else:
+            log(TAG_SYNTH, "Missing required filter parameters", is_error=True)
+
+    def update_global_envelope(self, param_name, value):
+        """Update global envelope with new parameter."""
+        if not self.path_parser.has_envelope_paths:
+            return
+            
+        # Store the incoming parameter
+        self.state.store(param_name, value)
+        
+        # Collect all envelope parameters
+        envelope_params = {}
+        for param in ['attack_time', 'decay_time', 'release_time', 
+                     'attack_level', 'sustain_level']:
+            value = self.state.get(param)
+            if value is not None:
+                try:
+                    envelope_params[param] = float(value)
+                except (TypeError, ValueError) as e:
+                    log(TAG_SYNTH, f"Invalid envelope parameter {param}: {value}", is_error=True)
+                    continue
+        
+        # Create and apply envelope if we have parameters
+        if envelope_params:
+            try:
+                envelope = SynthioInterfaces.create_envelope(**envelope_params)
+                self.synth.envelope = envelope
+                log(TAG_SYNTH, f"Updated global envelope with parameters: {envelope_params}")
+            except Exception as e:
+                log(TAG_SYNTH, f"Error updating envelope: {str(e)}", is_error=True)
+
+    def press(self, note_number, channel, frequency_value):
+        """Press note with given frequency value."""
+        voice = self.voice_pool.press_note(note_number, channel)
+        if not voice:
+            return
+            
+        params = self._build_note_params(frequency_value)
+        
+        try:
+            note = SynthioInterfaces.create_note(**params)
+            self.synth.press(note)
+            voice.active_note = note
+            log(TAG_SYNTH, f"Created note {note_number} on channel {channel}")
+        except Exception as e:
+            log(TAG_SYNTH, f"Failed to create note: {str(e)}", is_error=True)
+            self.voice_pool.release_note(note_number)
+
+    def release(self, note_number, channel):
+        """Release note."""
         voice = self.voice_pool.get_voice_by_channel(channel)
-        if voice and voice.is_active():
-            self._update_voice_param(param_name, value, voice)
-            log(TAG_SYNTH, f"Updated voice {voice.get_address()} {param_name}={value}")
+        if voice and voice.note_number == note_number:
+            self.synth.release(voice.active_note)
+            self.voice_pool.release_note(note_number)
+            return
+            
+        voice = self.voice_pool.release_note(note_number)
+        if voice and voice.active_note:
+            self.synth.release(voice.active_note)
+            voice.active_note = None
+
+    # Voice Management Helpers (private)
+    def _build_note_params(self, frequency_value):
+        """Build note parameters from stored values and frequency value."""
+        params = {}
+        params['frequency'] = synthio.midi_to_hz(frequency_value)
+        
+        if self.path_parser.filter_type:
+            filter_freq = self.state.get('filter_frequency', 0)
+            filter_res = self.state.get('filter_resonance', 0)
+            try:
+                filter = SynthioInterfaces.create_filter(
+                    self.synth,
+                    self.path_parser.filter_type,
+                    filter_freq,
+                    filter_res
+                )
+                if filter:
+                    params['filter'] = filter
+            except Exception as e:
+                log(TAG_SYNTH, f"Failed to create filter: {str(e)}", is_error=True)
+        
+        waveform = self.state.get('waveform')
+        if waveform:
+            params['waveform'] = self.state.global_waveform
+        elif self.state.base_morph:
+            morph_pos = self.state.get('morph_position', 0)
+            params['waveform'] = self.state.base_morph.get_waveform(morph_pos)
+                
+        if self.path_parser.has_ring_mod:
+            ring_freq = self.state.get('ring_frequency')
+            ring_bend = self.state.get('ring_bend')
+            if ring_freq is not None:
+                params['ring_frequency'] = ring_freq
+            if ring_bend is not None:
+                params['ring_bend'] = ring_bend
+                
+            ring_waveform = self.state.get('ring_waveform')
+            if ring_waveform:
+                params['ring_waveform'] = self.state.global_ring_waveform
+            elif self.state.ring_morph:
+                morph_pos = self.state.get('ring_morph_position', 0)
+                params['ring_waveform'] = self.state.ring_morph.get_waveform(morph_pos)
+                
+        return params
 
     def _update_voice_param(self, param_name, value, voice):
         """Internal method to update voice parameter."""
@@ -346,84 +359,75 @@ class Synthesizer:
             except Exception as e:
                 log(TAG_SYNTH, f"Failed to update voice ring mod: {str(e)}", is_error=True)
 
-    def press(self, note_number, channel, frequency_value):
-        """Press note with given frequency value."""
-        voice = self.voice_pool.press_note(note_number, channel)
-        if not voice:
-            return
-            
-        params = self._build_note_params(frequency_value)
-        
-        try:
-            note = SynthioInterfaces.create_note(**params)
-            self.synth.press(note)
-            voice.active_note = note
-            log(TAG_SYNTH, f"Created note {note_number} on channel {channel}")
-        except Exception as e:
-            log(TAG_SYNTH, f"Failed to create note: {str(e)}", is_error=True)
-            self.voice_pool.release_note(note_number)
-
-    def release(self, note_number, channel):
-        """Release note."""
-        voice = self.voice_pool.get_voice_by_channel(channel)
-        if voice and voice.note_number == note_number:
-            self.synth.release(voice.active_note)
-            self.voice_pool.release_note(note_number)
-            return
-            
-        voice = self.voice_pool.release_note(note_number)
-        if voice and voice.active_note:
-            self.synth.release(voice.active_note)
-            voice.active_note = None
-
-    def cleanup(self):
-        """Clean up resources."""
-        self.setup.cleanup(self)
+    # State Management Helpers (private)
+    def store_value(self, name, value, use_now=True):
+        """Store a value and optionally use it immediately."""
+        self.state.store(name, value)
+        if use_now:
+            self._handle_value_update(name, value)
     
-    def register_ready_callback(self, callback):
-        """Register a callback to be notified when synth is ready."""
-        self.midi_handler.register_ready_callback(callback)
+    def _handle_value_update(self, name, value):
+        """Handle a value update based on parameter type."""
+        try:
+            if name.startswith('filter_'):
+                self.update_global_filter(name, value)
+            elif name.startswith('math_'):
+                self._update_math(name, value)
+            elif name.startswith('lfo_'):
+                self._update_lfo(name, value)
+            elif name in ('attack_time', 'decay_time', 'release_time', 
+                         'attack_level', 'sustain_level'):
+                self.update_global_envelope(name, value)
+            elif name.startswith('ring_'):
+                self.update_ring_modulation(name, value)
+            elif name == 'morph':
+                self.update_morph_position(value, self.state.get('morph_position', 0))
+            elif name == 'waveform':
+                self.update_global_waveform(value)
+            else:
+                log(TAG_SYNTH, f"No immediate handler for {name}={value}")
+        except Exception as e:
+            log(TAG_SYNTH, f"Error handling value update for {name}: {str(e)}", is_error=True)
 
-    def _build_note_params(self, frequency_value):
-        """Build note parameters from stored values and frequency value."""
-        params = {}
-        params['frequency'] = synthio.midi_to_hz(frequency_value)
-        
-        if self.path_parser.filter_type:
-            filter_freq = self.state.get('filter_frequency', 0)
-            filter_res = self.state.get('filter_resonance', 0)
+    # Error Handling
+    def _emergency_cleanup(self):
+        """Perform emergency cleanup in case of critical errors."""
+        log(TAG_SYNTH, "Performing emergency cleanup", is_error=True)
+        try:
+            if self.voice_pool:
+                self.voice_pool.release_all()
+                log(TAG_SYNTH, "Emergency released all voices")
+            
+            if self.midi_handler:
+                self.midi_handler.cleanup()
+                
+            if self.synth:
+                try:
+                    self.synth.deinit()
+                except Exception as e:
+                    log(TAG_SYNTH, f"Error deinitializing synth: {str(e)}", is_error=True)
+            self.synth = None
+            
+            self.state.clear()
+                
             try:
-                filter = SynthioInterfaces.create_filter(
-                    self.synth,
-                    self.path_parser.filter_type,
-                    filter_freq,
-                    filter_res
-                )
-                if filter:
-                    params['filter'] = filter
+                self.synth = self.setup.setup_synthio(self.state, self.state, self.path_parser)
+                self.midi_handler.setup_handlers()
+                log(TAG_SYNTH, "Successfully re-initialized synthesizer after emergency")
             except Exception as e:
-                log(TAG_SYNTH, f"Failed to create filter: {str(e)}", is_error=True)
-        
-        waveform = self.state.get('waveform')
-        if waveform:
-            params['waveform'] = self.state.global_waveform
-        elif self.state.base_morph:
-            morph_pos = self.state.get('morph_position', 0)
-            params['waveform'] = self.state.base_morph.get_waveform(morph_pos)
+                log(TAG_SYNTH, f"Failed to re-initialize synth: {str(e)}", is_error=True)
                 
-        if self.path_parser.has_ring_mod:
-            ring_freq = self.state.get('ring_frequency')
-            ring_bend = self.state.get('ring_bend')
-            if ring_freq is not None:
-                params['ring_frequency'] = ring_freq
-            if ring_bend is not None:
-                params['ring_bend'] = ring_bend
-                
-            ring_waveform = self.state.get('ring_waveform')
-            if ring_waveform:
-                params['ring_waveform'] = self.state.global_ring_waveform
-            elif self.state.ring_morph:
-                morph_pos = self.state.get('ring_morph_position', 0)
-                params['ring_waveform'] = self.state.ring_morph.get_waveform(morph_pos)
-                
-        return params
+            log(TAG_SYNTH, "Emergency cleanup complete")
+            
+        except Exception as e:
+            log(TAG_SYNTH, f"Error during emergency cleanup: {str(e)}", is_error=True)
+
+    def _update_math(self, name, value):
+        """Handle math operation updates."""
+        log(TAG_SYNTH, f"Math update: {name}={value}")
+        # TODO: Implement math operations
+
+    def _update_lfo(self, name, value):
+        """Handle LFO parameter updates."""
+        log(TAG_SYNTH, f"LFO update: {name}={value}")
+        # TODO: Implement LFO operations
