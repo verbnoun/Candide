@@ -14,6 +14,7 @@ class SynthesizerSetup:
     def __init__(self, midi_interface, audio_system=None):
         self.audio_system = audio_system
         self.midi_interface = midi_interface
+        self.synthesizer = None  # Reference to synthesizer for updates
         
     def initialize(self):
         """Initialize all synthesizer components."""
@@ -63,6 +64,42 @@ class SynthesizerSetup:
         except Exception as e:
             log(TAG_SYNTH, f"Failed to initialize synthio: {str(e)}", is_error=True)
             raise
+
+    def update_instrument(self, paths, config_name=None):
+        """Update instrument configuration."""
+        if not self.synthesizer:
+            log(TAG_SYNTH, "No synthesizer reference for update", is_error=True)
+            return
+            
+        log(TAG_SYNTH, "Updating instrument configuration...")
+        log(TAG_SYNTH, "----------------------------------------")
+        
+        try:
+            if self.synthesizer.voice_pool:
+                self.synthesizer.voice_pool.release_all()
+                log(TAG_SYNTH, "Released all voices during reconfiguration")
+            
+            self.synthesizer.state.clear()  # Clear stored values for new configuration
+            self.synthesizer.path_parser.parse_paths(paths, config_name)
+            
+            if not self.initialize_set_values(self.synthesizer.state, self.synthesizer.path_parser):
+                log(TAG_SYNTH, "Failed to initialize set values", is_error=True)
+                raise ValueError("Failed to initialize set values")
+                
+            self.synthesizer.synth = self.setup_synthio(self.synthesizer.state, self.synthesizer.state, self.synthesizer.path_parser)
+            self.synthesizer.midi_handler.setup_handlers()
+            
+            log(TAG_SYNTH, "----------------------------------------")
+            log(TAG_SYNTH, "Instrument update complete")
+            
+        except Exception as e:
+            log(TAG_SYNTH, f"Failed to update instrument: {str(e)}", is_error=True)
+            self.synthesizer._emergency_cleanup()
+            raise
+
+    def set_synthesizer(self, synthesizer):
+        """Set synthesizer reference for updates."""
+        self.synthesizer = synthesizer
 
     def _configure_waveforms(self, synth_state, store, path_parser):
         """Create base and ring waveforms"""

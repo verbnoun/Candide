@@ -115,6 +115,7 @@ class InstrumentManager:
         self.current_instrument = None
         self.connection_manager = None
         self.synthesizer = None
+        self.setup = None
         self._discover_instruments()
         log(TAG_INST, "Instrument manager initialized")
 
@@ -126,7 +127,8 @@ class InstrumentManager:
             
         if synthesizer:
             self.synthesizer = synthesizer
-            log(TAG_INST, "Registered synthesizer")
+            self.setup = synthesizer.setup  # Store setup reference
+            log(TAG_INST, "Registered synthesizer and setup")
             
         # Register connection manager's callback with synthesizer
         if self.synthesizer and self.connection_manager:
@@ -213,10 +215,10 @@ class InstrumentManager:
         self.current_instrument = instrument_name
         config_name, paths = self.instruments[instrument_name]
 
-        # Update synthesizer configuration
-        if self.synthesizer:
+        # Update synthesizer configuration through setup
+        if self.setup:
             log(TAG_INST, "Updating synthesizer configuration")
-            self.synthesizer.update_instrument(paths, config_name)  # Pass config_name to update_instrument
+            self.setup.update_instrument(paths, config_name)  # Use setup directly
             # Synthesizer will signal ready to connection manager
             return True
             
@@ -244,3 +246,4 @@ class InstrumentManager:
         log(TAG_INST, "Cleaning up instrument manager")
         self.connection_manager = None
         self.synthesizer = None
+        self.setup = None

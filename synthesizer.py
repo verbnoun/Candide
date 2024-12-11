@@ -80,6 +80,9 @@ class Synthesizer:
         # Set synthesizer reference in midi_handler
         self.midi_handler.synthesizer = self
         
+        # Set synthesizer reference in setup for updates
+        self.setup.set_synthesizer(self)
+        
         log(TAG_SYNTH, "Synthesizer initialized")
 
     def _create_envelope(self, store, path_parser):
@@ -372,34 +375,6 @@ class Synthesizer:
         if voice and voice.active_note:
             self.synth.release(voice.active_note)
             voice.active_note = None
-
-    def update_instrument(self, paths, config_name=None):
-        """Update instrument configuration."""
-        log(TAG_SYNTH, "Updating instrument configuration...")
-        log(TAG_SYNTH, "----------------------------------------")
-        
-        try:
-            if self.voice_pool:
-                self.voice_pool.release_all()
-                log(TAG_SYNTH, "Released all voices during reconfiguration")
-            
-            self.state.clear()  # Clear stored values for new configuration
-            self.path_parser.parse_paths(paths, config_name)
-            
-            if not self.setup.initialize_set_values(self.state, self.path_parser):
-                log(TAG_SYNTH, "Failed to initialize set values", is_error=True)
-                raise ValueError("Failed to initialize set values")
-                
-            self.synth = self.setup.setup_synthio(self.state, self.state, self.path_parser)
-            self.midi_handler.setup_handlers()
-            
-            log(TAG_SYNTH, "----------------------------------------")
-            log(TAG_SYNTH, "Instrument update complete")
-            
-        except Exception as e:
-            log(TAG_SYNTH, f"Failed to update instrument: {str(e)}", is_error=True)
-            self._emergency_cleanup()
-            raise
 
     def cleanup(self):
         """Clean up resources."""
