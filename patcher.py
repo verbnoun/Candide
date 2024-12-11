@@ -170,10 +170,16 @@ class MidiHandler:
                 
                 # Route to appropriate handler
                 handler = getattr(self.synthesizer, action['handler'])
-                if action['scope'] == 'per_key':
-                    handler(action['target'], value, msg.channel)
+                
+                # Special case for waveform updates which only take the buffer
+                if action['handler'] == 'update_global_waveform':
+                    handler(value)
                 else:
-                    handler(action['target'], value)
+                    # Normal parameter updates take target and value
+                    if action['scope'] == 'per_key':
+                        handler(action['target'], value, msg.channel)
+                    else:
+                        handler(action['target'], value)
 
     def handle_pitch_bend(self, msg):
         """Handle pitch bend message using routing table."""

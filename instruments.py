@@ -4,37 +4,22 @@
 import sys
 from logging import log, TAG_INST
 
-ENVELOPE_SET_PATHS = '''
-note/press/per_key/note_on
-note/release/per_key/note_off
-oscillator/frequency/per_key/note_number/note_on
-oscillator/waveform/global/square/set
-
-amplifier/envelope/attack_level/global/0.75/set
-amplifier/envelope/attack_time/global/0.1/set
-amplifier/envelope/decay_time/global/0.25/set
-amplifier/envelope/sustain_level/global/0.3/set
-amplifier/envelope/release_time/global/0.5/set
-'''
-ENVELOPE_CC_PATHS = '''
-note/press/per_key/note_on
-note/release/per_key/note_off
-oscillator/frequency/per_key/note_number/note_on
-oscillator/waveform/global/sine/set
-
-amplifier/envelope/attack_level/global/0.001-1/cc85
-amplifier/envelope/attack_time/global/0.001-0.5/cc73
-amplifier/envelope/decay_time/global/0.001-0.25/cc75
-amplifier/envelope/sustain_level/global/0.001-1/cc66
-amplifier/envelope/release_time/global/0.001-1/cc72
-'''
-
 MORPH_PATHS = '''
 note/press/per_key/note_on
 note/release/per_key/note_off
 oscillator/frequency/per_key/note_number/note_on
-oscillator/waveform/morph/global/sine-triangle-square-saw/cc72
+oscillator/waveform/global/sine-triangle-square-saw/cc72
+'''
 
+WAVY_PATHS = '''
+note/press/per_key/note_on
+note/release/per_key/note_off
+oscillator/frequency/per_key/note_number/note_on
+oscillator/waveform/global/sine-triangle-square-saw/cc72
+
+oscillator/ring/frequency/global/20-2000/cc74
+oscillator/ring/waveform/global/sine-triangle-square-saw/cc76
+oscillator/ring/bend/global/n12-12/cc85
 '''
 
 PLAY_PATHS = '''
@@ -45,7 +30,7 @@ oscillator/frequency/per_key/note_number/note_on
 oscillator/waveform/global/triangle/set
 
 oscillator/ring/frequency/global/20-2000/cc2
-oscillator/ring/waveform/morph/global/sine-triangle-square-saw/cc4
+oscillator/ring/waveform/global/sine-triangle-square-saw/cc4
 oscillator/ring/bend/global/n12-12/cc6
 
 filter/band_pass/resonance/global/0.1-2.0/cc3
@@ -56,17 +41,6 @@ amplifier/envelope/attack_time/global/0.001-0.5/cc13
 amplifier/envelope/decay_time/global/0.001-0.25/cc15
 amplifier/envelope/sustain_level/global/0.001-1/cc17
 amplifier/envelope/release_time/global/0.001-1/cc19
-'''
-
-WAVY_PATHS = '''
-note/press/per_key/note_on
-note/release/per_key/note_off
-oscillator/frequency/per_key/note_number/note_on
-oscillator/waveform/morph/global/sine-triangle-square-saw/cc72
-
-oscillator/ring/frequency/global/20-2000/cc74
-oscillator/ring/waveform/morph/global/sine-triangle-square-saw/cc76
-oscillator/ring/bend/global/n12-12/cc85
 '''
 
 RING_PATHS = '''
@@ -118,6 +92,44 @@ note/press/per_key/note_on
 note/release/per_key/note_off
 oscillator/frequency/per_key/220/set
 oscillator/waveform/global/saw/set
+'''
+
+ENVELOPE_SET_PATHS = '''
+note/press/per_key/note_on
+note/release/per_key/note_off
+oscillator/frequency/per_key/note_number/note_on
+oscillator/waveform/global/square/set
+
+amplifier/envelope/attack_level/global/0.75/set
+amplifier/envelope/attack_time/global/0.1/set
+amplifier/envelope/decay_time/global/0.25/set
+amplifier/envelope/sustain_level/global/0.3/set
+amplifier/envelope/release_time/global/0.5/set
+'''
+ENVELOPE_CC_PATHS = '''
+note/press/per_key/note_on
+note/release/per_key/note_off
+oscillator/frequency/per_key/note_number/note_on
+oscillator/waveform/global/sine/set
+
+amplifier/envelope/attack_level/global/0.001-1/cc85
+amplifier/envelope/attack_time/global/0.001-0.5/cc73
+amplifier/envelope/decay_time/global/0.001-0.25/cc75
+amplifier/envelope/sustain_level/global/0.001-1/cc66
+amplifier/envelope/release_time/global/0.001-1/cc72
+'''
+
+ENVELOPE_CC_PATHS = '''
+note/press/per_key/note_on
+note/release/per_key/note_off
+oscillator/frequency/per_key/note_number/note_on
+oscillator/waveform/global/sine/set
+
+amplifier/envelope/attack_level/global/0.001-1/cc85
+amplifier/envelope/attack_time/global/0.001-0.5/cc73
+amplifier/envelope/decay_time/global/0.001-0.25/cc75
+amplifier/envelope/sustain_level/global/0.001-1/cc66
+amplifier/envelope/release_time/global/0.001-1/cc72
 '''
 
 class InstrumentManager:

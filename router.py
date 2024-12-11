@@ -4,6 +4,7 @@ import synthio
 import array
 import math
 from logging import log, TAG_ROUTE
+from interfaces import SynthioInterfaces, WaveformMorph
 
 # Parameters that should stay as integers
 INTEGER_PARAMS = {
@@ -14,11 +15,20 @@ INTEGER_PARAMS = {
 
 class Route:
     """Creates a route that maps MIDI values to parameter values."""
-    def __init__(self, name, min_val=None, max_val=None, fixed_value=None, is_integer=False, is_note_to_freq=False):
+    def __init__(self, name, min_val=None, max_val=None, fixed_value=None, is_integer=False, 
+                 is_note_to_freq=False, waveform_sequence=None):
         self.name = name
         self.is_integer = is_integer
         self.fixed_value = fixed_value
         self.is_note_to_freq = is_note_to_freq
+        self.is_waveform_sequence = waveform_sequence is not None
+        self.waveform_sequence = waveform_sequence
+        self.waveform_morph = None
+        
+        # Initialize WaveformMorph if sequence provided
+        if self.is_waveform_sequence:
+            self.waveform_morph = WaveformMorph(name, waveform_sequence)
+            log(TAG_ROUTE, f"Created morph table for {'-'.join(waveform_sequence)}")
         
         # Only create lookup table if range is specified or note_to_freq
         if is_note_to_freq or (min_val is not None and max_val is not None):
@@ -72,8 +82,12 @@ class Route:
             return self.fixed_value
             
         if self.lookup_table is None:
+            if self.is_waveform_sequence:
+                # Get pre-calculated waveform from morph table
+                return self.waveform_morph.get_waveform(midi_value)
             return midi_value
             
+        # Get value from lookup table
         value = self.lookup_table[midi_value]
         
         # Convert to float unless parameter is in INTEGER_PARAMS
@@ -90,6 +104,8 @@ class Route:
         if self.fixed_value is not None:
             return f"Route(fixed: {self.fixed_value})"
         elif self.lookup_table is None:
+            if self.is_waveform_sequence:
+                return f"Route(waveform sequence: {'-'.join(self.waveform_sequence)})"
             return "Route(pass through)"
         elif self.is_note_to_freq:
             return "Route(MIDI note to Hz)"
@@ -103,14 +119,13 @@ class PathParser:
         self.midi_mappings = {}  # trigger -> [action objects]
         self.enabled_messages = set()
         self.enabled_ccs = set()
-        self.set_values = {}     # Values that have been set
         
         # Feature flags - only set when corresponding paths are found
         self.has_envelope_paths = False
         self.has_filter = False
         self.has_ring_mod = False
-        self.has_waveform_morph = False
-        self.has_ring_waveform_morph = False
+        self.has_waveform_sequence = False
+        self.has_ring_waveform_sequence = False
         self.has_math_ops = False
         self.has_lfo = False
         
@@ -159,12 +174,6 @@ class PathParser:
                         log(TAG_ROUTE, f"  {{handler: {action['handler']}, target: {action['target']}, scope: {action['scope']}, value: {action['value']}}}")
                 log(TAG_ROUTE, "]")
                 
-            # Log set values
-            if self.set_values:
-                log(TAG_ROUTE, "Set values:")
-                for name, value in self.set_values.items():
-                    log(TAG_ROUTE, f"  {name}: {value}")
-                
             # Log enabled messages
             log(TAG_ROUTE, f"Enabled messages: {self.enabled_messages}")
             if 'cc' in self.enabled_messages:
@@ -181,14 +190,13 @@ class PathParser:
         self.midi_mappings.clear()
         self.enabled_messages.clear()
         self.enabled_ccs.clear()
-        self.set_values.clear()
         
         # Reset feature flags
         self.has_envelope_paths = False
         self.has_filter = False
         self.has_ring_mod = False
-        self.has_waveform_morph = False
-        self.has_ring_waveform_morph = False
+        self.has_waveform_sequence = False
+        self.has_ring_waveform_sequence = False
         self.has_math_ops = False
         self.has_lfo = False
         
@@ -232,7 +240,7 @@ class PathParser:
         elif trigger == 'pitch_bend':
             self.enabled_messages.add('pitchbend')
         elif trigger == 'set':
-            # Handle set values separately
+            # Handle set values - store directly in synth state through action
             value_part = parts[-2]
             try:
                 # Convert numeric values to float unless in INTEGER_PARAMS
@@ -241,32 +249,33 @@ class PathParser:
                 else:
                     value = int(value_part)
             except ValueError:
-                # Not a numeric value, leave as-is (e.g., waveform types)
-                value = value_part
+                # Not a numeric value, must be a waveform type
+                if parts[0] == 'oscillator' and parts[1] == 'waveform':
+                    # Create waveform buffer immediately
+                    value = SynthioInterfaces.create_waveform(value_part)
+                else:
+                    value = value_part
                 
-            # Store in set_values and create action
+            # Create store action based on path
             if parts[0] == 'oscillator':
                 if parts[1] == 'frequency':
                     target = 'frequency'
-                    handler = 'update_voice_parameter'
+                    handler = 'store_value'
                 elif parts[1] == 'waveform':
                     target = 'waveform'
-                    handler = 'update_global_waveform'
+                    handler = 'update_global_waveform' if 'global' in parts else 'update_voice_waveform'
                 elif parts[1] == 'ring':
                     target = f'ring_{parts[2]}'
-                    handler = 'update_ring_modulation'
+                    handler = 'store_value'
             elif parts[0] == 'filter':
                 target = f'filter_{parts[2]}'
-                handler = 'update_global_filter'
+                handler = 'store_value'
                 self.filter_type = parts[1]
             elif parts[0] == 'amplifier' and parts[1] == 'envelope':
                 target = parts[2]
-                handler = 'update_global_envelope'
+                handler = 'store_value'
                 
-            self.set_values[target] = value
-            log(TAG_ROUTE, f"Found set value for {target}: {value}")
-            
-            # Create action for set value
+            # Create action for storing value
             action = {
                 'handler': handler,
                 'target': target,
@@ -278,6 +287,8 @@ class PathParser:
             if trigger not in self.midi_mappings:
                 self.midi_mappings[trigger] = []
             self.midi_mappings[trigger].append(action)
+            
+            log(TAG_ROUTE, f"Created store action for {target}: {value}")
             return
             
         # Initialize array if needed
@@ -313,18 +324,41 @@ class PathParser:
                         self.midi_mappings[trigger].append(action)
                         return
                 elif parts[1] == 'waveform':
-                    if 'morph' in parts:
-                        target = 'morph'
-                        handler = 'update_morph_position'
-                    else:
-                        target = 'waveform'
-                        handler = 'update_global_waveform'
-                        # Add waveform to set_values
-                        if value_part in ('sine', 'triangle', 'square', 'saw'):
-                            self.set_values['waveform'] = value_part
+                    target = 'waveform'
+                    handler = 'update_global_waveform' if scope == 'global' else 'update_voice_waveform'
+                    # Check if value is a waveform sequence
+                    if '-' in value_part:
+                        waveform_sequence = value_part.split('-')
+                        action = {
+                            'handler': handler,
+                            'target': target,
+                            'scope': scope,
+                            'lookup': Route(target, waveform_sequence=waveform_sequence)
+                        }
+                        self.waveform_sequence = waveform_sequence
+                        self.has_waveform_sequence = True
+                        self.midi_mappings[trigger].append(action)
+                        return
                 elif parts[1] == 'ring':
-                    target = f'ring_{parts[2]}'  # ring_frequency, ring_bend
-                    handler = 'update_ring_modulation'
+                    if parts[2] == 'waveform':
+                        target = 'ring_waveform'
+                        handler = 'update_ring_modulation'
+                        # Check if value is a waveform sequence
+                        if '-' in value_part:
+                            waveform_sequence = value_part.split('-')
+                            action = {
+                                'handler': handler,
+                                'target': target,
+                                'scope': scope,
+                                'lookup': Route(target, waveform_sequence=waveform_sequence)
+                            }
+                            self.ring_waveform_sequence = waveform_sequence
+                            self.has_ring_waveform_sequence = True
+                            self.midi_mappings[trigger].append(action)
+                            return
+                    else:
+                        target = f'ring_{parts[2]}'  # ring_frequency, ring_bend
+                        handler = 'update_ring_modulation'
                 elif parts[1] in ('pitch', 'timbre', 'pressure'):
                     target = parts[1]
                     handler = 'update_voice_parameter'
@@ -360,7 +394,7 @@ class PathParser:
             # Determine value source
             if value_part in ('velocity', 'pressure'):  # note_number handled above
                 action['source'] = value_part
-            elif '-' in value_part and not any(w in value_part for w in ('sine', 'triangle', 'square', 'saw')):
+            elif '-' in value_part:
                 min_val, max_val = self._parse_range(value_part)
                 action['lookup'] = Route(target, min_val, max_val, is_integer=target in INTEGER_PARAMS)
             else:
@@ -373,17 +407,8 @@ class PathParser:
             self.has_filter = True
         elif parts[0] == 'amplifier' and parts[1] == 'envelope':
             self.has_envelope_paths = True
-        elif parts[0] == 'oscillator':
-            if parts[1] == 'waveform' and len(parts) >= 3 and parts[2] == 'morph':
-                self.has_waveform_morph = True
-                if len(parts) >= 5 and '-' in parts[4]:
-                    self.waveform_sequence = parts[4].split('-')
-            elif parts[1] == 'ring':
-                self.has_ring_mod = True
-                if len(parts) >= 4 and parts[2] == 'waveform' and parts[3] == 'morph':
-                    self.has_ring_waveform_morph = True
-                    if len(parts) >= 6 and '-' in parts[5]:
-                        self.ring_waveform_sequence = parts[5].split('-')
+        elif parts[0] == 'oscillator' and parts[1] == 'ring':
+            self.has_ring_mod = True
     
     def _parse_line(self, parts):
         """Parse a single path line."""

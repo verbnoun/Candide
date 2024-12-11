@@ -8,7 +8,7 @@ from logging import log, TAG_SYNTH
 from voices import VoicePool
 from router import PathParser
 from patcher import MidiHandler
-from interfaces import SynthioInterfaces, WaveformMorph
+from interfaces import SynthioInterfaces
 from setup import SynthesizerSetup
 
 class SynthState:
@@ -18,11 +18,9 @@ class SynthState:
         self.values = {}
         self.previous = {}
         
-        # Waveform objects (not values - these are the actual waveform buffers)
+        # Global waveform storage
         self.global_waveform = None
         self.global_ring_waveform = None
-        self.base_morph = None
-        self.ring_morph = None
         
     def store(self, name, value):
         """Store a value and keep track of previous."""
@@ -43,6 +41,8 @@ class SynthState:
         """Clear all stored values."""
         self.values.clear()
         self.previous.clear()
+        self.global_waveform = None
+        self.global_ring_waveform = None
 
 class SynthMonitor:
     """Handles health monitoring and error recovery."""
@@ -103,80 +103,61 @@ class Synthesizer:
             self._update_voice_param(param_name, value, voice)
             log(TAG_SYNTH, f"Updated voice {voice.get_address()} {param_name}={value}")
 
-    def update_global_waveform(self, waveform_type):
-        """Update global waveform."""
-        # Store the incoming parameter
-        self.state.store('waveform', waveform_type)
-        
-        try:
-            # Create new waveform
-            new_waveform = SynthioInterfaces.create_waveform(waveform_type)
-            if new_waveform:
-                self.state.global_waveform = new_waveform
-                self.state.base_morph = None
-                
-                # Check state for morph position
-                morph_pos = self.state.get('morph_position')
-                if morph_pos is not None:
-                    self.voice_pool.for_each_active_voice(
-                        lambda v: self._update_voice_morph(v, morph_pos))
-                
-                log(TAG_SYNTH, f"Updated global waveform: {waveform_type}")
-        except Exception as e:
-            log(TAG_SYNTH, f"Failed to update global waveform: {str(e)}", is_error=True)
+    def update_voice_waveform(self, waveform_buffer, channel):
+        """Update waveform for a specific voice."""
+        voice = self.voice_pool.get_voice_by_channel(channel)
+        if voice and voice.is_active():
+            try:
+                voice.active_note.waveform = waveform_buffer
+                voice.active_note.waveform_loop_end = len(waveform_buffer)
+                log(TAG_SYNTH, f"Updated waveform for voice {voice.get_address()}")
+            except Exception as e:
+                log(TAG_SYNTH, f"Failed to update voice waveform: {str(e)}", is_error=True)
 
-    def update_morph_position(self, position, value):
-        """Update waveform morph position."""
-        # Store both position and value
-        self.state.store('morph_position', value)
-        self.state.store('morph', position)
-        
-        # Check if we have a base morph to work with
-        if self.state.base_morph:
-            # Check state for ring morph if available
-            ring_morph = self.state.get('ring_morph')
+    def update_global_waveform(self, waveform_buffer):
+        """Update global waveform with new buffer."""
+        try:
+            # Store the waveform buffer
+            self.state.global_waveform = waveform_buffer
             
+            # Update any active voices with global waveform
             def update_voice(voice):
                 if voice.active_note:
                     try:
-                        # Update base waveform morph
-                        voice.active_note.waveform = self.state.base_morph.get_waveform(value)
-                        
-                        # If ring morph exists and we have a value, update it too
-                        if ring_morph is not None and self.state.ring_morph:
-                            voice.active_note.ring_waveform = self.state.ring_morph.get_waveform(ring_morph)
+                        voice.active_note.waveform = waveform_buffer
+                        voice.active_note.waveform_loop_end = len(waveform_buffer)
                     except Exception as e:
-                        log(TAG_SYNTH, f"Failed to update voice morph: {str(e)}", is_error=True)
-            
+                        log(TAG_SYNTH, f"Failed to update voice waveform: {str(e)}", is_error=True)
+                    
             self.voice_pool.for_each_active_voice(update_voice)
-            log(TAG_SYNTH, f"Updated morph position: {position} (Value: {value})")
+            log(TAG_SYNTH, "Updated global waveform and active voices")
+            
+        except Exception as e:
+            log(TAG_SYNTH, f"Failed to update global waveform: {str(e)}", is_error=True)
 
     def update_ring_modulation(self, param_name, value):
         """Update ring modulation parameters."""
         # Store the incoming parameter
         self.state.store(param_name, value)
         
-        # Check state for all ring mod parameters
-        ring_freq = self.state.get('ring_frequency')
-        ring_bend = self.state.get('ring_bend')
-        ring_morph = self.state.get('ring_morph')
-        
         def update_voice(voice):
             if voice.active_note:
                 try:
-                    # Apply any available parameters
-                    if ring_freq is not None:
-                        voice.active_note.ring_frequency = ring_freq
-                    if ring_bend is not None:
-                        voice.active_note.ring_bend = ring_bend
-                    if ring_morph is not None and self.state.ring_morph:
-                        voice.active_note.ring_waveform = self.state.ring_morph.get_waveform(ring_morph)
+                    if param_name == 'ring_frequency':
+                        voice.active_note.ring_frequency = value
+                    elif param_name == 'ring_bend':
+                        voice.active_note.ring_bend = value
+                    elif param_name == 'ring_waveform':
+                        # Value is a waveform buffer
+                        voice.active_note.ring_waveform = value
+                        voice.active_note.ring_waveform_loop_end = len(value)
+                        self.state.global_ring_waveform = value
                 except Exception as e:
                     log(TAG_SYNTH, f"Failed to update voice ring mod: {str(e)}", is_error=True)
         
         if self.path_parser.has_ring_mod:
             self.voice_pool.for_each_active_voice(update_voice)
-            log(TAG_SYNTH, f"Updated ring modulation {param_name}={value}")
+            log(TAG_SYNTH, f"Updated ring modulation {param_name} and active voices")
 
     def update_global_filter(self, param_name, value):
         """Update global filter with new parameter."""
@@ -214,11 +195,11 @@ class Synthesizer:
         if not self.path_parser.has_envelope_paths:
             return
             
-        # Store the incoming parameter
-        self.state.store(param_name, value)
+        # Store the incoming parameter if provided
+        if param_name is not None and value is not None:
+            self.state.store(param_name, value)
         
-        # Log current envelope parameters
-        log(TAG_SYNTH, "Current envelope parameters:")
+        # Check store for all envelope parameters
         envelope_params = {}
         for param in ['attack_time', 'decay_time', 'release_time', 
                      'attack_level', 'sustain_level']:
@@ -226,20 +207,14 @@ class Synthesizer:
             if value is not None:
                 try:
                     envelope_params[param] = float(value)
-                    log(TAG_SYNTH, f"  {param}: {value}")
+                    log(TAG_SYNTH, f"Using envelope parameter {param}: {value}")
                 except (TypeError, ValueError) as e:
                     log(TAG_SYNTH, f"Invalid envelope parameter {param}: {value}", is_error=True)
                     continue
-            else:
-                log(TAG_SYNTH, f"  {param}: None")
         
         # Create and apply envelope if we have all parameters
         if len(envelope_params) == 5:  # Only create if we have all parameters
             try:
-                log(TAG_SYNTH, "Creating envelope with parameters:")
-                for param, value in envelope_params.items():
-                    log(TAG_SYNTH, f"  {param}: {value}")
-                    
                 envelope = SynthioInterfaces.create_envelope(**envelope_params)
                 self.synth.envelope = envelope
                 log(TAG_SYNTH, "Successfully created and set envelope")
@@ -298,28 +273,25 @@ class Synthesizer:
         
         # Add filter if configured
         if self.path_parser.filter_type:
-            filter_freq = self.state.get('filter_frequency', 0)
-            filter_res = self.state.get('filter_resonance', 0)
-            try:
-                filter = SynthioInterfaces.create_filter(
-                    self.synth,
-                    self.path_parser.filter_type,
-                    filter_freq,
-                    filter_res
-                )
-                if filter:
-                    params['filter'] = filter
-            except Exception as e:
-                log(TAG_SYNTH, f"Failed to create filter: {str(e)}", is_error=True)
+            filter_freq = self.state.get('filter_frequency')
+            filter_res = self.state.get('filter_resonance')
+            if filter_freq is not None and filter_res is not None:
+                try:
+                    filter = SynthioInterfaces.create_filter(
+                        self.synth,
+                        self.path_parser.filter_type,
+                        filter_freq,
+                        filter_res
+                    )
+                    if filter:
+                        params['filter'] = filter
+                except Exception as e:
+                    log(TAG_SYNTH, f"Failed to create filter: {str(e)}", is_error=True)
         
-        # Add waveform if not passed
-        if 'waveform' not in params:
-            waveform = self.state.get('waveform')
-            if waveform:
-                params['waveform'] = self.state.global_waveform
-            elif self.state.base_morph:
-                morph_pos = self.state.get('morph_position', 0)
-                params['waveform'] = self.state.base_morph.get_waveform(morph_pos)
+        # Add global waveform if available
+        if self.state.global_waveform is not None:
+            params['waveform'] = self.state.global_waveform
+            params['waveform_loop_end'] = len(self.state.global_waveform)
                 
         # Add ring modulation if configured
         if self.path_parser.has_ring_mod:
@@ -330,12 +302,9 @@ class Synthesizer:
             if ring_bend is not None:
                 params['ring_bend'] = ring_bend
                 
-            ring_waveform = self.state.get('ring_waveform')
-            if ring_waveform:
+            if self.state.global_ring_waveform is not None:
                 params['ring_waveform'] = self.state.global_ring_waveform
-            elif self.state.ring_morph:
-                morph_pos = self.state.get('ring_morph_position', 0)
-                params['ring_waveform'] = self.state.ring_morph.get_waveform(morph_pos)
+                params['ring_waveform_loop_end'] = len(self.state.global_ring_waveform)
                 
         return params
 
@@ -363,57 +332,10 @@ class Synthesizer:
             except Exception as e:
                 log(TAG_SYNTH, f"Failed to update voice filter: {str(e)}", is_error=True)
 
-    def _update_voice_morph(self, voice, value):
-        """Internal method to update voice waveform morph."""
-        if voice.active_note and self.state.base_morph:
-            try:
-                voice.active_note.waveform = self.state.base_morph.get_waveform(value)
-            except Exception as e:
-                log(TAG_SYNTH, f"Failed to update voice morph: {str(e)}", is_error=True)
-
-    def _update_voice_ring_mod(self, voice, param_name, value):
-        """Internal method to update voice ring modulation."""
-        if voice.active_note:
-            try:
-                if param_name == 'ring_frequency':
-                    voice.active_note.ring_frequency = value
-                elif param_name == 'ring_bend':
-                    voice.active_note.ring_bend = value
-                elif param_name == 'ring_morph':
-                    if self.state.ring_morph:
-                        voice.active_note.ring_waveform = self.state.ring_morph.get_waveform(value)
-            except Exception as e:
-                log(TAG_SYNTH, f"Failed to update voice ring mod: {str(e)}", is_error=True)
-
-    # State Management Helpers (private)
-    def store_value(self, name, value, use_now=True):
-        """Store a value and optionally use it immediately."""
+    # State Management Helper (private)
+    def store_value(self, name, value):
+        """Store a value in the state."""
         self.state.store(name, value)
-        if use_now:
-            self._handle_value_update(name, value)
-    
-    def _handle_value_update(self, name, value):
-        """Handle a value update based on parameter type."""
-        try:
-            if name.startswith('filter_'):
-                self.update_global_filter(name, value)
-            elif name.startswith('math_'):
-                self._update_math(name, value)
-            elif name.startswith('lfo_'):
-                self._update_lfo(name, value)
-            elif name in ('attack_time', 'decay_time', 'release_time', 
-                         'attack_level', 'sustain_level'):
-                self.update_global_envelope(name, value)
-            elif name.startswith('ring_'):
-                self.update_ring_modulation(name, value)
-            elif name == 'morph':
-                self.update_morph_position(value, self.state.get('morph_position', 0))
-            elif name == 'waveform':
-                self.update_global_waveform(value)
-            else:
-                log(TAG_SYNTH, f"No immediate handler for {name}={value}")
-        except Exception as e:
-            log(TAG_SYNTH, f"Error handling value update for {name}: {str(e)}", is_error=True)
 
     # Error Handling
     def _emergency_cleanup(self):

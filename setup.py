@@ -4,7 +4,7 @@ import synthio
 import time
 from constants import SAMPLE_RATE, AUDIO_CHANNEL_COUNT
 from logging import log, TAG_SETUP
-from interfaces import SynthioInterfaces, WaveformMorph
+from interfaces import SynthioInterfaces
 from voices import VoicePool
 from router import PathParser
 from patcher import MidiHandler
@@ -41,14 +41,71 @@ class SynthesizerSetup:
     def setup_synthio(self, synth_state, store, path_parser):
         """Initialize or update synthio synthesizer based on global settings."""
         try:
+            # First check for envelope paths in any action
+            envelope_paths = False
+            envelope_params = ['attack_time', 'decay_time', 'release_time', 
+                             'attack_level', 'sustain_level']
+            
+            for actions in path_parser.midi_mappings.values():
+                for action in actions:
+                    if 'target' in action and action['target'] in envelope_params:
+                        envelope_paths = True
+                        break
+                if envelope_paths:
+                    break
+                    
+            path_parser.has_envelope_paths = envelope_paths
+            log(TAG_SETUP, f"Found envelope paths: {envelope_paths}")
+            
+            # Execute store actions for 'set' trigger if present
+            if 'set' in path_parser.midi_mappings:
+                for action in path_parser.midi_mappings['set']:
+                    try:
+                        # Call store_value on synthesizer
+                        self.synthesizer.store_value(action['target'], action['value'])
+                        log(TAG_SETUP, f"Stored initial value {action['target']}={action['value']}")
+                    except Exception as e:
+                        log(TAG_SETUP, f"Failed to store initial value: {str(e)}", is_error=True)
+                        raise
+            
             self._configure_waveforms(synth_state, store, path_parser)
             
             # Create synth parameters
             params = {
                 'sample_rate': SAMPLE_RATE,
-                'channel_count': AUDIO_CHANNEL_COUNT,
-                'waveform': synth_state.global_waveform
+                'channel_count': AUDIO_CHANNEL_COUNT
             }
+            
+            # Add waveform if available, otherwise let synthio use default
+            if synth_state.global_waveform is not None:
+                params['waveform'] = synth_state.global_waveform
+            
+            # Check for envelope parameters before creating synth
+            if path_parser.has_envelope_paths:
+                envelope_params = {}
+                for param in ['attack_time', 'decay_time', 'release_time', 
+                            'attack_level', 'sustain_level']:
+                    value = store.get(param)
+                    if value is not None:
+                        try:
+                            envelope_params[param] = float(value)
+                            log(TAG_SETUP, f"Using envelope parameter {param}: {value}")
+                        except (TypeError, ValueError) as e:
+                            log(TAG_SETUP, f"Invalid envelope parameter {param}: {value}", is_error=True)
+                            continue
+                
+                # Create envelope if we have all parameters
+                if len(envelope_params) == 5:
+                    try:
+                        envelope = SynthioInterfaces.create_envelope(**envelope_params)
+                        params['envelope'] = envelope
+                        log(TAG_SETUP, "Created envelope for synth initialization")
+                    except Exception as e:
+                        log(TAG_SETUP, f"Failed to create envelope: {str(e)}", is_error=True)
+                else:
+                    missing = set(['attack_time', 'decay_time', 'release_time', 
+                                'attack_level', 'sustain_level']) - set(envelope_params.keys())
+                    log(TAG_SETUP, f"Missing envelope parameters: {missing}")
             
             # Create synth with base parameters
             synth = SynthioInterfaces.create_synthesizer(**params)
@@ -83,24 +140,14 @@ class SynthesizerSetup:
             # 2. Parse paths
             self.synthesizer.path_parser.parse_paths(paths, config_name)
             
-            # 3. Store all set values first
-            if not self.store_set_values(self.synthesizer.state, self.synthesizer.path_parser):
-                log(TAG_SETUP, "Failed to store set values", is_error=True)
-                raise ValueError("Failed to store set values")
-            
-            # 4. Create synthesizer with base parameters (needs stored waveform)
+            # 3. Create synthesizer with base parameters
             self.synthesizer.synth = self.setup_synthio(
                 self.synthesizer.state,
                 self.synthesizer.state,
                 self.synthesizer.path_parser
             )
             
-            # 5. Execute set actions (like envelope updates)
-            if not self.execute_set_actions(self.synthesizer.path_parser):
-                log(TAG_SETUP, "Failed to execute set actions", is_error=True)
-                raise ValueError("Failed to execute set actions")
-            
-            # 6. Setup MIDI handlers
+            # 4. Setup MIDI handlers
             self.synthesizer.midi_handler.setup_handlers()
             
             log(TAG_SETUP, "----------------------------------------")
@@ -111,82 +158,30 @@ class SynthesizerSetup:
             self.synthesizer._emergency_cleanup()
             raise
 
-    def store_set_values(self, store, path_parser):
-        """Store all set values."""
-        try:
-            success = True
-            for name, value in path_parser.set_values.items():
-                try:
-                    store.store(name, value)
-                    log(TAG_SETUP, f"Stored set value {name}={value}")
-                except Exception as e:
-                    log(TAG_SETUP, f"Failed to store set value {name}: {str(e)}", is_error=True)
-                    success = False
-            return success
-        except Exception as e:
-            log(TAG_SETUP, f"Error storing set values: {str(e)}", is_error=True)
-            return False
-
-    def execute_set_actions(self, path_parser):
-        """Execute all set actions."""
-        try:
-            success = True
-            if self.synthesizer and 'set' in path_parser.midi_mappings:
-                for action in path_parser.midi_mappings['set']:
-                    try:
-                        # Skip waveform action since it's handled during synth creation
-                        if action['target'] == 'waveform':
-                            continue
-                            
-                        # Get handler method from synthesizer
-                        handler = getattr(self.synthesizer, action['handler'])
-                        
-                        # Call handler with target and value
-                        if action['scope'] == 'per_key':
-                            handler(action['target'], action['value'], None)  # No channel for set values
-                        else:
-                            handler(action['target'], action['value'])
-                            
-                        log(TAG_SETUP, f"Executed set action: {action['handler']}({action['target']}, {action['value']})")
-                    except Exception as e:
-                        log(TAG_SETUP, f"Failed to execute set action: {str(e)}", is_error=True)
-                        success = False
-            return success
-        except Exception as e:
-            log(TAG_SETUP, f"Error executing set actions: {str(e)}", is_error=True)
-            return False
-
     def set_synthesizer(self, synthesizer):
         """Set synthesizer reference for updates."""
         self.synthesizer = synthesizer
 
     def _configure_waveforms(self, synth_state, store, path_parser):
-        """Create base and ring waveforms"""
-        # Configure base waveform
+        """Store waveform buffers from router"""
+        # Get base waveform from store if available
         waveform = store.get('waveform')
-        if waveform:
-            synth_state.global_waveform = SynthioInterfaces.create_waveform(waveform)
-            synth_state.base_morph = None
-            log(TAG_SETUP, f"Created base waveform: {waveform}")
-        elif path_parser.waveform_sequence:
-            synth_state.base_morph = WaveformMorph('base', path_parser.waveform_sequence)
-            synth_state.global_waveform = synth_state.base_morph.get_waveform(0)
-            log(TAG_SETUP, f"Created base morph table: {'-'.join(path_parser.waveform_sequence)}")
+        if waveform is not None:
+            # Store pre-made waveform buffer
+            synth_state.global_waveform = waveform
+            log(TAG_SETUP, "Stored base waveform buffer")
         else:
-            log(TAG_SETUP, "No base oscillator waveform path found", is_error=True)
-            raise ValueError("No base oscillator waveform path found")
+            # Let synthio use default waveform
+            synth_state.global_waveform = None
+            log(TAG_SETUP, "Using default synthio waveform")
             
-        # Configure ring waveform if ring mod is enabled
+        # Get ring waveform if ring mod is enabled
         if path_parser.has_ring_mod:
             ring_waveform = store.get('ring_waveform')
-            if ring_waveform:
-                synth_state.global_ring_waveform = SynthioInterfaces.create_waveform(ring_waveform)
-                synth_state.ring_morph = None
-                log(TAG_SETUP, f"Created ring waveform: {ring_waveform}")
-            elif path_parser.ring_waveform_sequence:
-                synth_state.ring_morph = WaveformMorph('ring', path_parser.ring_waveform_sequence)
-                synth_state.global_ring_waveform = synth_state.ring_morph.get_waveform(0)
-                log(TAG_SETUP, f"Created ring morph table: {'-'.join(path_parser.ring_waveform_sequence)}")
+            if ring_waveform is not None:
+                # Store pre-made ring waveform buffer
+                synth_state.global_ring_waveform = ring_waveform
+                log(TAG_SETUP, "Stored ring waveform buffer")
 
     def cleanup(self, synthesizer):
         """Clean up resources."""
