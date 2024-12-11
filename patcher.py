@@ -35,9 +35,37 @@ class MidiHandler:
         )
         log(TAG_PATCH, f"MIDI handlers configured for: {self.path_parser.enabled_messages}")
         
+        # Execute any 'set' actions immediately
+        if 'set' in self.path_parser.midi_mappings:
+            self.handle_set_actions()
+        
         if self.ready_callback:
             log(TAG_PATCH, "Configuration complete - signaling ready")
             self.ready_callback()
+
+    def handle_set_actions(self):
+        """Execute 'set' actions immediately."""
+        actions = self.path_parser.midi_mappings.get('set', [])
+        for action in actions:
+            try:
+                # Get the handler method from synthesizer
+                handler = getattr(self.synthesizer, action['handler'])
+                value = action['value']
+                
+                log(TAG_PATCH, f"Executing set action: {action['handler']} {action['target']} = {value}")
+                
+                # Special case for waveform updates which only take the buffer
+                if action['handler'] == 'update_global_waveform':
+                    handler(value)
+                else:
+                    # Normal parameter updates take target and value
+                    if action['scope'] == 'per_key':
+                        handler(action['target'], value, 0)  # Use channel 0 for per_key set actions
+                    else:
+                        handler(action['target'], value)
+                        
+            except Exception as e:
+                log(TAG_PATCH, f"Failed to execute set action: {str(e)}", is_error=True)
 
     def cleanup(self):
         """Clean up MIDI subscription."""

@@ -287,7 +287,7 @@ class PathParser:
                     handler = 'store_value'
                 elif parts[1] == 'amplitude':
                     target = 'amplitude'
-                    handler = 'update_amplifier_amplitude'  # Changed to match CC handler
+                    handler = 'update_amplifier_amplitude'  # Changed for global amplitude
                 
             # Determine scope based on path starting with 'note'
             scope = 'per_key' if parts[0] == 'note' else 'global'
@@ -326,6 +326,7 @@ class PathParser:
                 # Skip 'note' prefix and process rest of path
                 nested_parts = parts[1:]
                 value_part = parts[-2]
+                range_part = parts[-3]  # Get range from path
                 
                 # Set default handler and target
                 handler = 'update_voice_parameter'
@@ -371,6 +372,17 @@ class PathParser:
                     if nested_parts[1] == 'amplitude':
                         target = 'amplitude'
                         handler = 'update_voice_parameter'  # Keep update_voice_parameter for note paths
+                        if value_part == 'velocity':
+                            # Parse amplitude range from path
+                            min_val, max_val = self._parse_range(range_part)
+                            action = {
+                                'handler': handler,
+                                'target': target,
+                                'scope': 'per_key',
+                                'lookup': Route(target, min_val=min_val, max_val=max_val)
+                            }
+                            self.midi_mappings[trigger].append(action)
+                            return
                 
                 if target is None:
                     raise ValueError(f"Could not determine target for path: {'/'.join(parts)}")

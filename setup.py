@@ -57,16 +57,9 @@ class SynthesizerSetup:
             path_parser.has_envelope_paths = envelope_paths
             log(TAG_SETUP, f"Found envelope paths: {envelope_paths}")
             
-            # Execute store actions for 'set' trigger if present
+            # Let patcher handle set actions using its existing handler
             if 'set' in path_parser.midi_mappings:
-                for action in path_parser.midi_mappings['set']:
-                    try:
-                        # Call store_value on synthesizer
-                        self.synthesizer.store_value(action['target'], action['value'])
-                        log(TAG_SETUP, f"Stored initial value {action['target']}={action['value']}")
-                    except Exception as e:
-                        log(TAG_SETUP, f"Failed to store initial value: {str(e)}", is_error=True)
-                        raise
+                self.synthesizer.midi_handler.handle_set_actions()
             
             self._configure_waveforms(synth_state, store, path_parser)
             
