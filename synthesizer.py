@@ -217,7 +217,8 @@ class Synthesizer:
         # Store the incoming parameter
         self.state.store(param_name, value)
         
-        # Collect all envelope parameters
+        # Log current envelope parameters
+        log(TAG_SYNTH, "Current envelope parameters:")
         envelope_params = {}
         for param in ['attack_time', 'decay_time', 'release_time', 
                      'attack_level', 'sustain_level']:
@@ -225,18 +226,29 @@ class Synthesizer:
             if value is not None:
                 try:
                     envelope_params[param] = float(value)
+                    log(TAG_SYNTH, f"  {param}: {value}")
                 except (TypeError, ValueError) as e:
                     log(TAG_SYNTH, f"Invalid envelope parameter {param}: {value}", is_error=True)
                     continue
+            else:
+                log(TAG_SYNTH, f"  {param}: None")
         
-        # Create and apply envelope if we have parameters
-        if envelope_params:
+        # Create and apply envelope if we have all parameters
+        if len(envelope_params) == 5:  # Only create if we have all parameters
             try:
+                log(TAG_SYNTH, "Creating envelope with parameters:")
+                for param, value in envelope_params.items():
+                    log(TAG_SYNTH, f"  {param}: {value}")
+                    
                 envelope = SynthioInterfaces.create_envelope(**envelope_params)
                 self.synth.envelope = envelope
-                log(TAG_SYNTH, f"Updated global envelope with parameters: {envelope_params}")
+                log(TAG_SYNTH, "Successfully created and set envelope")
             except Exception as e:
-                log(TAG_SYNTH, f"Error updating envelope: {str(e)}", is_error=True)
+                log(TAG_SYNTH, f"Error creating/setting envelope: {str(e)}", is_error=True)
+        else:
+            missing = set(['attack_time', 'decay_time', 'release_time', 
+                         'attack_level', 'sustain_level']) - set(envelope_params.keys())
+            log(TAG_SYNTH, f"Missing envelope parameters: {missing}")
 
     def press(self, note_number, channel, note_values):
         """Press note with given values."""

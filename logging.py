@@ -30,6 +30,7 @@ TAG_MIDI = 'MIDI   '     # midi.py
 TAG_MODU = 'MODU   '     # modules.py
 TAG_PATCH = 'PATCH  '    # patcher.py
 TAG_ROUTE = 'ROUTE  '    # router.py
+TAG_SETUP = 'SETUP  '    # setup.py
 TAG_SYNTH = 'SYNTH  '    # synthesizer.py
 TAG_UART = 'UART   '     # uart.py
 TAG_VOICES = 'VOICES '    # voices.py
@@ -46,6 +47,7 @@ TAG_COLORS = {
     TAG_MODU: COLOR_SPRING,       # modules.py
     TAG_PATCH: COLOR_CYAN,        # patcher.py
     TAG_ROUTE: COLOR_BLUE,        # router.py
+    TAG_SETUP: COLOR_ORANGE,      # setup.py
     TAG_SYNTH: COLOR_INDIGO,      # synthesizer.py
     TAG_UART: COLOR_VIOLET,       # uart.py
     TAG_VOICES: COLOR_MAGENTA,     # voice.py
@@ -63,6 +65,7 @@ LOG_ENABLE = {
     TAG_MODU: True,
     TAG_PATCH: True,
     TAG_ROUTE: True,
+    TAG_SETUP: True,
     TAG_SYNTH: True,
     TAG_UART: False,
     TAG_VOICES: True,

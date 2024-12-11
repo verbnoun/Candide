@@ -4,21 +4,32 @@
 import sys
 from logging import log, TAG_INST
 
-NOTE_MINIMUM_PATHS = '''
+ENVELOPE_SET_PATHS = '''
 note/press/per_key/note_on
 note/release/per_key/note_off
 oscillator/frequency/per_key/note_number/note_on
-oscillator/waveform/global/triangle/set
-'''
+oscillator/waveform/global/square/set
 
-SET_PATHS = '''
+amplifier/envelope/attack_level/global/0.75/set
+amplifier/envelope/attack_time/global/0.1/set
+amplifier/envelope/decay_time/global/0.25/set
+amplifier/envelope/sustain_level/global/0.3/set
+amplifier/envelope/release_time/global/0.5/set
+'''
+ENVELOPE_CC_PATHS = '''
 note/press/per_key/note_on
 note/release/per_key/note_off
-oscillator/frequency/per_key/220/set
-oscillator/waveform/global/triangle/set
+oscillator/frequency/per_key/note_number/note_on
+oscillator/waveform/global/sine/set
+
+amplifier/envelope/attack_level/global/0.001-1/cc85
+amplifier/envelope/attack_time/global/0.001-0.5/cc73
+amplifier/envelope/decay_time/global/0.001-0.25/cc75
+amplifier/envelope/sustain_level/global/0.001-1/cc66
+amplifier/envelope/release_time/global/0.001-1/cc72
 '''
 
-PUSH_PATHS = '''
+MORPH_PATHS = '''
 note/press/per_key/note_on
 note/release/per_key/note_off
 oscillator/frequency/per_key/note_number/note_on
@@ -95,17 +106,18 @@ filter/notch/resonance/global/0.1-2.0/cc71
 filter/notch/frequency/global/20-20000/cc70
 '''
 
-ENVELOPE_MINIMUM_PATHS = '''
+NOTE_MINIMUM_PATHS = '''
 note/press/per_key/note_on
 note/release/per_key/note_off
 oscillator/frequency/per_key/note_number/note_on
-oscillator/waveform/global/sine/set
+oscillator/waveform/global/triangle/set
+'''
 
-amplifier/envelope/attack_level/global/0.001-1/cc85
-amplifier/envelope/attack_time/global/0.001-0.5/cc73
-amplifier/envelope/decay_time/global/0.001-0.25/cc75
-amplifier/envelope/sustain_level/global/0.001-1/cc66
-amplifier/envelope/release_time/global/0.001-1/cc72
+SET_PATHS = '''
+note/press/per_key/note_on
+note/release/per_key/note_off
+oscillator/frequency/per_key/220/set
+oscillator/waveform/global/saw/set
 '''
 
 class InstrumentManager:
