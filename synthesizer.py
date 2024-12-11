@@ -256,6 +256,8 @@ class Synthesizer:
             note = SynthioInterfaces.create_note(**params)
             self.synth.press(note)
             voice.active_note = note
+            # Add amplitude to scaler after note is created
+            self.voice_pool.add_note_amplitude(voice)
             log(TAG_SYNTH, f"Created note {note_number} on channel {channel}")
         except Exception as e:
             log(TAG_SYNTH, f"Failed to create note: {str(e)}", is_error=True)

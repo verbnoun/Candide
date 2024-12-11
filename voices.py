@@ -5,6 +5,107 @@ import math
 import time
 from logging import log, TAG_VOICES
 
+class AmplitudeScaler:
+    """Handles exponential amplitude scaling for polyphony protection.
+    
+    For n notes with individual amplitudes a₁, a₂, ..., aₙ, where each aᵢ is in [0,1],
+    scales amplitude using the formula:
+    S(a₁,...,aₙ) = aᵢ * e^(-k * ∑aⱼ)
+    
+    Where:
+    - aᵢ is the individual note's amplitude
+    - k is a compression factor (0.3)
+    - ∑aⱼ is the sum of all current amplitudes
+    
+    This scaling:
+    - Preserves relative amplitudes between notes
+    - Prevents clipping/overload as n increases
+    - Smoothly decreases with more notes
+    - Never reaches 0
+    """
+    def __init__(self):
+        self.k = 0.3  # Compression factor
+        self.e_neg_k = math.exp(-self.k)  # Pre-calculate for efficiency
+        self.sum_amplitudes = 0.0  # Running sum of amplitudes
+        self.active_count = 0  # Number of active notes
+        
+        log(TAG_VOICES, "Amplitude scaler initialized:")
+        log(TAG_VOICES, f"  Compression factor (k): {self.k}")
+        log(TAG_VOICES, f"  Pre-calculated e^(-k): {self.e_neg_k:.4f}")
+        
+    def add_amplitude(self, amplitude):
+        """Add a new amplitude to the sum."""
+        self.sum_amplitudes += amplitude
+        self.active_count += 1
+        
+        log(TAG_VOICES, "Amplitude scaling state after add:")
+        log(TAG_VOICES, f"  Added raw amplitude: {amplitude:.4f}")
+        log(TAG_VOICES, f"  Total amplitude: {self.sum_amplitudes:.4f}")
+        log(TAG_VOICES, f"  Active notes: {self.active_count}")
+        
+        # Calculate scale using total amplitude
+        scale = math.pow(self.e_neg_k, self.sum_amplitudes)
+        scaled = amplitude * scale
+        log(TAG_VOICES, f"  Scale factor: {scale:.4f}")
+        log(TAG_VOICES, f"  Final amplitude: {scaled:.4f}")
+            
+    def remove_amplitude(self, amplitude):
+        """Remove an amplitude from the sum."""
+        self.sum_amplitudes -= amplitude
+        self.active_count -= 1
+        if self.active_count < 0:  # Safety check
+            self.active_count = 0
+            self.sum_amplitudes = 0.0
+            
+        log(TAG_VOICES, "Amplitude scaling state after remove:")
+        log(TAG_VOICES, f"  Removed raw amplitude: {amplitude:.4f}")
+        log(TAG_VOICES, f"  Total amplitude: {self.sum_amplitudes:.4f}")
+        log(TAG_VOICES, f"  Active notes: {self.active_count}")
+        if self.active_count > 0:
+            # Calculate scale using total amplitude
+            scale = math.pow(self.e_neg_k, self.sum_amplitudes)
+            log(TAG_VOICES, f"  Scale factor: {scale:.4f}")
+            log(TAG_VOICES, f"  Example scaled amplitudes:")
+            for amp in [0.5, 1.0]:  # Show scaling for different amplitudes
+                scaled = amp * scale
+                log(TAG_VOICES, f"    {amp:.1f} -> {scaled:.4f}")
+            
+    def clear(self):
+        """Reset amplitude tracking."""
+        log(TAG_VOICES, "Cleared amplitude scaler:")
+        log(TAG_VOICES, f"  Previous total: {self.sum_amplitudes:.4f}")
+        log(TAG_VOICES, f"  Previous count: {self.active_count}")
+        
+        self.sum_amplitudes = 0.0
+        self.active_count = 0
+        
+    def scale_amplitude(self, amplitude):
+        """Scale an individual amplitude based on current state.
+        
+        Args:
+            amplitude: The amplitude to scale
+            
+        Returns:
+            Scaled amplitude value
+        """
+        if self.active_count == 0:
+            log(TAG_VOICES, f"No active notes - using raw amplitude: {amplitude:.4f}")
+            return amplitude
+            
+        # Calculate scale using total amplitude
+        scale = math.pow(self.e_neg_k, self.sum_amplitudes)
+        
+        # Scale the individual amplitude
+        final_amp = amplitude * scale
+        
+        log(TAG_VOICES, f"Scaling amplitude {amplitude:.4f}:")
+        log(TAG_VOICES, f"  Active notes: {self.active_count}")
+        log(TAG_VOICES, f"  Total amplitude: {self.sum_amplitudes:.4f}")
+        log(TAG_VOICES, f"  Scale factor: {scale:.4f}")
+        log(TAG_VOICES, f"  Final amplitude: {final_amp:.4f}")
+        
+        return final_amp
+
 class VoicePool:
     """Manages voices that can be targeted by MIDI address."""
     def __init__(self, size=5):
@@ -13,17 +114,7 @@ class VoicePool:
         self.next_timestamp = 0
         self.channel_map = {}  # Maps channel -> voice for active voices
         self.base_amplitude = 1.0  # Base amplitude for notes
-        
-        # Pre-calculate amplitude scaling factors using 1/sqrt(n)
-        # Create table for size+3 entries to handle potential voice stealing
-        self.amplitude_scaling = array.array('f', [1.0])  # Start with 1.0 for 0 notes
-        for i in range(1, size + 4):  # size+3 plus 1 since we start at 1
-            self.amplitude_scaling.append(1.0 / math.sqrt(i))
-        
-        # Log the amplitude scaling table
-        log(TAG_VOICES, "Amplitude scaling table:")
-        for i, amp in enumerate(self.amplitude_scaling):
-            log(TAG_VOICES, f"  {i} notes: {amp:.4f}")
+        self.amplitude_scaler = AmplitudeScaler()  # Handles amplitude scaling
         
         # Toddler mode tracking
         self.last_steal_time = 0
@@ -43,9 +134,9 @@ class VoicePool:
                 active_count += 1
         return active_count
 
-    def get_amplitude_for_count(self, count):
-        """Get amplitude scaling factor for given note count."""
-        return self.amplitude_scaling[count]
+    def get_amplitude_for_count(self, amplitude):
+        """Scale amplitude based on active voices."""
+        return self.amplitude_scaler.scale_amplitude(amplitude)
         
     def for_each_active_voice(self, callback):
         """Execute callback for each active voice."""
@@ -97,6 +188,11 @@ class VoicePool:
             addr = voice.get_address()
             if addr:
                 log(TAG_VOICES, "  Voice {}: {}".format(i, addr))
+                if voice.active_note:
+                    raw_amp = voice.active_note.amplitude
+                    log(TAG_VOICES, f"    Raw amplitude: {raw_amp:.4f}")
+                    scaled = self.amplitude_scaler.scale_amplitude(raw_amp)
+                    log(TAG_VOICES, f"    Scaled amplitude: {scaled:.4f}")
             else:
                 log(TAG_VOICES, "  Voice {}: inactive".format(i))
         
@@ -131,6 +227,10 @@ class VoicePool:
         if oldest_voice.get_address():
             log(TAG_VOICES, "Stealing voice {}".format(oldest_voice.get_address()))
             
+        # Remove stolen voice's amplitude from scaler
+        if oldest_voice.active_note:
+            self.amplitude_scaler.remove_amplitude(oldest_voice.active_note.amplitude)
+            
         return oldest_voice
         
     def press_note(self, note_number, channel):
@@ -158,8 +258,14 @@ class VoicePool:
         self.next_timestamp += 1
         self.channel_map[channel] = voice
         
+        # Return voice - amplitude will be added after note is created
         self._log_all_voices("after note-on")
         return voice
+        
+    def add_note_amplitude(self, voice):
+        """Add a note's amplitude to the scaler after it's created."""
+        if voice and voice.active_note:
+            self.amplitude_scaler.add_amplitude(voice.active_note.amplitude)
         
     def release_note(self, note_number):
         """Target a voice with note-off."""
@@ -169,6 +275,9 @@ class VoicePool:
             if voice.note_number == note_number:
                 if voice.channel in self.channel_map:
                     del self.channel_map[voice.channel]
+                # Remove voice's amplitude from scaler before clearing
+                if voice.active_note:
+                    self.amplitude_scaler.remove_amplitude(voice.active_note.amplitude)
                 voice.clear()
                 self._log_all_voices("after note-off")
                 return voice
@@ -179,6 +288,9 @@ class VoicePool:
         """Release voice on channel if any."""
         if channel in self.channel_map:
             voice = self.channel_map[channel]
+            # Remove voice's amplitude from scaler before clearing
+            if voice.active_note:
+                self.amplitude_scaler.remove_amplitude(voice.active_note.amplitude)
             voice.clear()
             del self.channel_map[channel]
                 
@@ -191,6 +303,7 @@ class VoicePool:
                 
         self.next_timestamp = 0
         self.channel_map.clear()
+        self.amplitude_scaler.clear()  # Reset amplitude tracking
         
         self._log_all_voices("after release-all")
         
