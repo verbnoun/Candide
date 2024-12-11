@@ -8,7 +8,7 @@ NOTE_MINIMUM_PATHS = '''
 note/press/per_key/note_on
 note/release/per_key/note_off
 oscillator/frequency/per_key/note_number/note_on
-oscillator/waveform/global/square/note_on
+oscillator/waveform/global/square/set
 '''
 
 SET_PATHS = '''
@@ -31,7 +31,7 @@ note/press/per_key/note_on
 note/release/per_key/note_off
 
 oscillator/frequency/per_key/note_number/note_on
-oscillator/waveform/global/triangle/note_on
+oscillator/waveform/global/triangle/set
 
 oscillator/ring/frequency/global/20-2000/cc2
 oscillator/ring/waveform/morph/global/sine-triangle-square-saw/cc4

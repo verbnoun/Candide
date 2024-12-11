@@ -47,6 +47,12 @@ class VoicePool:
         """Get amplitude scaling factor for given note count."""
         return self.amplitude_scaling[count]
         
+    def for_each_active_voice(self, callback):
+        """Execute callback for each active voice."""
+        for voice in self.voices:
+            if voice.is_active():
+                callback(voice)
+        
     def _check_toddler_trigger(self, current_time, is_stealing=False):
         """Check if we should trigger toddler mode."""
         # If already in toddler mode, handle countdown and cleanup

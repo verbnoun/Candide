@@ -60,7 +60,7 @@ class Synthesizer:
         
         # Initialize components
         self.state = SynthState()
-        self.midi_handler = MidiHandler(self.state, self.voice_pool, self.path_parser)
+        self.midi_handler = MidiHandler(self.state, self.path_parser)
         self.midi_handler.synthesizer = self  # Add this line to set the reference
         self.monitor = SynthMonitor()
         
@@ -78,7 +78,7 @@ class Synthesizer:
                 return
 
             if msg.type in self.path_parser.enabled_messages:
-                self.midi_handler.handle_message(msg, self.synth)
+                self.midi_handler.handle_message(msg)
 
         except Exception as e:
             log(TAG_SYNTH, f"Error handling MIDI message: {str(e)}", is_error=True)
@@ -97,17 +97,23 @@ class Synthesizer:
         filter_param = f'filter_{param_name}'
         self.state.update_value(filter_param, value)
         # Update filter on all voices
-        for voice in self.voice_pool.voices:
-            if voice.is_active():
-                self._update_voice_filter(voice)
+        self.voice_pool.for_each_active_voice(self._update_voice_filter)
         log(TAG_SYNTH, f"Updated global filter {param_name}={value}")
 
     def update_global_waveform(self, waveform_type):
         """Update global waveform."""
-        self.state.update_value('waveform', waveform_type)
-        self.state.global_waveform = SynthioInterfaces.create_waveform(waveform_type)
-        self.state.base_morph = None
-        log(TAG_SYNTH, f"Updated global waveform: {waveform_type}")
+        try:
+            # Store the new waveform type in state
+            self.state.update_value('waveform', waveform_type)
+            
+            # Create new waveform buffer for future notes
+            new_waveform = SynthioInterfaces.create_waveform(waveform_type)
+            if new_waveform:
+                self.state.global_waveform = new_waveform
+                self.state.base_morph = None
+                log(TAG_SYNTH, f"Updated global waveform: {waveform_type}")
+        except Exception as e:
+            log(TAG_SYNTH, f"Failed to update global waveform: {str(e)}", is_error=True)
 
     def update_morph_position(self, position, midi_value):
         """Update waveform morph position."""
@@ -117,9 +123,7 @@ class Synthesizer:
         
         # Update all active voices
         if self.state.base_morph:
-            for voice in self.voice_pool.voices:
-                if voice.is_active():
-                    self._update_voice_morph(voice, midi_value)
+            self.voice_pool.for_each_active_voice(lambda v: self._update_voice_morph(v, midi_value))
         log(TAG_SYNTH, f"Updated morph position: {position} (MIDI: {midi_value})")
 
     def update_ring_modulation(self, param_name, value):
@@ -127,19 +131,17 @@ class Synthesizer:
         self.state.update_value(param_name, value)
         
         # Update all active voices
-        for voice in self.voice_pool.voices:
-            if voice.is_active():
-                self._update_voice_ring_mod(voice, param_name, value)
+        self.voice_pool.for_each_active_voice(lambda v: self._update_voice_ring_mod(v, param_name, value))
         log(TAG_SYNTH, f"Updated ring modulation {param_name}={value}")
 
     def update_voice_parameter(self, param_name, value, channel):
         """Update parameter on voice by channel."""
         voice = self.voice_pool.get_voice_by_channel(channel)
         if voice and voice.is_active():
-            self._update_voice_param(voice, param_name, value)
+            self._update_voice_param(param_name, value, voice)
             log(TAG_SYNTH, f"Updated voice {voice.get_address()} {param_name}={value}")
 
-    def _update_voice_param(self, voice, param_name, value):
+    def _update_voice_param(self, param_name, value, voice):
         """Internal method to update voice parameter."""
         if voice.active_note and hasattr(voice.active_note, param_name):
             try:
@@ -392,18 +394,12 @@ class Synthesizer:
             log(TAG_SYNTH, f"Error during cleanup: {str(e)}", is_error=True)
             self._emergency_cleanup()
 
-    def handle_note_on(self, note_number, channel):
-        """Handle note-on by coordinating between voice pool and synthio."""
-        # Get voice from voice pool
-        voice = self.voice_pool.press_note(note_number, channel)
-        if not voice:
-            return
-            
-        # Build note parameters
+    def _build_note_params(self, value):
+        """Build note parameters from state and value."""
         params = {}
         
-        # Convert note number to frequency
-        params['frequency'] = synthio.midi_to_hz(note_number)
+        # Convert value to frequency
+        params['frequency'] = synthio.midi_to_hz(value)
         
         # Get filter parameters if filter type is specified
         if self.path_parser.filter_type:
@@ -445,7 +441,19 @@ class Synthesizer:
             elif self.state.ring_morph:
                 morph_pos = self.state.get_value('ring_morph_position') or 0
                 params['ring_waveform'] = self.state.ring_morph.get_waveform(morph_pos)
+                
+        return params
+
+    def press(self, note_number, channel, value):
+        """Press note with router-provided value."""
+        # Get voice from pool
+        voice = self.voice_pool.press_note(note_number, channel)
+        if not voice:
+            return
             
+        # Build note parameters
+        params = self._build_note_params(value)
+        
         # Create synthio note
         try:
             note = SynthioInterfaces.create_note(**params)
@@ -456,8 +464,8 @@ class Synthesizer:
             log(TAG_SYNTH, f"Failed to create note: {str(e)}", is_error=True)
             self.voice_pool.release_note(note_number)
 
-    def handle_note_off(self, note_number, channel):
-        """Handle note-off by coordinating between voice pool and synthio."""
+    def release(self, note_number, channel):
+        """Release note."""
         # First try to find voice by exact note and channel
         voice = self.voice_pool.get_voice_by_channel(channel)
         if voice and voice.note_number == note_number:

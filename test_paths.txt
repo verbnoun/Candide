@@ -1,13 +1,24 @@
+work forward from here
+ensure router builds correct logic against synth targets
+synthio has interfaces
+synthesizer has targets
+route table has value lookup and target per midi
+route table needs to create bundles of values and targets for midi that arrives together
+synthesizer needs to hold some data and use it later
+
+work out from synthesizer
+
+
+** write list of what synthesizer has to do **
+
+
+
 # Note On Bundle - Direct Action
 note/press/per_key/note_on
 
 # Note On Bundle - Values
 oscillator/frequency/per_key/note_number/note_on
 oscillator/amplitude/per_key/velocity/note_on
-oscillator/waveform/global/sine/note_on
-oscillator/waveform/global/triangle/note_on
-oscillator/waveform/global/square/note_on
-oscillator/waveform/global/saw/note_on
 
 # Note Off Bundle - Direct Action
 note/release/per_key/note_off
@@ -46,10 +57,10 @@ oscillator/ring/frequency/global/20-2000/cc30
 oscillator/ring/frequency/per_key/20-2000/cc31
 oscillator/ring/bend/global/n12-12/cc32
 oscillator/ring/bend/per_key/n12-12/cc33
-oscillator/ring/waveform/global/sine/note_on
-oscillator/ring/waveform/global/triangle/note_on
-oscillator/ring/waveform/global/square/note_on
-oscillator/ring/waveform/global/saw/note_on
+oscillator/ring/waveform/global/sine/set
+oscillator/ring/waveform/global/triangle/set
+oscillator/ring/waveform/global/square/notsete_on
+oscillator/ring/waveform/global/saw/notsete_on
 
 # Control Change - Waveform Morph
 oscillator/waveform/morph/global/sine-triangle/cc40
@@ -63,7 +74,7 @@ oscillator/ring/waveform/morph/global/triangle-square/cc51
 oscillator/ring/waveform/morph/global/square-saw/cc52
 oscillator/ring/waveform/morph/global/sine-triangle-square-saw/cc53
 
-# Fixed Values
+# Set Values
 oscillator/frequency/per_key/64/set
 oscillator/frequency/global/440/set
 filter/low_pass/frequency/global/1000/set
@@ -71,11 +82,6 @@ filter/low_pass/resonance/global/1.5/set
 amplifier/envelope/attack_time/global/0.1/set
 oscillator/ring/frequency/global/100/set
 
-# Per-Key Variations
-filter/low_pass/frequency/per_key/20-20000/cc80
-filter/low_pass/resonance/per_key/0.1-2.0/cc81
-amplifier/envelope/attack_time/per_key/0.001-0.5/cc82
-amplifier/envelope/release_time/per_key/0.001-1.0/cc83
 
 # Multiple CCs to Same Target
 filter/low_pass/frequency/global/20-20000/cc90
@@ -83,9 +89,7 @@ filter/low_pass/frequency/global/20-20000/cc91
 filter/low_pass/frequency/global/20-20000/cc92
 
 # MPE Paths
-oscillator/pitch/per_key/n48-48/cc85
-oscillator/timbre/per_key/0-127/cc74
-oscillator/pressure/per_key/0-127/cc67
+
 
 # Math Operations
 math/sum/global/0-1/cc100
