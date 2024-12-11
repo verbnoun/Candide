@@ -8,13 +8,13 @@ NOTE_MINIMUM_PATHS = '''
 note/press/per_key/note_on
 note/release/per_key/note_off
 oscillator/frequency/per_key/note_number/note_on
-oscillator/waveform/global/square/set
+oscillator/waveform/global/triangle/set
 '''
 
 SET_PATHS = '''
 note/press/per_key/note_on
 note/release/per_key/note_off
-oscillator/frequency/per_key/64/set
+oscillator/frequency/per_key/220/set
 oscillator/waveform/global/triangle/set
 '''
 

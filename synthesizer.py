@@ -238,13 +238,14 @@ class Synthesizer:
             except Exception as e:
                 log(TAG_SYNTH, f"Error updating envelope: {str(e)}", is_error=True)
 
-    def press(self, note_number, channel, frequency_value):
-        """Press note with given frequency value."""
+    def press(self, note_number, channel, note_values):
+        """Press note with given values."""
         voice = self.voice_pool.press_note(note_number, channel)
         if not voice:
             return
             
-        params = self._build_note_params(frequency_value)
+        # Build note parameters from passed values and stored values
+        params = self._build_note_params(note_values)
         
         try:
             note = SynthioInterfaces.create_note(**params)
@@ -255,7 +256,7 @@ class Synthesizer:
             log(TAG_SYNTH, f"Failed to create note: {str(e)}", is_error=True)
             self.voice_pool.release_note(note_number)
 
-    def release(self, note_number, channel):
+    def release(self, note_number, channel, note_values=None):
         """Release note."""
         voice = self.voice_pool.get_voice_by_channel(channel)
         if voice and voice.note_number == note_number:
@@ -269,11 +270,21 @@ class Synthesizer:
             voice.active_note = None
 
     # Voice Management Helpers (private)
-    def _build_note_params(self, frequency_value):
-        """Build note parameters from stored values and frequency value."""
+    def _build_note_params(self, note_values):
+        """Build note parameters from passed values and stored values."""
         params = {}
-        params['frequency'] = synthio.midi_to_hz(frequency_value)
         
+        # Start with any passed values
+        if note_values:
+            params.update(note_values)
+            
+        # Add stored frequency if not passed
+        if 'frequency' not in params:
+            stored_freq = self.state.get('frequency')
+            if stored_freq is not None:
+                params['frequency'] = stored_freq
+        
+        # Add filter if configured
         if self.path_parser.filter_type:
             filter_freq = self.state.get('filter_frequency', 0)
             filter_res = self.state.get('filter_resonance', 0)
@@ -289,13 +300,16 @@ class Synthesizer:
             except Exception as e:
                 log(TAG_SYNTH, f"Failed to create filter: {str(e)}", is_error=True)
         
-        waveform = self.state.get('waveform')
-        if waveform:
-            params['waveform'] = self.state.global_waveform
-        elif self.state.base_morph:
-            morph_pos = self.state.get('morph_position', 0)
-            params['waveform'] = self.state.base_morph.get_waveform(morph_pos)
+        # Add waveform if not passed
+        if 'waveform' not in params:
+            waveform = self.state.get('waveform')
+            if waveform:
+                params['waveform'] = self.state.global_waveform
+            elif self.state.base_morph:
+                morph_pos = self.state.get('morph_position', 0)
+                params['waveform'] = self.state.base_morph.get_waveform(morph_pos)
                 
+        # Add ring modulation if configured
         if self.path_parser.has_ring_mod:
             ring_freq = self.state.get('ring_frequency')
             ring_bend = self.state.get('ring_bend')

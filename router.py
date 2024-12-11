@@ -14,25 +14,41 @@ INTEGER_PARAMS = {
 
 class Route:
     """Creates a route that maps MIDI values to parameter values."""
-    def __init__(self, name, min_val=None, max_val=None, fixed_value=None, is_integer=False):
+    def __init__(self, name, min_val=None, max_val=None, fixed_value=None, is_integer=False, is_note_to_freq=False):
         self.name = name
         self.is_integer = is_integer
         self.fixed_value = fixed_value
+        self.is_note_to_freq = is_note_to_freq
         
-        # Only create lookup table if range is specified
-        if min_val is not None and max_val is not None:
-            self.min_val = float(min_val)
-            self.max_val = float(max_val)
+        # Only create lookup table if range is specified or note_to_freq
+        if is_note_to_freq or (min_val is not None and max_val is not None):
             self.lookup_table = array.array('f', [0] * 128)
-            self._build_lookup()
-            log(TAG_ROUTE, "Created route: {} [{} to {}] {}".format(
-                name, min_val, max_val, '(integer)' if is_integer else ''))
+            if is_note_to_freq:
+                self._build_note_to_freq_lookup()
+                log(TAG_ROUTE, "Created route: {} [MIDI note to Hz]".format(name))
+            else:
+                self.min_val = float(min_val)
+                self.max_val = float(max_val)
+                self._build_lookup()
+                log(TAG_ROUTE, "Created route: {} [{} to {}] {}".format(
+                    name, min_val, max_val, '(integer)' if is_integer else ''))
         else:
             self.lookup_table = None
             if fixed_value is not None:
                 log(TAG_ROUTE, f"Created route: {name} [fixed: {fixed_value}]")
             else:
                 log(TAG_ROUTE, f"Created route: {name} [pass through]")
+    
+    def _build_note_to_freq_lookup(self):
+        """Build lookup table for MIDI note number to Hz conversion."""
+        for i in range(128):
+            self.lookup_table[i] = synthio.midi_to_hz(i)
+            
+        log(TAG_ROUTE, "Note to Hz lookup table for {} (sample values):".format(self.name))
+        log(TAG_ROUTE, "  0: {:.2f} Hz".format(self.lookup_table[0]))
+        log(TAG_ROUTE, " 60 (middle C): {:.2f} Hz".format(self.lookup_table[60]))
+        log(TAG_ROUTE, " 69 (A440): {:.2f} Hz".format(self.lookup_table[69]))
+        log(TAG_ROUTE, "127: {:.2f} Hz".format(self.lookup_table[127]))
         
     def _build_lookup(self):
         """Build MIDI value lookup table for fast conversion."""
@@ -75,6 +91,8 @@ class Route:
             return f"Route(fixed: {self.fixed_value})"
         elif self.lookup_table is None:
             return "Route(pass through)"
+        elif self.is_note_to_freq:
+            return "Route(MIDI note to Hz)"
         else:
             return f"Route({self.min_val}-{self.max_val})"
 
@@ -219,7 +237,7 @@ class PathParser:
             try:
                 # Convert numeric values to float unless in INTEGER_PARAMS
                 if parts[1] not in INTEGER_PARAMS:
-                    value = float(value_part)
+                    value = float(value_part)  # For frequency, this is already in Hz
                 else:
                     value = int(value_part)
             except ValueError:
@@ -284,6 +302,16 @@ class PathParser:
                 if parts[1] == 'frequency':
                     target = 'frequency'
                     handler = 'update_voice_parameter'
+                    # Special handling for note_number to frequency conversion
+                    if value_part == 'note_number':
+                        action = {
+                            'handler': handler,
+                            'target': target,
+                            'scope': scope,
+                            'lookup': Route(target, is_note_to_freq=True)
+                        }
+                        self.midi_mappings[trigger].append(action)
+                        return
                 elif parts[1] == 'waveform':
                     if 'morph' in parts:
                         target = 'morph'
@@ -330,7 +358,7 @@ class PathParser:
             }
             
             # Determine value source
-            if value_part in ('note_number', 'velocity', 'pressure'):
+            if value_part in ('velocity', 'pressure'):  # note_number handled above
                 action['source'] = value_part
             elif '-' in value_part and not any(w in value_part for w in ('sine', 'triangle', 'square', 'saw')):
                 min_val, max_val = self._parse_range(value_part)
