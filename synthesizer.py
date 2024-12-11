@@ -143,20 +143,11 @@ class Synthesizer:
         - value: The new amplitude value (0.001 to 1.0)
         """
         try:
-            SynthioInterfaces.update_amplifier_amplitude(self.voice_pool, value)
-            
             # Store the amplitude value
             self.state.store('amplifier_amplitude', value)
             
-            # Update any active voices with new amplitude
-            def update_voice(voice):
-                if voice.active_note:
-                    try:
-                        voice.active_note.amplitude = value
-                    except Exception as e:
-                        log(TAG_SYNTH, f"Failed to update voice amplitude: {str(e)}", is_error=True)
-                        
-            self.voice_pool.for_each_active_voice(update_voice)
+            # Only update the voice pool's base amplitude
+            self.voice_pool.base_amplitude = value
             log(TAG_SYNTH, f"Updated global amplifier amplitude: {value}")
             
         except Exception as e:
@@ -291,6 +282,16 @@ class Synthesizer:
         # Start with any passed values
         if note_values:
             params.update(note_values)
+            
+        # If global amplitude is stored, apply it to the note's amplitude
+        stored_amp = self.state.get('amplifier_amplitude')
+        if stored_amp is not None:
+            if 'amplitude' in params:
+                # If note has its own amplitude, multiply with global
+                params['amplitude'] *= stored_amp
+            else:
+                # Otherwise use global amplitude directly
+                params['amplitude'] = stored_amp
             
         # Add stored frequency if not passed
         if 'frequency' not in params:

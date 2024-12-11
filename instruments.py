@@ -9,7 +9,7 @@ note/press/note_on
 note/release/note_off
 note/oscillator/frequency/note_number/note_on
 
-amplifier/amplitude/0.001-1/cc24
+amplifier/amplitude/0.1/set
 
 oscillator/waveform/triangle/set
 '''

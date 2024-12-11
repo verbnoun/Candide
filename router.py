@@ -287,7 +287,7 @@ class PathParser:
                     handler = 'store_value'
                 elif parts[1] == 'amplitude':
                     target = 'amplitude'
-                    handler = 'store_value'
+                    handler = 'update_amplifier_amplitude'  # Changed to match CC handler
                 
             # Determine scope based on path starting with 'note'
             scope = 'per_key' if parts[0] == 'note' else 'global'
