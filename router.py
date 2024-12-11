@@ -250,9 +250,13 @@ class PathParser:
                     value = int(value_part)
             except ValueError:
                 # Not a numeric value, must be a waveform type
-                if parts[0] == 'oscillator' and parts[1] == 'waveform':
-                    # Create waveform buffer immediately
-                    value = SynthioInterfaces.create_waveform(value_part)
+                if parts[0] == 'oscillator':
+                    if parts[1] == 'waveform':
+                        # Create waveform buffer immediately
+                        value = SynthioInterfaces.create_waveform(value_part)
+                    elif parts[1] == 'ring' and parts[2] == 'waveform':
+                        # Create ring waveform buffer immediately
+                        value = SynthioInterfaces.create_waveform(value_part)
                 else:
                     value = value_part
                 
@@ -265,8 +269,12 @@ class PathParser:
                     target = 'waveform'
                     handler = 'update_global_waveform' if 'global' in parts else 'update_voice_waveform'
                 elif parts[1] == 'ring':
-                    target = f'ring_{parts[2]}'
-                    handler = 'store_value'
+                    if parts[2] == 'waveform':
+                        target = 'ring_waveform'
+                        handler = 'update_ring_modulation'
+                    else:
+                        target = f'ring_{parts[2]}'
+                        handler = 'store_value'
             elif parts[0] == 'filter':
                 target = f'filter_{parts[2]}'
                 handler = 'store_value'
@@ -339,6 +347,15 @@ class PathParser:
                         self.has_waveform_sequence = True
                         self.midi_mappings[trigger].append(action)
                         return
+                    else:
+                        # Create fixed waveform buffer immediately
+                        value = SynthioInterfaces.create_waveform(value_part)
+                        action = {
+                            'handler': handler,
+                            'target': target,
+                            'scope': scope,
+                            'value': value
+                        }
                 elif parts[1] == 'ring':
                     if parts[2] == 'waveform':
                         target = 'ring_waveform'
@@ -356,6 +373,15 @@ class PathParser:
                             self.has_ring_waveform_sequence = True
                             self.midi_mappings[trigger].append(action)
                             return
+                        else:
+                            # Create fixed waveform buffer immediately
+                            value = SynthioInterfaces.create_waveform(value_part)
+                            action = {
+                                'handler': handler,
+                                'target': target,
+                                'scope': scope,
+                                'value': value
+                            }
                     else:
                         target = f'ring_{parts[2]}'  # ring_frequency, ring_bend
                         handler = 'update_ring_modulation'

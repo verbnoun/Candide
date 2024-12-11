@@ -4,24 +4,6 @@
 import sys
 from logging import log, TAG_INST
 
-MORPH_PATHS = '''
-note/press/per_key/note_on
-note/release/per_key/note_off
-oscillator/frequency/per_key/note_number/note_on
-oscillator/waveform/global/sine-triangle-square-saw/cc72
-'''
-
-WAVY_PATHS = '''
-note/press/per_key/note_on
-note/release/per_key/note_off
-oscillator/frequency/per_key/note_number/note_on
-oscillator/waveform/global/sine-triangle-square-saw/cc72
-
-oscillator/ring/frequency/global/20-2000/cc74
-oscillator/ring/waveform/global/sine-triangle-square-saw/cc76
-oscillator/ring/bend/global/n12-12/cc85
-'''
-
 PLAY_PATHS = '''
 note/press/per_key/note_on
 note/release/per_key/note_off
@@ -43,22 +25,11 @@ amplifier/envelope/sustain_level/global/0.001-1/cc17
 amplifier/envelope/release_time/global/0.001-1/cc19
 '''
 
-RING_PATHS = '''
-note/press/per_key/note_on
-note/release/per_key/note_off
-oscillator/frequency/per_key/note_number/note_on
-oscillator/waveform/global/saw/note_on
-
-oscillator/ring/frequency/global/20-2000/cc74
-oscillator/ring/waveform/global/sine/note_on
-oscillator/ring/bend/global/n12-12/cc85
-'''
-
 BASIC_PATHS = '''
 note/press/per_key/note_on
 note/release/per_key/note_off
 oscillator/frequency/per_key/note_number/note_on
-oscillator/waveform/global/sine/note_on
+oscillator/waveform/global/sine/set
 
 filter/band_pass/resonance/global/0.1-2.0/cc71
 filter/band_pass/frequency/global/20-20000/cc70
@@ -74,7 +45,7 @@ FILTER_MINIMUM_PATHS = '''
 note/press/per_key/note_on
 note/release/per_key/note_off
 oscillator/frequency/per_key/note_number/note_on
-oscillator/waveform/global/saw/note_on
+oscillator/waveform/global/saw/set
 
 filter/notch/resonance/global/0.1-2.0/cc71
 filter/notch/frequency/global/20-20000/cc70
@@ -130,6 +101,35 @@ amplifier/envelope/attack_time/global/0.001-0.5/cc73
 amplifier/envelope/decay_time/global/0.001-0.25/cc75
 amplifier/envelope/sustain_level/global/0.001-1/cc66
 amplifier/envelope/release_time/global/0.001-1/cc72
+'''
+
+MORPH_PATHS = '''
+note/press/per_key/note_on
+note/release/per_key/note_off
+oscillator/frequency/per_key/note_number/note_on
+oscillator/waveform/global/sine-triangle-square-saw/cc72
+'''
+
+RING_PATHS = '''
+note/press/per_key/note_on
+note/release/per_key/note_off
+oscillator/frequency/per_key/note_number/note_on
+oscillator/waveform/global/saw/set
+
+oscillator/ring/frequency/global/20-2000/cc74
+oscillator/ring/waveform/global/sine/set
+oscillator/ring/bend/global/n12-12/cc85
+'''
+
+WAVY_PATHS = '''
+note/press/per_key/note_on
+note/release/per_key/note_off
+oscillator/frequency/per_key/note_number/note_on
+oscillator/waveform/global/sine-triangle-square-saw/cc72
+
+oscillator/ring/frequency/global/20-2000/cc74
+oscillator/ring/waveform/global/sine-triangle-square-saw/cc76
+oscillator/ring/bend/global/n12-12/cc85
 '''
 
 class InstrumentManager:
