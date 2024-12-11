@@ -153,6 +153,11 @@ class SynthesizerSetup:
             log(TAG_SETUP, "----------------------------------------")
             log(TAG_SETUP, "Instrument update complete")
             
+            # Signal synth readiness after successful update
+            if self.synthesizer.midi_handler.ready_callback:
+                log(TAG_SETUP, "Signaling synth ready")
+                self.synthesizer.midi_handler.ready_callback()
+            
         except Exception as e:
             log(TAG_SETUP, f"Failed to update instrument: {str(e)}", is_error=True)
             self.synthesizer._emergency_cleanup()

@@ -229,6 +229,8 @@ class PathParser:
         """Parse path to build routing info."""
         # Get trigger (note_on, cc74, etc)
         trigger = parts[-1]
+        
+        # Handle standard MIDI message types
         if trigger.startswith('cc'):
             trigger = f"cc{int(trigger[2:])}"
             self.enabled_messages.add('cc')
@@ -267,7 +269,7 @@ class PathParser:
                     handler = 'store_value'
                 elif parts[1] == 'waveform':
                     target = 'waveform'
-                    handler = 'update_global_waveform' if 'global' in parts else 'update_voice_waveform'
+                    handler = 'update_global_waveform'
                 elif parts[1] == 'ring':
                     if parts[2] == 'waveform':
                         target = 'ring_waveform'
@@ -279,15 +281,22 @@ class PathParser:
                 target = f'filter_{parts[2]}'
                 handler = 'store_value'
                 self.filter_type = parts[1]
-            elif parts[0] == 'amplifier' and parts[1] == 'envelope':
-                target = parts[2]
-                handler = 'store_value'
+            elif parts[0] == 'amplifier':
+                if parts[1] == 'envelope':
+                    target = parts[2]
+                    handler = 'store_value'
+                elif parts[1] == 'amplitude':
+                    target = 'amplitude'
+                    handler = 'store_value'
+                
+            # Determine scope based on path starting with 'note'
+            scope = 'per_key' if parts[0] == 'note' else 'global'
                 
             # Create action for storing value
             action = {
                 'handler': handler,
                 'target': target,
-                'scope': 'global' if 'global' in parts else 'per_key',
+                'scope': scope,
                 'value': value
             }
             
@@ -304,43 +313,100 @@ class PathParser:
             self.midi_mappings[trigger] = []
             
         # Create appropriate action object
-        if parts[0] == 'note' and parts[1] in ('press', 'release'):
-            # Direct action
-            action = {
-                'handler': f'handle_{parts[1]}',
-                'action': parts[1],
-                'scope': parts[2]  # per_key
-            }
+        if parts[0] == 'note':
+            if parts[1] == 'press' or parts[1] == 'release':
+                # Direct action
+                action = {
+                    'handler': f'handle_{parts[1]}',
+                    'action': parts[1],
+                    'scope': 'per_key'
+                }
+            else:
+                # Nested path after note/ prefix
+                # Skip 'note' prefix and process rest of path
+                nested_parts = parts[1:]
+                value_part = parts[-2]
+                
+                # Set default handler and target
+                handler = 'update_voice_parameter'
+                target = None
+                
+                # Handle nested paths
+                if nested_parts[0] == 'oscillator':
+                    if nested_parts[1] == 'frequency':
+                        target = 'frequency'
+                        if value_part == 'note_number':
+                            action = {
+                                'handler': handler,
+                                'target': target,
+                                'scope': 'per_key',
+                                'lookup': Route(target, is_note_to_freq=True)
+                            }
+                            self.midi_mappings[trigger].append(action)
+                            return
+                    elif nested_parts[1] == 'waveform':
+                        target = 'waveform'
+                        handler = 'update_voice_waveform'
+                        if '-' in value_part:
+                            waveform_sequence = value_part.split('-')
+                            action = {
+                                'handler': handler,
+                                'target': target,
+                                'scope': 'per_key',
+                                'lookup': Route(target, waveform_sequence=waveform_sequence)
+                            }
+                            self.waveform_sequence = waveform_sequence
+                            self.has_waveform_sequence = True
+                            self.midi_mappings[trigger].append(action)
+                            return
+                        else:
+                            value = SynthioInterfaces.create_waveform(value_part)
+                            action = {
+                                'handler': handler,
+                                'target': target,
+                                'scope': 'per_key',
+                                'value': value
+                            }
+                elif nested_parts[0] == 'amplifier':
+                    if nested_parts[1] == 'amplitude':
+                        target = 'amplitude'
+                        handler = 'update_voice_parameter'  # Keep update_voice_parameter for note paths
+                
+                if target is None:
+                    raise ValueError(f"Could not determine target for path: {'/'.join(parts)}")
+                
+                action = {
+                    'handler': handler,
+                    'target': target,
+                    'scope': 'per_key'
+                }
+                
+                # Determine value source
+                if value_part in ('velocity', 'pressure'):
+                    action['source'] = value_part
+                elif '-' in value_part:
+                    min_val, max_val = self._parse_range(value_part)
+                    action['lookup'] = Route(target, min_val, max_val, is_integer=target in INTEGER_PARAMS)
+                else:
+                    action['value'] = value_part
         else:
-            # Value path
+            # Global scope paths
             value_part = parts[-2]
-            scope = 'global' if 'global' in parts else 'per_key'
             
             # Determine target and handler
             if parts[0] == 'oscillator':
                 if parts[1] == 'frequency':
                     target = 'frequency'
                     handler = 'update_voice_parameter'
-                    # Special handling for note_number to frequency conversion
-                    if value_part == 'note_number':
-                        action = {
-                            'handler': handler,
-                            'target': target,
-                            'scope': scope,
-                            'lookup': Route(target, is_note_to_freq=True)
-                        }
-                        self.midi_mappings[trigger].append(action)
-                        return
                 elif parts[1] == 'waveform':
                     target = 'waveform'
-                    handler = 'update_global_waveform' if scope == 'global' else 'update_voice_waveform'
-                    # Check if value is a waveform sequence
+                    handler = 'update_global_waveform'
                     if '-' in value_part:
                         waveform_sequence = value_part.split('-')
                         action = {
                             'handler': handler,
                             'target': target,
-                            'scope': scope,
+                            'scope': 'global',
                             'lookup': Route(target, waveform_sequence=waveform_sequence)
                         }
                         self.waveform_sequence = waveform_sequence
@@ -348,25 +414,23 @@ class PathParser:
                         self.midi_mappings[trigger].append(action)
                         return
                     else:
-                        # Create fixed waveform buffer immediately
                         value = SynthioInterfaces.create_waveform(value_part)
                         action = {
                             'handler': handler,
                             'target': target,
-                            'scope': scope,
+                            'scope': 'global',
                             'value': value
                         }
                 elif parts[1] == 'ring':
                     if parts[2] == 'waveform':
                         target = 'ring_waveform'
                         handler = 'update_ring_modulation'
-                        # Check if value is a waveform sequence
                         if '-' in value_part:
                             waveform_sequence = value_part.split('-')
                             action = {
                                 'handler': handler,
                                 'target': target,
-                                'scope': scope,
+                                'scope': 'global',
                                 'lookup': Route(target, waveform_sequence=waveform_sequence)
                             }
                             self.ring_waveform_sequence = waveform_sequence
@@ -374,51 +438,51 @@ class PathParser:
                             self.midi_mappings[trigger].append(action)
                             return
                         else:
-                            # Create fixed waveform buffer immediately
                             value = SynthioInterfaces.create_waveform(value_part)
                             action = {
                                 'handler': handler,
                                 'target': target,
-                                'scope': scope,
+                                'scope': 'global',
                                 'value': value
                             }
                     else:
-                        target = f'ring_{parts[2]}'  # ring_frequency, ring_bend
+                        target = f'ring_{parts[2]}'
                         handler = 'update_ring_modulation'
-                elif parts[1] in ('pitch', 'timbre', 'pressure'):
-                    target = parts[1]
-                    handler = 'update_voice_parameter'
             elif parts[0] == 'filter':
-                target = f'filter_{parts[2]}'  # filter_frequency, filter_resonance
+                target = f'filter_{parts[2]}'
                 handler = 'update_global_filter'
                 self.filter_type = parts[1]
-            elif parts[0] == 'amplifier' and parts[1] == 'envelope':
-                target = parts[2]  # attack_time, decay_time, etc
-                handler = 'update_global_envelope'
+            elif parts[0] == 'amplifier':
+                if parts[1] == 'envelope':
+                    target = parts[2]
+                    handler = 'update_global_envelope'
+                elif parts[1] == 'amplitude':
+                    target = 'amplitude'
+                    handler = 'update_amplifier_amplitude'  # Changed for global amplitude
             elif parts[0] == 'math':
-                target = f'math_{parts[1]}'  # math_sum, math_add_sub, etc
+                target = f'math_{parts[1]}'
                 handler = 'update_math_parameter'
                 self.has_math_ops = True
             elif parts[0] == 'lfo':
                 if parts[1] == 'target':
-                    target = f'lfo_target_{parts[2]}'  # lfo_target_filter_frequency, etc
+                    target = f'lfo_target_{parts[2]}'
                     handler = 'update_lfo_target'
                 elif parts[1] == 'waveform':
                     target = 'lfo_waveform'
                     handler = 'update_lfo_waveform'
                 else:
-                    target = f'lfo_{parts[1]}'  # lfo_rate, lfo_scale, etc
+                    target = f'lfo_{parts[1]}'
                     handler = 'update_lfo_parameter'
                 self.has_lfo = True
                 
             action = {
                 'handler': handler,
                 'target': target,
-                'scope': scope
+                'scope': 'global'
             }
             
             # Determine value source
-            if value_part in ('velocity', 'pressure'):  # note_number handled above
+            if value_part in ('velocity', 'pressure'):
                 action['source'] = value_part
             elif '-' in value_part:
                 min_val, max_val = self._parse_range(value_part)
@@ -429,11 +493,13 @@ class PathParser:
         self.midi_mappings[trigger].append(action)
         
         # Set feature flags based on path
-        if parts[0] == 'filter':
+        if parts[0] == 'filter' or (parts[0] == 'note' and parts[1] == 'filter'):
             self.has_filter = True
-        elif parts[0] == 'amplifier' and parts[1] == 'envelope':
+        elif (parts[0] == 'amplifier' and parts[1] == 'envelope') or \
+             (parts[0] == 'note' and parts[1] == 'amplifier' and parts[2] == 'envelope'):
             self.has_envelope_paths = True
-        elif parts[0] == 'oscillator' and parts[1] == 'ring':
+        elif (parts[0] == 'oscillator' and parts[1] == 'ring') or \
+             (parts[0] == 'note' and parts[1] == 'oscillator' and parts[2] == 'ring'):
             self.has_ring_mod = True
     
     def _parse_line(self, parts):

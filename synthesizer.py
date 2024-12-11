@@ -135,6 +135,33 @@ class Synthesizer:
         except Exception as e:
             log(TAG_SYNTH, f"Failed to update global waveform: {str(e)}", is_error=True)
 
+    def update_amplifier_amplitude(self, target, value):
+        """Update global amplifier amplitude.
+        
+        Parameters:
+        - target: The target parameter (ignored, kept for consistency with other handlers)
+        - value: The new amplitude value (0.001 to 1.0)
+        """
+        try:
+            SynthioInterfaces.update_amplifier_amplitude(self.voice_pool, value)
+            
+            # Store the amplitude value
+            self.state.store('amplifier_amplitude', value)
+            
+            # Update any active voices with new amplitude
+            def update_voice(voice):
+                if voice.active_note:
+                    try:
+                        voice.active_note.amplitude = value
+                    except Exception as e:
+                        log(TAG_SYNTH, f"Failed to update voice amplitude: {str(e)}", is_error=True)
+                        
+            self.voice_pool.for_each_active_voice(update_voice)
+            log(TAG_SYNTH, f"Updated global amplifier amplitude: {value}")
+            
+        except Exception as e:
+            log(TAG_SYNTH, f"Failed to update amplifier amplitude: {str(e)}", is_error=True)
+
     def update_ring_modulation(self, param_name, value):
         """Update ring modulation parameters."""
         # Store the incoming parameter

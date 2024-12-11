@@ -377,6 +377,19 @@ class SynthioInterfaces:
             log(TAG_IFACE, f"Error creating morphed waveform: {str(e)}", is_error=True)
             raise
 
+    @staticmethod
+    def update_amplifier_amplitude(voice_pool, amplitude):
+        """Update global amplifier amplitude.
+        
+        Parameters:
+        - voice_pool: VoicePool instance to update base_amplitude
+        - amplitude: New amplitude value (0.001 to 1.0)
+        """
+        # Clamp amplitude to valid range
+        amplitude = max(0.001, min(1.0, amplitude))
+        voice_pool.base_amplitude = amplitude
+        log(TAG_IFACE, f"Updated global amplifier amplitude: {amplitude}")
+
 class WaveformMorph:
     """Handles pre-calculated morphed waveforms for MIDI control."""
     def __init__(self, name, waveform_sequence=None):

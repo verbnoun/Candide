@@ -1,16 +1,3 @@
-work forward from here
-ensure router builds correct logic against synth targets
-synthio has interfaces
-synthesizer has targets
-route table has value lookup and target per midi
-route table needs to create bundles of values and targets for midi that arrives together
-synthesizer needs to hold some data and use it later
-
-work out from synthesizer
-
-
-** write list of what synthesizer has to do **
-
 
 
 # Note On Bundle - Direct Action
@@ -63,16 +50,16 @@ oscillator/ring/waveform/global/square/notsete_on
 oscillator/ring/waveform/global/saw/notsete_on
 
 # Control Change - Waveform Morph
-oscillator/waveform/morph/global/sine-triangle/cc40
-oscillator/waveform/morph/global/triangle-square/cc41
-oscillator/waveform/morph/global/square-saw/cc42
-oscillator/waveform/morph/global/sine-triangle-square-saw/cc43
+oscillator/waveform/global/sine-triangle/cc40
+oscillator/waveform/global/triangle-square/cc41
+oscillator/waveform/global/square-saw/cc42
+oscillator/waveform/global/sine-triangle-square-saw/cc43
 
 # Control Change - Ring Waveform Morph
-oscillator/ring/waveform/morph/global/sine-triangle/cc50
-oscillator/ring/waveform/morph/global/triangle-square/cc51
-oscillator/ring/waveform/morph/global/square-saw/cc52
-oscillator/ring/waveform/morph/global/sine-triangle-square-saw/cc53
+oscillator/ring/waveform/global/sine-triangle/cc50
+oscillator/ring/waveform/global/triangle-square/cc51
+oscillator/ring/waveform/global/square-saw/cc52
+oscillator/ring/waveform/global/sine-triangle-square-saw/cc53
 
 # Set Values
 oscillator/frequency/per_key/64/set
@@ -116,12 +103,12 @@ lfo/once/global/0-1/cc124
 lfo/interpolate/global/0-1/cc125
 
 # LFO Waveforms
-lfo/waveform/global/sine/note_on
-lfo/waveform/global/triangle/note_on
-lfo/waveform/global/square/note_on
-lfo/waveform/global/saw/note_on
-lfo/waveform/global/noise/note_on
-lfo/waveform/global/white_noise/note_on
+lfo/waveform/global/sine/set
+lfo/waveform/global/triangle/set
+lfo/waveform/global/square/set
+lfo/waveform/global/saw/set
+lfo/waveform/global/noise/set
+lfo/waveform/global/white_noise/set
 
 # LFO Targets
 lfo/target/filter_frequency/global/20-20000/cc130

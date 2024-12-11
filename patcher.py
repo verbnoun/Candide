@@ -106,9 +106,15 @@ class MidiHandler:
                     if action['source'] == 'note_number':
                         note_values[action['target']] = action['lookup'].convert(msg.note)
                     elif action['source'] == 'velocity':
-                        note_values[action['target']] = msg.velocity
+                        if 'lookup' in action:
+                            note_values[action['target']] = action['lookup'].convert(msg.velocity)
+                        else:
+                            note_values[action['target']] = msg.velocity
                 elif 'lookup' in action:
-                    note_values[action['target']] = action['lookup'].convert(msg.note)
+                    if action['target'] == 'amplitude':
+                        note_values[action['target']] = action['lookup'].convert(msg.velocity)
+                    else:
+                        note_values[action['target']] = action['lookup'].convert(msg.note)
                 else:
                     note_values[action['target']] = action['value']
         

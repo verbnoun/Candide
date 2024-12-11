@@ -4,132 +4,144 @@
 import sys
 from logging import log, TAG_INST
 
-PLAY_PATHS = '''
-note/press/per_key/note_on
-note/release/per_key/note_off
+VELOCITY_PATHS = '''
+note/press/note_on
+note/release/note_off
+note/oscillator/frequency/note_number/note_on
 
-oscillator/frequency/per_key/note_number/note_on
-oscillator/waveform/global/triangle/set
+amplifier/amplitude/0.001-1/cc24
 
-oscillator/ring/frequency/global/20-2000/cc2
-oscillator/ring/waveform/global/sine-triangle-square-saw/cc4
-oscillator/ring/bend/global/n12-12/cc6
-
-filter/band_pass/resonance/global/0.1-2.0/cc3
-filter/band_pass/frequency/global/20-20000/cc5
-
-amplifier/envelope/attack_level/global/0.001-1/cc11
-amplifier/envelope/attack_time/global/0.001-0.5/cc13
-amplifier/envelope/decay_time/global/0.001-0.25/cc15
-amplifier/envelope/sustain_level/global/0.001-1/cc17
-amplifier/envelope/release_time/global/0.001-1/cc19
+oscillator/waveform/triangle/set
 '''
+"""
+note/amplifier/amplitude/0.001-1/velocity/note_on
+amplifier/amplitude/0.001-1/cc24
+amplifier/amplitude/0.5/set
+"""
 
 BASIC_PATHS = '''
-note/press/per_key/note_on
-note/release/per_key/note_off
-oscillator/frequency/per_key/note_number/note_on
-oscillator/waveform/global/sine/set
+note/press/note_on
+note/release/note_off
+note/oscillator/frequency/note_number/note_on
 
-filter/band_pass/resonance/global/0.1-2.0/cc71
-filter/band_pass/frequency/global/20-20000/cc70
+oscillator/waveform/sine/set
 
-amplifier/envelope/attack_level/global/0.001-1/cc85
-amplifier/envelope/attack_time/global/0.001-0.5/cc73
-amplifier/envelope/decay_time/global/0.001-0.25/cc75
-amplifier/envelope/sustain_level/global/0.001-1/cc66
-amplifier/envelope/release_time/global/0.001-1/cc72
+filter/band_pass/resonance/0.1-2.0/cc71
+filter/band_pass/frequency/20-20000/cc70
+
+amplifier/envelope/attack_level/0.001-1/cc85
+amplifier/envelope/attack_time/0.001-0.5/cc73
+amplifier/envelope/decay_time/0.001-0.25/cc75
+amplifier/envelope/sustain_level/0.001-1/cc66
+amplifier/envelope/release_time/0.001-1/cc72
+'''
+
+PLAY_PATHS = '''
+note/press/note_on
+note/release/note_off
+note/oscillator/frequency/note_number/note_on
+
+oscillator/waveform/triangle/set
+
+oscillator/ring/frequency/20-2000/cc2
+oscillator/ring/waveform/sine-triangle-square-saw/cc4
+oscillator/ring/bend/n12-12/cc6
+
+filter/band_pass/resonance/0.1-2.0/cc3
+filter/band_pass/frequency/20-20000/cc5
+
+amplifier/envelope/attack_level/0.001-1/cc11
+amplifier/envelope/attack_time/0.001-0.5/cc13
+amplifier/envelope/decay_time/0.001-0.25/cc15
+amplifier/envelope/sustain_level/0.001-1/cc17
+amplifier/envelope/release_time/0.001-1/cc19
 '''
 
 FILTER_MINIMUM_PATHS = '''
-note/press/per_key/note_on
-note/release/per_key/note_off
-oscillator/frequency/per_key/note_number/note_on
-oscillator/waveform/global/saw/set
+note/press/note_on
+note/release/note_off
+note/oscillator/frequency/note_number/note_on
 
-filter/notch/resonance/global/0.1-2.0/cc71
-filter/notch/frequency/global/20-20000/cc70
+oscillator/waveform/saw/set
+
+filter/notch/resonance/0.1-2.0/cc71
+filter/notch/frequency/20-20000/cc70
 '''
 
 NOTE_MINIMUM_PATHS = '''
-note/press/per_key/note_on
-note/release/per_key/note_off
-oscillator/frequency/per_key/note_number/note_on
-oscillator/waveform/global/triangle/set
+note/press/note_on
+note/release/note_off
+
+note/oscillator/frequency/note_number/note_on
+oscillator/waveform/triangle/set
 '''
 
 SET_PATHS = '''
-note/press/per_key/note_on
-note/release/per_key/note_off
-oscillator/frequency/per_key/220/set
-oscillator/waveform/global/saw/set
+note/press/note_on
+note/release/note_off
+
+oscillator/frequency/220/set
+oscillator/waveform/saw/set
 '''
 
 ENVELOPE_SET_PATHS = '''
-note/press/per_key/note_on
-note/release/per_key/note_off
-oscillator/frequency/per_key/note_number/note_on
-oscillator/waveform/global/square/set
+note/press/note_on
+note/release/note_off
+note/oscillator/frequency/note_number/note_on
 
-amplifier/envelope/attack_level/global/0.75/set
-amplifier/envelope/attack_time/global/0.1/set
-amplifier/envelope/decay_time/global/0.25/set
-amplifier/envelope/sustain_level/global/0.3/set
-amplifier/envelope/release_time/global/0.5/set
-'''
-ENVELOPE_CC_PATHS = '''
-note/press/per_key/note_on
-note/release/per_key/note_off
-oscillator/frequency/per_key/note_number/note_on
-oscillator/waveform/global/sine/set
+oscillator/waveform/square/set
 
-amplifier/envelope/attack_level/global/0.001-1/cc85
-amplifier/envelope/attack_time/global/0.001-0.5/cc73
-amplifier/envelope/decay_time/global/0.001-0.25/cc75
-amplifier/envelope/sustain_level/global/0.001-1/cc66
-amplifier/envelope/release_time/global/0.001-1/cc72
+amplifier/envelope/attack_level/0.75/set
+amplifier/envelope/attack_time/0.1/set
+amplifier/envelope/decay_time/0.25/set
+amplifier/envelope/sustain_level/0.3/set
+amplifier/envelope/release_time/0.5/set
 '''
 
 ENVELOPE_CC_PATHS = '''
-note/press/per_key/note_on
-note/release/per_key/note_off
-oscillator/frequency/per_key/note_number/note_on
-oscillator/waveform/global/sine/set
+note/press/note_on
+note/release/note_off
+note/oscillator/frequency/note_number/note_on
 
-amplifier/envelope/attack_level/global/0.001-1/cc85
-amplifier/envelope/attack_time/global/0.001-0.5/cc73
-amplifier/envelope/decay_time/global/0.001-0.25/cc75
-amplifier/envelope/sustain_level/global/0.001-1/cc66
-amplifier/envelope/release_time/global/0.001-1/cc72
+oscillator/waveform/sine/set
+
+amplifier/envelope/attack_level/0.001-1/cc85
+amplifier/envelope/attack_time/0.001-0.5/cc73
+amplifier/envelope/decay_time/0.001-0.25/cc75
+amplifier/envelope/sustain_level/0.001-1/cc66
+amplifier/envelope/release_time/0.001-1/cc72
 '''
 
 MORPH_PATHS = '''
-note/press/per_key/note_on
-note/release/per_key/note_off
-oscillator/frequency/per_key/note_number/note_on
-oscillator/waveform/global/sine-triangle-square-saw/cc72
+note/press/note_on
+note/release/note_off
+note/oscillator/frequency/note_number/note_on
+
+oscillator/waveform/sine-triangle-square-saw/cc72
 '''
 
 RING_PATHS = '''
-note/press/per_key/note_on
-note/release/per_key/note_off
-oscillator/frequency/per_key/note_number/note_on
-oscillator/waveform/global/saw/set
+note/press/note_on
+note/release/note_off
+note/oscillator/frequency/note_number/note_on
 
-oscillator/ring/frequency/global/20-2000/cc74
-oscillator/ring/waveform/global/sine/set
-oscillator/ring/bend/global/n12-12/cc85
+oscillator/waveform/saw/set
+
+oscillator/ring/frequency/20-2000/cc74
+oscillator/ring/waveform/sine/set
+oscillator/ring/bend/n12-12/cc85
 '''
 
 WAVY_PATHS = '''
-note/press/per_key/note_on
-note/release/per_key/note_off
-oscillator/frequency/per_key/note_number/note_on
-oscillator/waveform/global/sine-triangle-square-saw/cc72
+note/press/note_on
+note/release/note_off
+note/oscillator/frequency/note_number/note_on
 
-oscillator/ring/frequency/global/20-2000/cc74
-oscillator/ring/waveform/global/sine-triangle-square-saw/cc76
-oscillator/ring/bend/global/n12-12/cc85
+oscillator/waveform/sine-triangle-square-saw/cc72
+
+oscillator/ring/frequency/20-2000/cc74
+oscillator/ring/waveform/sine-triangle-square-saw/cc76
+oscillator/ring/bend/n12-12/cc85
 '''
 
 class InstrumentManager:
@@ -189,6 +201,7 @@ class InstrumentManager:
         """Get all CC numbers and parameter names for the current instrument."""
         config_name, paths = self.instruments.get(self.current_instrument, (None, None))
         if not paths:
+            log(TAG_INST, "No paths found for current instrument", is_error=True)
             return []
             
         cc_configs = []
@@ -200,33 +213,43 @@ class InstrumentManager:
                 
             parts = line.strip().split('/')
             
-            # Check all parts for CC numbers
-            cc_part = None
-            for part in parts:
-                if part.startswith('cc'):
-                    cc_part = part
-                    break
-                    
-            if not cc_part:
+            # Check if last part is a CC number
+            if not parts[-1].startswith('cc'):
                 continue
                 
             try:
-                cc_num = int(cc_part[2:])  # Extract number after 'cc'
-                if cc_num not in seen_ccs:
-                    # Find parameter name (part before global/per_key)
-                    param_name = None
-                    for i, part in enumerate(parts):
-                        if part in ('global', 'per_key'):
-                            if i > 0:
-                                param_name = parts[i-1]
-                            break
+                cc_num = int(parts[-1][2:])  # Extract number after 'cc'
+                if cc_num in seen_ccs:
+                    continue
                     
-                    if param_name:
-                        cc_configs.append((cc_num, param_name))
-                        seen_ccs.add(cc_num)
-            except ValueError:
+                # Build parameter name based on path components
+                param_name = None
+                if parts[0] == 'filter':
+                    param_name = f"filter_{parts[2]}"  # e.g., filter_resonance
+                elif parts[0] == 'amplifier' and parts[1] == 'envelope':
+                    param_name = parts[2]  # e.g., attack_time
+                elif parts[0] == 'oscillator':
+                    if parts[1] == 'ring':
+                        param_name = f"ring_{parts[2]}"  # e.g., ring_frequency
+                    elif parts[1] == 'waveform':
+                        param_name = 'waveform'
+                    else:
+                        param_name = parts[1]  # e.g., frequency
+                elif parts[0] == 'amplifier':
+                    param_name = parts[1]  # e.g., amplitude
+                
+                if param_name:
+                    cc_configs.append((cc_num, param_name))
+                    seen_ccs.add(cc_num)
+                    log(TAG_INST, f"Found CC mapping: cc{cc_num} -> {param_name}")
+                
+            except (ValueError, IndexError) as e:
+                log(TAG_INST, f"Error parsing CC config line '{line}': {str(e)}", is_error=True)
                 continue
                 
+        if not cc_configs:
+            log(TAG_INST, "No CC configurations found in current instrument paths")
+            
         return cc_configs
 
     def set_instrument(self, instrument_name):
@@ -266,6 +289,11 @@ class InstrumentManager:
         return self.instrument_order[next_index]
 
     def cleanup(self):
+        """Clean up component references."""
+        log(TAG_INST, "Cleaning up instrument manager")
+        self.connection_manager = None
+        self.synthesizer = None
+        self.setup = None
         """Clean up component references."""
         log(TAG_INST, "Cleaning up instrument manager")
         self.connection_manager = None
