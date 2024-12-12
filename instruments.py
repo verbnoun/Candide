@@ -14,6 +14,43 @@ ring_waveform (and its loop points)
 import sys
 from logging import log, TAG_INST
 
+OSCILLATOR_PATHS = '''
+note/press/note_on
+note/release/note_off
+note/oscillator/frequency/note_number/note_on
+
+oscillator/waveform/saw/set
+
+oscillator/ring/frequency/400/set
+oscillator/ring/waveform/sine/set
+
+'''
+"""
+oscillator/frequency/130.81-523.25/cc74
+oscillator/frequency/220/set
+
+oscillator/waveform/saw/set
+oscillator/waveform/sine/set
+oscillator/waveform/triangle/set
+oscillator/waveform/square/set
+oscillator/waveform/noise/set
+oscillator/waveform/white_noise/set
+
+oscillator/waveform/sine-triangle-square-saw/cc72
+
+oscillator/bend/n12-12/cc85
+oscillator/bend/n2/set
+
+oscillator/ring/frequency/20-2000/cc76
+oscillator/ring/frequency/20/set
+
+
+oscillator/ring/waveform/sine/set
+oscillator/ring/waveform/sine-triangle-square-saw/cc76
+
+oscillator/ring/bend/n12-12/cc85
+
+"""
 BASIC_PATHS = '''
 note/press/note_on
 note/release/note_off
@@ -31,34 +68,14 @@ amplifier/envelope/sustain_level/0.001-1/cc66
 amplifier/envelope/release_time/0.001-1/cc72
 
 '''
-
-OSCILLATOR_PATHS = '''
+NOTE_PATHS = '''
 note/press/note_on
 note/release/note_off
-
-oscillator/frequency/130.81-523.25/cc74
-oscillator/waveform/sine-triangle-square-saw/cc72
-oscillator/bend/n12-12/cc85
+note/oscillator/frequency/note_number/note_on
 
 '''
 """
-oscillator/frequency/20-2000/cc74
-oscillator/frequency/220/set
-
-oscillator/waveform/saw/set
-oscillator/waveform/sine-triangle-square-saw/cc72
-
-oscillator/bend/n12-12/cc85
-oscillator/bend/n2/set
-
-oscillator/ring/frequency/20-2000/cc74
-ring set by note number and modified
-
-oscillator/ring/waveform/sine/set
-oscillator/ring/waveform/sine-triangle-square-saw/cc76
-
-oscillator/ring/bend/n12-12/cc85
-
+note/amplifier/amplitude/0.001-1/velocity/note_on
 """
 
 ENVELOPE_CC_PATHS = '''
@@ -103,30 +120,21 @@ filter/band_pass/resonance/0.1-2.0/cc71
 filter/band_pass/frequency/20-20000/cc70
 """
 
-NOTE_PATHS = '''
-note/press/note_on
-note/release/note_off
-note/oscillator/frequency/note_number/note_on
-
-'''
-"""
-note/amplifier/amplitude/0.001-1/velocity/note_on
-"""
-
 AMPLITUDE_PATHS = '''
 note/press/note_on
 note/release/note_off
 note/oscillator/frequency/note_number/note_on
 note/amplifier/amplitude/0.001-1/velocity/note_on
 
-oscillator/waveform/sine/set
+oscillator/waveform/saw/set
 
 '''
 """
 note/amplifier/amplitude/0.001-1/velocity/note_on
 amplifier/amplitude/0.001-1/cc24
-amplifier/amplitude/0.5/set
+amplifier/amplitude/0.3/set
 """
+
 
 
 class InstrumentManager:

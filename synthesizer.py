@@ -149,6 +149,7 @@ class Synthesizer:
         
         # Define which parameters can be updated during play
         updatable_params = {
+            # Direct synthio properties
             'bend': lambda note: setattr(note, 'bend', value),
             'amplitude': lambda note: setattr(note, 'amplitude', value),
             'panning': lambda note: setattr(note, 'panning', value),
@@ -159,7 +160,20 @@ class Synthesizer:
             'ring_bend': lambda note: setattr(note, 'ring_bend', value),
             'ring_waveform': lambda note: self._update_ring_waveform(note, value),
             'ring_waveform_loop_start': lambda note: setattr(note, 'ring_waveform_loop_start', value),
-            'ring_waveform_loop_end': lambda note: setattr(note, 'ring_waveform_loop_end', value)
+            'ring_waveform_loop_end': lambda note: setattr(note, 'ring_waveform_loop_end', value),
+            
+            # Our abstraction layer names - map to synthio properties
+            'amplifier_amplitude': lambda note: setattr(note, 'amplitude', value),  # Map to note.amplitude
+            'oscillator_bend': lambda note: setattr(note, 'bend', value),  # Map to note.bend
+            
+            # Filter logging (handled in filter block)
+            'filter_frequency': lambda note: log(TAG_SYNTH, "Filter update handled by filter block"),
+            'filter_resonance': lambda note: log(TAG_SYNTH, "Filter update handled by filter block"),
+            
+            # Unsupported operation logging
+            'oscillator_frequency': lambda note: log(TAG_SYNTH, "Note frequency cannot be updated during play"),
+            'math_operation': lambda note: log(TAG_SYNTH, "Math operations not yet implemented"),
+            'lfo_parameter': lambda note: log(TAG_SYNTH, "LFO operations not yet implemented")
         }
         
         # Helper methods for waveform updates
@@ -208,7 +222,7 @@ class Synthesizer:
 
     def update_amplifier_amplitude(self, target, value):
         """Update global amplifier amplitude."""
-        self.update_parameter('amplitude', value, None)
+        self.update_parameter('amplifier_amplitude', value, None)
 
     def update_ring_modulation(self, param_name, value):
         """Update ring modulation parameters."""

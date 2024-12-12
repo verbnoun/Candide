@@ -302,7 +302,7 @@ class PathParser:
                     target = parts[2]
                     handler = 'update_global_envelope'  # Keep envelope handling separate
                 elif parts[1] == 'amplitude':
-                    target = 'amplitude'
+                    target = 'amplifier_amplitude'  # Changed to match handler expectations
                     handler = 'update_parameter'  # Changed to use unified update
                 
             # Determine scope based on path starting with 'note'
@@ -385,7 +385,7 @@ class PathParser:
                             }
                 elif nested_parts[0] == 'amplifier':
                     if nested_parts[1] == 'amplitude':
-                        target = 'amplitude'
+                        target = 'amplitude'  # Keep as amplitude for per-note
                         if value_part == 'velocity':
                             # Parse amplitude range from path
                             min_val, max_val = self._parse_range(range_part)
@@ -486,7 +486,7 @@ class PathParser:
                     target = parts[2]
                     handler = 'update_global_envelope'  # Keep envelope handling separate
                 elif parts[1] == 'amplitude':
-                    target = 'amplitude'
+                    target = 'amplifier_amplitude'  # Changed to match handler expectations
                     handler = 'update_parameter'  # Changed to use unified update
             elif parts[0] == 'math':
                 target = f'math_{parts[1]}'
