@@ -14,12 +14,15 @@ ring_waveform (and its loop points)
 import sys
 from logging import log, TAG_INST
 
+
 OSCILLATOR_PATHS = '''
 note/press/note_on
 note/release/note_off
 note/oscillator/frequency/note_number/note_on
 
-oscillator/waveform/saw/set
+
+oscillator/waveform/triangle/set
+
 
 
 '''
@@ -39,12 +42,11 @@ oscillator/waveform/sine-triangle-square-saw/cc72
 oscillator/bend/n12-12/cc85
 oscillator/bend/n2/set
 
-oscillator/ring/frequency/20-2000/cc76
+oscillator/ring/frequency/0.5-2000/cc76
 oscillator/ring/frequency/440/set
 
-
 oscillator/ring/waveform/sine/set
-oscillator/ring/waveform/sine-triangle-square-saw/cc76
+oscillator/ring/waveform/sine-triangle-square-saw/cc78
 
 oscillator/ring/bend/n12-12/cc85
 

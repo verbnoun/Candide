@@ -20,9 +20,9 @@ MPE_TIMBRE_CC = 74
 
 # MPE Filtering Configuration
 MPE_FILTER_CONFIG = {
-    'pitch_bend_ratio': 0,    # Allow 1 in 4 messages through (0 means filter all)
-    'pressure_ratio': 0,      # Allow 1 in 3 messages through (0 means filter all)
-    'timbre_ratio': 0,        # Allow 1 in 2 messages through (0 means filter all)
+    'pitch_bend_ratio': 10,    # Allow 1 in X messages through (0 means filter all)
+    'pressure_ratio': 0,      # Allow 1 in X messages through (0 means filter all)
+    'timbre_ratio': 0,        # Allow 1 in X messages through (0 means filter all)
     'pitch_bend_threshold': 64,  # ~1% of total range (0-16383)
     'pressure_threshold': 4,     # ~3% of total range (0-127)
     'timbre_threshold': 4        # ~3% of total range (0-127)

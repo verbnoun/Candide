@@ -13,8 +13,8 @@ INTEGER_PARAMS = {
     'ring_morph_position'  # Used as MIDI value (0-127) for waveform lookup
 }
 
-# Parameters that can be updated per note during play
-UPDATABLE_PARAMS = {
+# Parameters that synthio handles per-note
+PER_NOTE_PARAMS = {
     'bend', 'amplitude', 'panning', 'waveform',
     'waveform_loop_start', 'waveform_loop_end',
     'filter', 'ring_frequency', 'ring_bend',
@@ -25,12 +25,13 @@ UPDATABLE_PARAMS = {
 class Route:
     """Creates a route that maps MIDI values to parameter values."""
     def __init__(self, name, min_val=None, max_val=None, fixed_value=None, is_integer=False, 
-                 is_note_to_freq=False, waveform_sequence=None):
+                 is_note_to_freq=False, waveform_sequence=None, is_14_bit=False):
         self.name = name
         self.is_integer = is_integer
         self.fixed_value = fixed_value
         self.is_note_to_freq = is_note_to_freq
         self.is_waveform_sequence = waveform_sequence is not None
+        self.is_14_bit = is_14_bit
         self.waveform_sequence = waveform_sequence
         self.waveform_morph = None
         
@@ -41,7 +42,9 @@ class Route:
         
         # Only create lookup table if range is specified or note_to_freq
         if is_note_to_freq or (min_val is not None and max_val is not None):
-            self.lookup_table = array.array('f', [0] * 128)
+            # Use 14-bit table size for 14-bit values
+            table_size = 16384 if is_14_bit else 128
+            self.lookup_table = array.array('f', [0] * table_size)
             if is_note_to_freq:
                 self._build_note_to_freq_lookup()
                 log(TAG_ROUTE, "Created route: {} [MIDI note to Hz]".format(name))
@@ -71,21 +74,37 @@ class Route:
         
     def _build_lookup(self):
         """Build MIDI value lookup table for fast conversion."""
-        for i in range(128):
-            normalized = i / 127.0
-            value = self.min_val + normalized * (self.max_val - self.min_val)
-            self.lookup_table[i] = int(value) if self.is_integer else value
+        table_size = len(self.lookup_table)
+        
+        if self.is_14_bit:
+            # For 14-bit values, normalize around center point (8192)
+            center = table_size // 2
+            for i in range(table_size):
+                normalized = (i - center) / center
+                value = self.min_val + normalized * (self.max_val - self.min_val)
+                self.lookup_table[i] = int(value) if self.is_integer else value
+        else:
+            # Standard 7-bit MIDI normalization
+            for i in range(table_size):
+                normalized = i / (table_size - 1)
+                value = self.min_val + normalized * (self.max_val - self.min_val)
+                self.lookup_table[i] = int(value) if self.is_integer else value
             
         log(TAG_ROUTE, "Lookup table for {} (sample values):".format(self.name))
         log(TAG_ROUTE, "  0: {}".format(self.lookup_table[0]))
-        log(TAG_ROUTE, " 64: {}".format(self.lookup_table[64]))
-        log(TAG_ROUTE, "127: {}".format(self.lookup_table[127]))
+        if self.is_14_bit:
+            log(TAG_ROUTE, "  8192 (center): {}".format(self.lookup_table[8192]))
+            log(TAG_ROUTE, "  16383: {}".format(self.lookup_table[16383]))
+        else:
+            log(TAG_ROUTE, "  64: {}".format(self.lookup_table[64]))
+            log(TAG_ROUTE, "  127: {}".format(self.lookup_table[127]))
     
     def convert(self, midi_value):
         """Convert MIDI value to parameter value."""
-        if not 0 <= midi_value <= 127:
+        max_val = 16383 if self.is_14_bit else 127
+        if not 0 <= midi_value <= max_val:
             log(TAG_ROUTE, "Invalid MIDI value {} for {}".format(midi_value, self.name), is_error=True)
-            raise ValueError("MIDI value must be between 0 and 127")
+            raise ValueError(f"MIDI value must be between 0 and {max_val}")
             
         if self.fixed_value is not None:
             return self.fixed_value
@@ -249,7 +268,7 @@ class PathParser:
         elif trigger == 'pressure':
             self.enabled_messages.add('pressure')
         elif trigger == 'pitch_bend':
-            self.enabled_messages.add('pitchbend')
+            self.enabled_messages.add('pitch_bend')
         elif trigger == 'set':
             # Handle set values - store directly in synth state through action
             value_part = parts[-2]
@@ -258,11 +277,11 @@ class PathParser:
             param_name = None
             if parts[0] == 'oscillator':
                 if parts[1] == 'ring':
-                    param_name = parts[2]  # frequency, bend, etc
+                    param_name = f'ring_{parts[2]}'  # frequency, bend, etc
                 else:
                     param_name = parts[1]  # waveform, frequency, etc
             elif parts[0] == 'filter':
-                param_name = parts[2]  # frequency, resonance, etc
+                param_name = f'filter_{parts[2]}'  # frequency, resonance, etc
             elif parts[0] == 'amplifier':
                 if parts[1] == 'envelope':
                     param_name = parts[2]  # attack_time, decay_time, etc
@@ -333,6 +352,11 @@ class PathParser:
                 'all_channels': scope == 'per_key'  # Set values for note paths go to all channels
             }
             
+            # If global scope and target is a per-note parameter, store in all channels
+            if scope == 'global' and target in PER_NOTE_PARAMS:
+                action['store_in_channels'] = True
+                log(TAG_ROUTE, f"Global per-note parameter {target} will be stored in all channels")
+            
             # Initialize array if needed
             if trigger not in self.midi_mappings:
                 self.midi_mappings[trigger] = []
@@ -400,6 +424,28 @@ class PathParser:
                                 'scope': 'per_key',
                                 'value': value
                             }
+                    elif nested_parts[1] == 'bend':
+                        target = 'bend'
+                        min_val, max_val = self._parse_range(range_part)
+                        action = {
+                            'handler': handler,
+                            'target': target,
+                            'scope': 'per_key',
+                            'lookup': Route(target, min_val=min_val, max_val=max_val, is_14_bit=True)
+                        }
+                        self.midi_mappings[trigger].append(action)
+                        return
+                    elif nested_parts[1] == 'ring' and nested_parts[2] == 'bend':
+                        target = 'ring_bend'
+                        min_val, max_val = self._parse_range(range_part)
+                        action = {
+                            'handler': handler,
+                            'target': target,
+                            'scope': 'per_key',
+                            'lookup': Route(target, min_val=min_val, max_val=max_val, is_14_bit=True)
+                        }
+                        self.midi_mappings[trigger].append(action)
+                        return
                 elif nested_parts[0] == 'amplifier':
                     if nested_parts[1] == 'amplitude':
                         target = 'amplitude'
@@ -526,6 +572,11 @@ class PathParser:
                 'target': target,
                 'scope': 'global'
             }
+            
+            # If global scope and target is a per-note parameter, store in all channels
+            if target in PER_NOTE_PARAMS:
+                action['store_in_channels'] = True
+                log(TAG_ROUTE, f"Global per-note parameter {target} will be stored in all channels")
             
             # Determine value source
             if value_part in ('velocity', 'pressure'):

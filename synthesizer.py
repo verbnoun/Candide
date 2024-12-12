@@ -6,7 +6,7 @@ import time
 from constants import SAMPLE_RATE, AUDIO_CHANNEL_COUNT
 from logging import log, TAG_SYNTH
 from voices import VoicePool
-from router import PathParser
+from router import PathParser, PER_NOTE_PARAMS  # Import PER_NOTE_PARAMS from router
 from patcher import MidiHandler
 from interfaces import SynthioInterfaces
 from setup import SynthesizerSetup
@@ -62,7 +62,10 @@ class SynthState:
             if channel < 1 or channel > 15:
                 log(TAG_SYNTH, f"Invalid channel {channel}", is_error=True)
                 return default
-            return self.per_channel_values[channel].get(name, default)
+            # Get channel value, fall back to global if None
+            channel_value = self.per_channel_values[channel].get(name)
+            if channel_value is not None:
+                return channel_value
         return self.values.get(name, default)
         
     def get_previous(self, name, channel=None, default=None):
@@ -80,7 +83,10 @@ class SynthState:
             if channel < 1 or channel > 15:
                 log(TAG_SYNTH, f"Invalid channel {channel}", is_error=True)
                 return default
-            return self.previous_channel[channel].get(name, default)
+            # Get channel previous, fall back to global previous if None
+            channel_prev = self.previous_channel[channel].get(name)
+            if channel_prev is not None:
+                return channel_prev
         return self.previous.get(name, default)
         
     def clear(self):
@@ -114,7 +120,35 @@ class SynthMonitor:
 class Synthesizer:
     """Main synthesizer class coordinating sound generation."""
     
-    # Core Methods
+    # Parameter update functions using synthio vocabulary
+    _param_updates = {
+        # Direct synthio properties
+        'bend': lambda note, value: setattr(note, 'bend', value),
+        'amplitude': lambda note, value: setattr(note, 'amplitude', value),
+        'panning': lambda note, value: setattr(note, 'panning', value),
+        'waveform': lambda note, value: setattr(note, 'waveform', value),
+        'waveform_loop_start': lambda note, value: setattr(note, 'waveform_loop_start', value),
+        'waveform_loop_end': lambda note, value: setattr(note, 'waveform_loop_end', value),
+        'ring_frequency': lambda note, value: setattr(note, 'ring_frequency', value),
+        'ring_bend': lambda note, value: setattr(note, 'ring_bend', value),
+        'ring_waveform': lambda note, value: setattr(note, 'ring_waveform', value),
+        'ring_waveform_loop_start': lambda note, value: setattr(note, 'ring_waveform_loop_start', value),
+        'ring_waveform_loop_end': lambda note, value: setattr(note, 'ring_waveform_loop_end', value),
+        
+        # Our abstraction layer names - map to synthio properties
+        'amplifier_amplitude': lambda note, value: setattr(note, 'amplitude', value),
+        'oscillator_bend': lambda note, value: setattr(note, 'bend', value),
+        
+        # Filter logging (handled in filter block)
+        'filter_frequency': lambda note, value: log(TAG_SYNTH, "Filter update handled by filter block"),
+        'filter_resonance': lambda note, value: log(TAG_SYNTH, "Filter update handled by filter block"),
+        
+        # Unsupported operation logging
+        'oscillator_frequency': lambda note, value: log(TAG_SYNTH, "Note frequency cannot be updated during play"),
+        'math_operation': lambda note, value: log(TAG_SYNTH, "Math operations not yet implemented"),
+        'lfo_parameter': lambda note, value: log(TAG_SYNTH, "LFO operations not yet implemented")
+    }
+    
     def __init__(self, midi_interface, audio_system=None):
         # Initialize setup
         self.setup = SynthesizerSetup(midi_interface, audio_system)
@@ -164,8 +198,19 @@ class Synthesizer:
                 
         # Handling for filter parameters
         if param_name.startswith('filter_'):
-            filter_freq = self.state.get('filter_frequency', channel)
-            filter_res = self.state.get('filter_resonance', channel)
+            # Get global values first
+            filter_freq = self.state.get('filter_frequency')
+            filter_res = self.state.get('filter_resonance')
+            
+            # Override with channel values if they exist
+            if channel is not None:
+                channel_freq = self.state.get('filter_frequency', channel)
+                channel_res = self.state.get('filter_resonance', channel)
+                if channel_freq is not None:
+                    filter_freq = channel_freq
+                if channel_res is not None:
+                    filter_res = channel_res
+                    
             filter_type = self.path_parser.filter_type
             
             # Only proceed if we have all required filter parameters
@@ -195,52 +240,14 @@ class Synthesizer:
                         update_voice(voice)
                 return
         
-        # Define which parameters can be updated during play
-        updatable_params = {
-            # Direct synthio properties
-            'bend': lambda note: setattr(note, 'bend', value),
-            'amplitude': lambda note: setattr(note, 'amplitude', value),
-            'panning': lambda note: setattr(note, 'panning', value),
-            'waveform': lambda note: self._update_waveform(note, value),
-            'waveform_loop_start': lambda note: setattr(note, 'waveform_loop_start', value),
-            'waveform_loop_end': lambda note: setattr(note, 'waveform_loop_end', value),
-            'ring_frequency': lambda note: setattr(note, 'ring_frequency', value),
-            'ring_bend': lambda note: setattr(note, 'ring_bend', value),
-            'ring_waveform': lambda note: self._update_ring_waveform(note, value),
-            'ring_waveform_loop_start': lambda note: setattr(note, 'ring_waveform_loop_start', value),
-            'ring_waveform_loop_end': lambda note: setattr(note, 'ring_waveform_loop_end', value),
-            
-            # Our abstraction layer names - map to synthio properties
-            'amplifier_amplitude': lambda note: setattr(note, 'amplitude', value),
-            'oscillator_bend': lambda note: setattr(note, 'bend', value),
-            
-            # Filter logging (handled in filter block)
-            'filter_frequency': lambda note: log(TAG_SYNTH, "Filter update handled by filter block"),
-            'filter_resonance': lambda note: log(TAG_SYNTH, "Filter update handled by filter block"),
-            
-            # Unsupported operation logging
-            'oscillator_frequency': lambda note: log(TAG_SYNTH, "Note frequency cannot be updated during play"),
-            'math_operation': lambda note: log(TAG_SYNTH, "Math operations not yet implemented"),
-            'lfo_parameter': lambda note: log(TAG_SYNTH, "LFO operations not yet implemented")
-        }
-        
-        # Helper methods for waveform updates
-        def _update_waveform(note, waveform):
-            note.waveform = waveform
-            note.waveform_loop_end = len(waveform)
-            
-        def _update_ring_waveform(note, waveform):
-            note.ring_waveform = waveform
-            note.ring_waveform_loop_end = len(waveform)
-        
-        # If parameter is updatable during play
-        if param_name in updatable_params:
+        # If parameter has an update function, apply to active notes
+        if param_name in self._param_updates:
             if channel is None:
                 # Update all playing notes
                 def update_voice(voice):
                     if voice.active_note:
                         try:
-                            updatable_params[param_name](voice.active_note)
+                            self._param_updates[param_name](voice.active_note, value)
                             log(TAG_SYNTH, f"Updated {param_name}={value} for voice {voice.get_address()}")
                         except Exception as e:
                             log(TAG_SYNTH, f"Failed to update {param_name}: {str(e)}", is_error=True)
@@ -250,7 +257,7 @@ class Synthesizer:
                 voice = self.voice_pool.get_voice_by_channel(channel)
                 if voice and voice.active_note:
                     try:
-                        updatable_params[param_name](voice.active_note)
+                        self._param_updates[param_name](voice.active_note, value)
                         log(TAG_SYNTH, f"Updated {param_name}={value} for channel {channel}")
                     except Exception as e:
                         log(TAG_SYNTH, f"Failed to update {param_name} on channel {channel}: {str(e)}", is_error=True)
@@ -370,27 +377,20 @@ class Synthesizer:
         Returns:
             Dict of parameters for synthio.Note creation
         """
-        # All possible synthio.Note parameters
-        param_names = [
-            'frequency',
-            'amplitude',
-            'panning',
-            'waveform',
-            'waveform_loop_start',
-            'waveform_loop_end',
-            'filter',
-            'ring_frequency',
-            'ring_bend',
-            'ring_waveform',
-            'ring_waveform_loop_start',
-            'ring_waveform_loop_end'
-        ]
-        
         # Start with empty params
         params = {}
         
-        # For each possible parameter
-        for name in param_names:
+        # Always need frequency - get global first, override with channel
+        frequency = self.state.get('frequency')
+        if channel is not None:
+            channel_freq = self.state.get('frequency', channel)
+            if channel_freq is not None:
+                frequency = channel_freq
+        if frequency is not None:
+            params['frequency'] = frequency
+            
+        # Get all per-note parameters from router's list
+        for name in PER_NOTE_PARAMS:
             # Start with global value
             value = self.state.get(name)
             
@@ -426,10 +426,20 @@ class Synthesizer:
             params['ring_waveform'] = self.state.global_ring_waveform
             params['ring_waveform_loop_end'] = len(self.state.global_ring_waveform)
             
-        # Add filter if configured
+        # Add filter if configured - get global values first, override with channel
         if self.path_parser.filter_type:
-            filter_freq = self.state.get('filter_frequency', channel)
-            filter_res = self.state.get('filter_resonance', channel)
+            filter_freq = self.state.get('filter_frequency')
+            filter_res = self.state.get('filter_resonance')
+            
+            # Override with channel values if they exist
+            if channel is not None:
+                channel_freq = self.state.get('filter_frequency', channel)
+                channel_res = self.state.get('filter_resonance', channel)
+                if channel_freq is not None:
+                    filter_freq = channel_freq
+                if channel_res is not None:
+                    filter_res = channel_res
+                    
             if filter_freq is not None and filter_res is not None:
                 try:
                     filter = SynthioInterfaces.create_filter(

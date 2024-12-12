@@ -62,7 +62,14 @@ class MidiHandler:
                     if action['scope'] == 'per_key':
                         handler(action['target'], value, 0)  # Use channel 0 for per_key set actions
                     else:
+                        # Store in global
                         handler(action['target'], value)
+                        
+                        # If store_in_channels flag is set, store in all channels
+                        if action.get('store_in_channels', False):
+                            log(TAG_PATCH, f"Storing {action['target']} in all channels")
+                            for channel in range(1, 16):
+                                handler(action['target'], value, channel)
                         
             except Exception as e:
                 log(TAG_PATCH, f"Failed to execute set action: {str(e)}", is_error=True)
@@ -213,7 +220,14 @@ class MidiHandler:
                     if action['scope'] == 'per_key':
                         handler(action['target'], value, msg.channel)
                     else:
+                        # Store in global
                         handler(action['target'], value)
+                        
+                        # If store_in_channels flag is set, store in all channels
+                        if action.get('store_in_channels', False):
+                            log(TAG_PATCH, f"Storing {action['target']} in all channels")
+                            for channel in range(1, 16):
+                                handler(action['target'], value, channel)
 
     def handle_pitch_bend(self, msg):
         """Handle pitch bend message using routing table."""
@@ -234,7 +248,14 @@ class MidiHandler:
                     if action['scope'] == 'per_key':
                         handler(action['target'], value, msg.channel)
                     else:
+                        # Store in global
                         handler(action['target'], value)
+                        
+                        # If store_in_channels flag is set, store in all channels
+                        if action.get('store_in_channels', False):
+                            log(TAG_PATCH, f"Storing {action['target']} in all channels")
+                            for channel in range(1, 16):
+                                handler(action['target'], value, channel)
 
     def handle_pressure(self, msg):
         """Handle pressure message using routing table."""
@@ -253,4 +274,11 @@ class MidiHandler:
                     if action['scope'] == 'per_key':
                         handler(action['target'], value, msg.channel)
                     else:
+                        # Store in global
                         handler(action['target'], value)
+                        
+                        # If store_in_channels flag is set, store in all channels
+                        if action.get('store_in_channels', False):
+                            log(TAG_PATCH, f"Storing {action['target']} in all channels")
+                            for channel in range(1, 16):
+                                handler(action['target'], value, channel)
