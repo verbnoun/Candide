@@ -21,8 +21,6 @@ note/oscillator/frequency/note_number/note_on
 
 oscillator/waveform/saw/set
 
-oscillator/ring/frequency/440/set
-oscillator/ring/waveform/sine/set
 
 '''
 """

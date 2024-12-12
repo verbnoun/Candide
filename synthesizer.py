@@ -329,8 +329,12 @@ class Synthesizer:
         if not voice:
             return
             
-        # Build note parameters from passed values and stored values
-        params = self._build_note_params(note_values, channel)
+        # Store bundled values to channel
+        for name, value in note_values.items():
+            self.state.store(name, value, channel)
+            
+        # Build note parameters from stored values
+        params = self._build_note_params(channel)
         
         try:
             note = SynthioInterfaces.create_note(**params)
@@ -357,42 +361,75 @@ class Synthesizer:
             voice.active_note = None
 
     # Voice Management Helpers (private)
-    def _build_note_params(self, note_values, channel=None):
-        """Build note parameters from passed values and stored values."""
+    def _build_note_params(self, channel):
+        """Build note parameters from stored values.
+        
+        Args:
+            channel: Channel number to get channel-specific values
+            
+        Returns:
+            Dict of parameters for synthio.Note creation
+        """
+        # All possible synthio.Note parameters
+        param_names = [
+            'frequency',
+            'amplitude',
+            'panning',
+            'waveform',
+            'waveform_loop_start',
+            'waveform_loop_end',
+            'filter',
+            'ring_frequency',
+            'ring_bend',
+            'ring_waveform',
+            'ring_waveform_loop_start',
+            'ring_waveform_loop_end'
+        ]
+        
+        # Start with empty params
         params = {}
         
-        # Start with any passed values
-        if note_values:
-            params.update(note_values)
+        # For each possible parameter
+        for name in param_names:
+            # Start with global value
+            value = self.state.get(name)
             
-        # Check channel-specific values first, then global values
-        def get_value(name):
-            channel_value = self.state.get(name, channel) if channel else None
-            return channel_value if channel_value is not None else self.state.get(name)
-            
-        # Get amplitude
-        stored_amp = get_value('amplifier_amplitude')
-        if stored_amp is not None:
-            if 'amplitude' in params:
-                params['amplitude'] *= stored_amp
-            else:
-                params['amplitude'] = stored_amp
-            
-        # Get frequency
-        if 'frequency' not in params:
-            stored_freq = get_value('frequency')
-            if stored_freq is not None:
-                params['frequency'] = stored_freq
+            # Override with channel value if it exists
+            if channel is not None:
+                channel_value = self.state.get(name, channel)
+                if channel_value is not None:
+                    value = channel_value
+                    
+            # Add to params if we have a value
+            if value is not None:
+                params[name] = value
                 
-        # Get bend
-        stored_bend = get_value('bend')
-        if stored_bend is not None:
-            params['bend'] = stored_bend
-        
+        # Special handling for waveforms
+        if channel is not None:
+            # Check channel waveforms first
+            channel_waveform = self.state.get('waveform', channel)
+            if channel_waveform is not None:
+                params['waveform'] = channel_waveform
+                params['waveform_loop_end'] = len(channel_waveform)
+                
+            channel_ring_waveform = self.state.get('ring_waveform', channel)
+            if channel_ring_waveform is not None:
+                params['ring_waveform'] = channel_ring_waveform
+                params['ring_waveform_loop_end'] = len(channel_ring_waveform)
+                
+        # Fall back to global waveforms
+        if 'waveform' not in params and self.state.global_waveform is not None:
+            params['waveform'] = self.state.global_waveform
+            params['waveform_loop_end'] = len(self.state.global_waveform)
+            
+        if 'ring_waveform' not in params and self.state.global_ring_waveform is not None:
+            params['ring_waveform'] = self.state.global_ring_waveform
+            params['ring_waveform_loop_end'] = len(self.state.global_ring_waveform)
+            
         # Add filter if configured
         if self.path_parser.filter_type:
-            filter_freq = get_value('filter_frequency')
-            filter_res = get_value('filter_resonance')
+            filter_freq = self.state.get('filter_frequency', channel)
+            filter_res = self.state.get('filter_resonance', channel)
             if filter_freq is not None and filter_res is not None:
                 try:
                     filter = SynthioInterfaces.create_filter(
@@ -405,38 +442,7 @@ class Synthesizer:
                         params['filter'] = filter
                 except Exception as e:
                     log(TAG_SYNTH, f"Failed to create filter: {str(e)}", is_error=True)
-        
-        # Add waveform
-        if channel:
-            channel_waveform = self.state.get('waveform', channel)
-            if channel_waveform is not None:
-                params['waveform'] = channel_waveform
-                params['waveform_loop_end'] = len(channel_waveform)
-        if 'waveform' not in params and self.state.global_waveform is not None:
-            params['waveform'] = self.state.global_waveform
-            params['waveform_loop_end'] = len(self.state.global_waveform)
-                
-        # Add ring modulation if configured
-        if self.path_parser.has_ring_mod:
-            ring_freq = get_value('ring_frequency')
-            ring_bend = get_value('ring_bend')
-            if ring_freq is not None:
-                params['ring_frequency'] = ring_freq
-            if ring_bend is not None:
-                params['ring_bend'] = ring_bend
-                
-            # Check channel-specific ring waveform first
-            if channel:
-                channel_ring_waveform = self.state.get('ring_waveform', channel)
-                if channel_ring_waveform is not None:
-                    params['ring_waveform'] = channel_ring_waveform
-                    params['ring_waveform_loop_end'] = len(channel_ring_waveform)
                     
-            # Fall back to global ring waveform
-            if 'ring_waveform' not in params and self.state.global_ring_waveform is not None:
-                params['ring_waveform'] = self.state.global_ring_waveform
-                params['ring_waveform_loop_end'] = len(self.state.global_ring_waveform)
-                
         return params
 
     def _update_voice_param(self, param_name, value, voice):
