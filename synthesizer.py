@@ -300,6 +300,11 @@ class Synthesizer:
             stored_freq = self.state.get('frequency')
             if stored_freq is not None:
                 params['frequency'] = stored_freq
+                
+        # Add stored bend if available
+        stored_bend = self.state.get('bend')
+        if stored_bend is not None:
+            params['bend'] = stored_bend
         
         # Add filter if configured
         if self.path_parser.filter_type:

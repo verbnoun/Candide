@@ -247,7 +247,11 @@ class PathParser:
             try:
                 # Convert numeric values to float unless in INTEGER_PARAMS
                 if parts[1] not in INTEGER_PARAMS:
-                    value = float(value_part)  # For frequency, this is already in Hz
+                    # Handle negative numbers with 'n' prefix
+                    if value_part.startswith('n'):
+                        value = -float(value_part[1:])
+                    else:
+                        value = float(value_part)
                 else:
                     value = int(value_part)
             except ValueError:
@@ -266,6 +270,9 @@ class PathParser:
             if parts[0] == 'oscillator':
                 if parts[1] == 'frequency':
                     target = 'frequency'
+                    handler = 'store_value'
+                elif parts[1] == 'bend':
+                    target = 'bend'
                     handler = 'store_value'
                 elif parts[1] == 'waveform':
                     target = 'waveform'
@@ -409,7 +416,10 @@ class PathParser:
             if parts[0] == 'oscillator':
                 if parts[1] == 'frequency':
                     target = 'frequency'
-                    handler = 'update_voice_parameter'
+                    handler = 'store_value'  # Changed from update_voice_parameter to store_value for global frequency
+                elif parts[1] == 'bend':
+                    target = 'bend'
+                    handler = 'store_value'  # Handle bend like frequency
                 elif parts[1] == 'waveform':
                     target = 'waveform'
                     handler = 'update_global_waveform'

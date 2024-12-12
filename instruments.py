@@ -4,19 +4,108 @@
 import sys
 from logging import log, TAG_INST
 
-VELOCITY_PATHS = '''
+OSCILLATOR_PATHS = '''
+note/press/note_on
+note/release/note_off
+
+oscillator/frequency/130.81-523.25/cc74
+oscillator/waveform/sine-triangle-square-saw/cc72
+oscillator/bend/n12-12/cc85
+
+'''
+"""
+oscillator/frequency/20-2000/cc74
+oscillator/frequency/220/set
+
+oscillator/waveform/saw/set
+oscillator/waveform/sine-triangle-square-saw/cc72
+
+oscillator/bend/n12-12/cc85
+oscillator/bend/n2/set
+
+oscillator/ring/frequency/20-2000/cc74
+ring set by note number and modified
+
+oscillator/ring/waveform/sine/set
+oscillator/ring/waveform/sine-triangle-square-saw/cc76
+
+oscillator/ring/bend/n12-12/cc85
+
+"""
+
+ENVELOPE_CC_PATHS = '''
+note/press/note_on
+note/release/note_off
+note/oscillator/frequency/note_number/note_on
+
+oscillator/waveform/sine/set
+
+amplifier/envelope/attack_level/0.001-1/cc85
+amplifier/envelope/attack_time/0.001-0.5/cc73
+amplifier/envelope/decay_time/0.001-0.25/cc75
+amplifier/envelope/sustain_level/0.001-1/cc66
+amplifier/envelope/release_time/0.001-1/cc72
+
+'''
+"""
+amplifier/envelope/attack_level/0.75/set
+amplifier/envelope/attack_time/0.1/set
+amplifier/envelope/decay_time/0.25/set
+amplifier/envelope/sustain_level/0.3/set
+amplifier/envelope/release_time/0.5/set
+"""
+
+FILTER_MINIMUM_PATHS = '''
+note/press/note_on
+note/release/note_off
+note/oscillator/frequency/note_number/note_on
+
+oscillator/waveform/saw/set
+
+filter/notch/resonance/0.1-2.0/cc71
+filter/notch/frequency/20-20000/cc70
+
+'''
+"""
+filter/low_pass/resonance/0.1-2.0/cc71
+filter/low_pass/frequency/20-20000/cc70
+filter/high_pass/resonance/0.1-2.0/cc71
+filter/high_pass/frequency/20-20000/cc70
+filter/band_pass/resonance/0.1-2.0/cc71
+filter/band_pass/frequency/20-20000/cc70
+"""
+
+NOTE_PATHS = '''
+note/press/note_on
+note/release/note_off
+note/oscillator/frequency/note_number/note_on
+
+'''
+"""
+note/amplifier/amplitude/0.001-1/velocity/note_on
+"""
+
+AMPLITUDE_PATHS = '''
 note/press/note_on
 note/release/note_off
 note/oscillator/frequency/note_number/note_on
 note/amplifier/amplitude/0.001-1/velocity/note_on
 
 oscillator/waveform/sine/set
+
 '''
 """
 note/amplifier/amplitude/0.001-1/velocity/note_on
 amplifier/amplitude/0.001-1/cc24
 amplifier/amplitude/0.5/set
 """
+
+
+
+
+
+
+
 
 BASIC_PATHS = '''
 note/press/note_on
@@ -54,93 +143,6 @@ amplifier/envelope/attack_time/0.001-0.5/cc13
 amplifier/envelope/decay_time/0.001-0.25/cc15
 amplifier/envelope/sustain_level/0.001-1/cc17
 amplifier/envelope/release_time/0.001-1/cc19
-'''
-
-FILTER_MINIMUM_PATHS = '''
-note/press/note_on
-note/release/note_off
-note/oscillator/frequency/note_number/note_on
-
-oscillator/waveform/saw/set
-
-filter/notch/resonance/0.1-2.0/cc71
-filter/notch/frequency/20-20000/cc70
-'''
-
-NOTE_MINIMUM_PATHS = '''
-note/press/note_on
-note/release/note_off
-
-note/oscillator/frequency/note_number/note_on
-oscillator/waveform/triangle/set
-'''
-
-SET_PATHS = '''
-note/press/note_on
-note/release/note_off
-
-oscillator/frequency/220/set
-oscillator/waveform/saw/set
-'''
-
-ENVELOPE_SET_PATHS = '''
-note/press/note_on
-note/release/note_off
-note/oscillator/frequency/note_number/note_on
-
-oscillator/waveform/square/set
-
-amplifier/envelope/attack_level/0.75/set
-amplifier/envelope/attack_time/0.1/set
-amplifier/envelope/decay_time/0.25/set
-amplifier/envelope/sustain_level/0.3/set
-amplifier/envelope/release_time/0.5/set
-'''
-
-ENVELOPE_CC_PATHS = '''
-note/press/note_on
-note/release/note_off
-note/oscillator/frequency/note_number/note_on
-
-oscillator/waveform/sine/set
-
-amplifier/envelope/attack_level/0.001-1/cc85
-amplifier/envelope/attack_time/0.001-0.5/cc73
-amplifier/envelope/decay_time/0.001-0.25/cc75
-amplifier/envelope/sustain_level/0.001-1/cc66
-amplifier/envelope/release_time/0.001-1/cc72
-'''
-
-MORPH_PATHS = '''
-note/press/note_on
-note/release/note_off
-note/oscillator/frequency/note_number/note_on
-
-oscillator/waveform/sine-triangle-square-saw/cc72
-'''
-
-RING_PATHS = '''
-note/press/note_on
-note/release/note_off
-note/oscillator/frequency/note_number/note_on
-
-oscillator/waveform/saw/set
-
-oscillator/ring/frequency/20-2000/cc74
-oscillator/ring/waveform/sine/set
-oscillator/ring/bend/n12-12/cc85
-'''
-
-WAVY_PATHS = '''
-note/press/note_on
-note/release/note_off
-note/oscillator/frequency/note_number/note_on
-
-oscillator/waveform/sine-triangle-square-saw/cc72
-
-oscillator/ring/frequency/20-2000/cc74
-oscillator/ring/waveform/sine-triangle-square-saw/cc76
-oscillator/ring/bend/n12-12/cc85
 '''
 
 class InstrumentManager:
