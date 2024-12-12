@@ -95,118 +95,128 @@ class Synthesizer:
         """Register a callback to be notified when synth is ready."""
         self.midi_handler.register_ready_callback(callback)
 
+    def update_parameter(self, param_name, value, channel=None):
+        """Update parameter on notes based on channel specification.
+        
+        Args:
+            param_name: Parameter to update
+            value: New value to set
+            channel: None for all notes, or specific channel number
+        """
+        # Always store non-channel-specific values
+        if channel is None:
+            self.state.store(param_name, value)
+            
+            # Special handling for waveforms
+            if param_name == 'waveform':
+                self.state.global_waveform = value
+            elif param_name == 'ring_waveform':
+                self.state.global_ring_waveform = value
+                
+        # Handling for filter parameters
+        if param_name.startswith('filter_'):
+            self.state.store(param_name, value)
+            filter_freq = self.state.get('filter_frequency')
+            filter_res = self.state.get('filter_resonance')
+            filter_type = self.path_parser.filter_type
+            
+            # Only proceed if we have all filter parameters
+            if filter_freq is not None and filter_res is not None and filter_type:
+                def update_voice(voice):
+                    if voice.active_note:
+                        try:
+                            # Create new filter for each voice
+                            filter = SynthioInterfaces.create_filter(
+                                self.synth,
+                                filter_type,
+                                filter_freq,
+                                filter_res
+                            )
+                            if filter:
+                                voice.active_note.filter = filter
+                                log(TAG_SYNTH, f"Updated filter for voice {voice.get_address()}")
+                        except Exception as e:
+                            log(TAG_SYNTH, f"Failed to update voice filter: {str(e)}", is_error=True)
+                
+                # Update filters based on channel
+                if channel is None:
+                    self.voice_pool.for_each_active_voice(update_voice)
+                else:
+                    voice = self.voice_pool.get_voice_by_channel(channel)
+                    if voice:
+                        update_voice(voice)
+                return
+        
+        # Define which parameters can be updated during play
+        updatable_params = {
+            'bend': lambda note: setattr(note, 'bend', value),
+            'amplitude': lambda note: setattr(note, 'amplitude', value),
+            'panning': lambda note: setattr(note, 'panning', value),
+            'waveform': lambda note: self._update_waveform(note, value),
+            'waveform_loop_start': lambda note: setattr(note, 'waveform_loop_start', value),
+            'waveform_loop_end': lambda note: setattr(note, 'waveform_loop_end', value),
+            'ring_frequency': lambda note: setattr(note, 'ring_frequency', value),
+            'ring_bend': lambda note: setattr(note, 'ring_bend', value),
+            'ring_waveform': lambda note: self._update_ring_waveform(note, value),
+            'ring_waveform_loop_start': lambda note: setattr(note, 'ring_waveform_loop_start', value),
+            'ring_waveform_loop_end': lambda note: setattr(note, 'ring_waveform_loop_end', value)
+        }
+        
+        # Helper methods for waveform updates
+        def _update_waveform(note, waveform):
+            note.waveform = waveform
+            note.waveform_loop_end = len(waveform)
+            
+        def _update_ring_waveform(note, waveform):
+            note.ring_waveform = waveform
+            note.ring_waveform_loop_end = len(waveform)
+        
+        # If parameter is updatable during play
+        if param_name in updatable_params:
+            if channel is None:
+                # Update all playing notes
+                def update_voice(voice):
+                    if voice.active_note:
+                        try:
+                            updatable_params[param_name](voice.active_note)
+                            log(TAG_SYNTH, f"Updated {param_name}={value} for voice {voice.get_address()}")
+                        except Exception as e:
+                            log(TAG_SYNTH, f"Failed to update {param_name}: {str(e)}", is_error=True)
+                self.voice_pool.for_each_active_voice(update_voice)
+            else:
+                # Update specific channel
+                voice = self.voice_pool.get_voice_by_channel(channel)
+                if voice and voice.active_note:
+                    try:
+                        updatable_params[param_name](voice.active_note)
+                        log(TAG_SYNTH, f"Updated {param_name}={value} for channel {channel}")
+                    except Exception as e:
+                        log(TAG_SYNTH, f"Failed to update {param_name} on channel {channel}: {str(e)}", is_error=True)
+
     # Action Handlers (public interface)
     def update_voice_parameter(self, param_name, value, channel):
         """Update parameter on voice by channel."""
-        voice = self.voice_pool.get_voice_by_channel(channel)
-        if voice and voice.is_active():
-            self._update_voice_param(param_name, value, voice)
-            log(TAG_SYNTH, f"Updated voice {voice.get_address()} {param_name}={value}")
+        self.update_parameter(param_name, value, channel)
 
     def update_voice_waveform(self, waveform_buffer, channel):
         """Update waveform for a specific voice."""
-        voice = self.voice_pool.get_voice_by_channel(channel)
-        if voice and voice.is_active():
-            try:
-                voice.active_note.waveform = waveform_buffer
-                voice.active_note.waveform_loop_end = len(waveform_buffer)
-                log(TAG_SYNTH, f"Updated waveform for voice {voice.get_address()}")
-            except Exception as e:
-                log(TAG_SYNTH, f"Failed to update voice waveform: {str(e)}", is_error=True)
+        self.update_parameter('waveform', waveform_buffer, channel)
 
     def update_global_waveform(self, waveform_buffer):
         """Update global waveform with new buffer."""
-        try:
-            # Store the waveform buffer
-            self.state.global_waveform = waveform_buffer
-            
-            # Update any active voices with global waveform
-            def update_voice(voice):
-                if voice.active_note:
-                    try:
-                        voice.active_note.waveform = waveform_buffer
-                        voice.active_note.waveform_loop_end = len(waveform_buffer)
-                    except Exception as e:
-                        log(TAG_SYNTH, f"Failed to update voice waveform: {str(e)}", is_error=True)
-                    
-            self.voice_pool.for_each_active_voice(update_voice)
-            log(TAG_SYNTH, "Updated global waveform and active voices")
-            
-        except Exception as e:
-            log(TAG_SYNTH, f"Failed to update global waveform: {str(e)}", is_error=True)
+        self.update_parameter('waveform', waveform_buffer, None)
 
     def update_amplifier_amplitude(self, target, value):
-        """Update global amplifier amplitude.
-        
-        Parameters:
-        - target: The target parameter (ignored, kept for consistency with other handlers)
-        - value: The new amplitude value (0.001 to 1.0)
-        """
-        try:
-            # Store the amplitude value
-            self.state.store('amplifier_amplitude', value)
-            
-            # Only update the voice pool's base amplitude
-            self.voice_pool.base_amplitude = value
-            log(TAG_SYNTH, f"Updated global amplifier amplitude: {value}")
-            
-        except Exception as e:
-            log(TAG_SYNTH, f"Failed to update amplifier amplitude: {str(e)}", is_error=True)
+        """Update global amplifier amplitude."""
+        self.update_parameter('amplitude', value, None)
 
     def update_ring_modulation(self, param_name, value):
         """Update ring modulation parameters."""
-        # Store the incoming parameter
-        self.state.store(param_name, value)
-        
-        def update_voice(voice):
-            if voice.active_note:
-                try:
-                    if param_name == 'ring_frequency':
-                        voice.active_note.ring_frequency = value
-                    elif param_name == 'ring_bend':
-                        voice.active_note.ring_bend = value
-                    elif param_name == 'ring_waveform':
-                        # Value is a waveform buffer
-                        voice.active_note.ring_waveform = value
-                        voice.active_note.ring_waveform_loop_end = len(value)
-                        self.state.global_ring_waveform = value
-                except Exception as e:
-                    log(TAG_SYNTH, f"Failed to update voice ring mod: {str(e)}", is_error=True)
-        
-        if self.path_parser.has_ring_mod:
-            self.voice_pool.for_each_active_voice(update_voice)
-            log(TAG_SYNTH, f"Updated ring modulation {param_name} and active voices")
+        self.update_parameter(param_name, value, None)
 
     def update_global_filter(self, param_name, value):
         """Update global filter with new parameter."""
-        # Store the incoming parameter
-        self.state.store(param_name, value)
-        
-        # Check state for all required filter parameters
-        filter_freq = self.state.get('filter_frequency')
-        filter_res = self.state.get('filter_resonance')
-        filter_type = self.path_parser.filter_type
-        
-        # All three parameters are required for a filter
-        if filter_freq is not None and filter_res is not None and filter_type:
-            def update_voice(voice):
-                if voice.active_note:
-                    try:
-                        filter = SynthioInterfaces.create_filter(
-                            self.synth,
-                            filter_type,
-                            filter_freq,
-                            filter_res
-                        )
-                        if filter:
-                            voice.active_note.filter = filter
-                    except Exception as e:
-                        log(TAG_SYNTH, f"Failed to update voice filter: {str(e)}", is_error=True)
-                        
-            self.voice_pool.for_each_active_voice(update_voice)
-            log(TAG_SYNTH, f"Updated global filter freq={filter_freq} res={filter_res} type={filter_type}")
-        else:
-            log(TAG_SYNTH, "Missing required filter parameters", is_error=True)
+        self.update_parameter(param_name, value, None)
 
     def update_global_envelope(self, param_name, value):
         """Update global envelope with new parameter."""

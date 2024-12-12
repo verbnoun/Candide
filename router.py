@@ -13,6 +13,15 @@ INTEGER_PARAMS = {
     'ring_morph_position'  # Used as MIDI value (0-127) for waveform lookup
 }
 
+# Parameters that can be updated per note during play
+UPDATABLE_PARAMS = {
+    'bend', 'amplitude', 'panning', 'waveform',
+    'waveform_loop_start', 'waveform_loop_end',
+    'filter', 'ring_frequency', 'ring_bend',
+    'ring_waveform', 'ring_waveform_loop_start',
+    'ring_waveform_loop_end'
+}
+
 class Route:
     """Creates a route that maps MIDI values to parameter values."""
     def __init__(self, name, min_val=None, max_val=None, fixed_value=None, is_integer=False, 
@@ -273,28 +282,28 @@ class PathParser:
                     handler = 'store_value'
                 elif parts[1] == 'bend':
                     target = 'bend'
-                    handler = 'store_value'
+                    handler = 'update_parameter'  # Changed to use unified update
                 elif parts[1] == 'waveform':
                     target = 'waveform'
-                    handler = 'update_global_waveform'
+                    handler = 'update_parameter'  # Changed to use unified update
                 elif parts[1] == 'ring':
                     if parts[2] == 'waveform':
                         target = 'ring_waveform'
-                        handler = 'update_ring_modulation'
+                        handler = 'update_parameter'  # Changed to use unified update
                     else:
                         target = f'ring_{parts[2]}'
-                        handler = 'store_value'
+                        handler = 'update_parameter'  # Changed to use unified update
             elif parts[0] == 'filter':
                 target = f'filter_{parts[2]}'
-                handler = 'store_value'
+                handler = 'update_parameter'  # Changed to use unified update
                 self.filter_type = parts[1]
             elif parts[0] == 'amplifier':
                 if parts[1] == 'envelope':
                     target = parts[2]
-                    handler = 'store_value'
+                    handler = 'update_global_envelope'  # Keep envelope handling separate
                 elif parts[1] == 'amplitude':
                     target = 'amplitude'
-                    handler = 'update_amplifier_amplitude'  # Changed for global amplitude
+                    handler = 'update_parameter'  # Changed to use unified update
                 
             # Determine scope based on path starting with 'note'
             scope = 'per_key' if parts[0] == 'note' else 'global'
@@ -336,7 +345,7 @@ class PathParser:
                 range_part = parts[-3]  # Get range from path
                 
                 # Set default handler and target
-                handler = 'update_voice_parameter'
+                handler = 'update_parameter'  # Changed to use unified update
                 target = None
                 
                 # Handle nested paths
@@ -354,7 +363,6 @@ class PathParser:
                             return
                     elif nested_parts[1] == 'waveform':
                         target = 'waveform'
-                        handler = 'update_voice_waveform'
                         if '-' in value_part:
                             waveform_sequence = value_part.split('-')
                             action = {
@@ -378,7 +386,6 @@ class PathParser:
                 elif nested_parts[0] == 'amplifier':
                     if nested_parts[1] == 'amplitude':
                         target = 'amplitude'
-                        handler = 'update_voice_parameter'  # Keep update_voice_parameter for note paths
                         if value_part == 'velocity':
                             # Parse amplitude range from path
                             min_val, max_val = self._parse_range(range_part)
@@ -416,13 +423,13 @@ class PathParser:
             if parts[0] == 'oscillator':
                 if parts[1] == 'frequency':
                     target = 'frequency'
-                    handler = 'store_value'  # Changed from update_voice_parameter to store_value for global frequency
+                    handler = 'store_value'  # Keep frequency as store only
                 elif parts[1] == 'bend':
                     target = 'bend'
-                    handler = 'store_value'  # Handle bend like frequency
+                    handler = 'update_parameter'  # Changed to use unified update
                 elif parts[1] == 'waveform':
                     target = 'waveform'
-                    handler = 'update_global_waveform'
+                    handler = 'update_parameter'  # Changed to use unified update
                     if '-' in value_part:
                         waveform_sequence = value_part.split('-')
                         action = {
@@ -446,7 +453,7 @@ class PathParser:
                 elif parts[1] == 'ring':
                     if parts[2] == 'waveform':
                         target = 'ring_waveform'
-                        handler = 'update_ring_modulation'
+                        handler = 'update_parameter'  # Changed to use unified update
                         if '-' in value_part:
                             waveform_sequence = value_part.split('-')
                             action = {
@@ -469,18 +476,18 @@ class PathParser:
                             }
                     else:
                         target = f'ring_{parts[2]}'
-                        handler = 'update_ring_modulation'
+                        handler = 'update_parameter'  # Changed to use unified update
             elif parts[0] == 'filter':
                 target = f'filter_{parts[2]}'
-                handler = 'update_global_filter'
+                handler = 'update_parameter'  # Changed to use unified update
                 self.filter_type = parts[1]
             elif parts[0] == 'amplifier':
                 if parts[1] == 'envelope':
                     target = parts[2]
-                    handler = 'update_global_envelope'
+                    handler = 'update_global_envelope'  # Keep envelope handling separate
                 elif parts[1] == 'amplitude':
                     target = 'amplitude'
-                    handler = 'update_amplifier_amplitude'  # Changed for global amplitude
+                    handler = 'update_parameter'  # Changed to use unified update
             elif parts[0] == 'math':
                 target = f'math_{parts[1]}'
                 handler = 'update_math_parameter'

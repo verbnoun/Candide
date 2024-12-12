@@ -1,8 +1,36 @@
 """Instrument configuration management system defining synthesizer paths and parameter mappings.
+
+Updatable Note Properties from synthio docs:
+bend
+amplitude
+panning
+waveform (and its loop points)
+filter
+ring_frequency
+ring_bend
+ring_waveform (and its loop points)
 """
 
 import sys
 from logging import log, TAG_INST
+
+BASIC_PATHS = '''
+note/press/note_on
+note/release/note_off
+note/oscillator/frequency/note_number/note_on
+
+oscillator/waveform/saw/set
+
+filter/band_pass/resonance/0.1-2.0/cc71
+filter/band_pass/frequency/20-20000/cc70
+
+amplifier/envelope/attack_level/0.001-1/cc85
+amplifier/envelope/attack_time/0.001-0.5/cc73
+amplifier/envelope/decay_time/0.001-0.25/cc75
+amplifier/envelope/sustain_level/0.001-1/cc66
+amplifier/envelope/release_time/0.001-1/cc72
+
+'''
 
 OSCILLATOR_PATHS = '''
 note/press/note_on
@@ -100,50 +128,6 @@ amplifier/amplitude/0.001-1/cc24
 amplifier/amplitude/0.5/set
 """
 
-
-
-
-
-
-
-
-BASIC_PATHS = '''
-note/press/note_on
-note/release/note_off
-note/oscillator/frequency/note_number/note_on
-
-oscillator/waveform/sine/set
-
-filter/band_pass/resonance/0.1-2.0/cc71
-filter/band_pass/frequency/20-20000/cc70
-
-amplifier/envelope/attack_level/0.001-1/cc85
-amplifier/envelope/attack_time/0.001-0.5/cc73
-amplifier/envelope/decay_time/0.001-0.25/cc75
-amplifier/envelope/sustain_level/0.001-1/cc66
-amplifier/envelope/release_time/0.001-1/cc72
-'''
-
-PLAY_PATHS = '''
-note/press/note_on
-note/release/note_off
-note/oscillator/frequency/note_number/note_on
-
-oscillator/waveform/triangle/set
-
-oscillator/ring/frequency/20-2000/cc2
-oscillator/ring/waveform/sine-triangle-square-saw/cc4
-oscillator/ring/bend/n12-12/cc6
-
-filter/band_pass/resonance/0.1-2.0/cc3
-filter/band_pass/frequency/20-20000/cc5
-
-amplifier/envelope/attack_level/0.001-1/cc11
-amplifier/envelope/attack_time/0.001-0.5/cc13
-amplifier/envelope/decay_time/0.001-0.25/cc15
-amplifier/envelope/sustain_level/0.001-1/cc17
-amplifier/envelope/release_time/0.001-1/cc19
-'''
 
 class InstrumentManager:
     def __init__(self):
