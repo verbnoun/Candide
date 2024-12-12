@@ -267,6 +267,7 @@ class PathParser:
             self.enabled_messages.add(trigger.replace('_', ''))
         elif trigger == 'pressure':
             self.enabled_messages.add('channelpressure')
+            trigger = 'channelpressure'  # Use channelpressure as trigger
         elif trigger == 'pitch_bend':
             self.enabled_messages.add('pitchbend')
         elif trigger == 'set':
@@ -466,9 +467,9 @@ class PathParser:
                                 'handler': handler,
                                 'target': target,
                                 'scope': 'per_key',
-                                'lookup': Route(target, min_val=min_val, max_val=max_val, is_14_bit=True)
+                                'lookup': Route(target, min_val=min_val, max_val=max_val)
                             }
-                            self.midi_mappings[trigger].append(action)
+                            self.midi_mappings['channelpressure'].append(action)  # Add to channelpressure trigger
                             return
                 
                 if target is None:

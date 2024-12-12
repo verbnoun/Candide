@@ -20,17 +20,21 @@ note/press/note_on
 note/release/note_off
 note/oscillator/frequency/note_number/note_on
 
-amplifier/amplitude/0.001-1/cc24
+note/amplifier/amplitude/0.001-1/pressure
+
+
+
 
 
 '''
 """
 note/amplifier/amplitude/0.001-1/velocity/note_on
 note/oscillator/ring/frequency/bend/n1-1/pitch_bend
-note/amplifier/amplitude/0.001-1/velocity/note_on
+note/oscillator/frequency/bend/n1-1/pitch_bend
+
 
 note/amplifier/amplitude/0.001-1/pressure
-
+amplifier/amplitude/0.001-1/cc24
 """
 
 OSCILLATOR_PATHS = '''

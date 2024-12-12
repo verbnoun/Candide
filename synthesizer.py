@@ -120,6 +120,11 @@ class SynthMonitor:
 class Synthesizer:
     """Main synthesizer class coordinating sound generation."""
     
+    # Parameter name mappings
+    _param_mappings = {
+        'amplifier_amplitude': 'amplitude',  # Map our abstraction name to synthio name
+    }
+    
     # Parameter update functions using synthio vocabulary
     _param_updates = {
         # Direct synthio properties
@@ -137,7 +142,6 @@ class Synthesizer:
         
         # Our abstraction layer names - map to synthio properties
         'amplifier_amplitude': lambda note, value: setattr(note, 'amplitude', value),
-        'oscillator_bend': lambda note, value: setattr(note, 'bend', value),
         
         # Filter logging (handled in filter block)
         'filter_frequency': lambda note, value: log(TAG_SYNTH, "Filter update handled by filter block"),
@@ -186,8 +190,11 @@ class Synthesizer:
             value: New value to set
             channel: None for all notes, or specific channel number
         """
+        # Map parameter name if needed
+        store_name = self._param_mappings.get(param_name, param_name)
+        
         # Store value based on channel specification
-        self.state.store(param_name, value, channel)
+        self.state.store(store_name, value, channel)
             
         # Special handling for waveforms
         if channel is None:

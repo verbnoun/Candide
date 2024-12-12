@@ -260,9 +260,9 @@ class MidiHandler:
 
     def handle_pressure(self, msg):
         """Handle pressure message using routing table."""
-        if 'pressure' in self.path_parser.enabled_messages:
-            # Get all actions for pressure
-            actions = self.path_parser.midi_mappings.get('pressure', [])
+        if 'channelpressure' in self.path_parser.enabled_messages:
+            # Get all actions for channelpressure
+            actions = self.path_parser.midi_mappings.get('channelpressure', [])
             
             # Execute each action
             for action in actions:
