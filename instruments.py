@@ -21,7 +21,7 @@ note/oscillator/frequency/note_number/note_on
 
 oscillator/waveform/saw/set
 
-oscillator/ring/frequency/400/set
+oscillator/ring/frequency/440/set
 oscillator/ring/waveform/sine/set
 
 '''
@@ -42,7 +42,7 @@ oscillator/bend/n12-12/cc85
 oscillator/bend/n2/set
 
 oscillator/ring/frequency/20-2000/cc76
-oscillator/ring/frequency/20/set
+oscillator/ring/frequency/440/set
 
 
 oscillator/ring/waveform/sine/set
@@ -51,6 +51,22 @@ oscillator/ring/waveform/sine-triangle-square-saw/cc76
 oscillator/ring/bend/n12-12/cc85
 
 """
+
+AMPLITUDE_PATHS = '''
+note/press/note_on
+note/release/note_off
+note/oscillator/frequency/note_number/note_on
+note/amplifier/amplitude/0.001-1/velocity/note_on
+
+oscillator/waveform/saw/set
+
+'''
+"""
+note/amplifier/amplitude/0.001-1/velocity/note_on
+amplifier/amplitude/0.001-1/cc24
+amplifier/amplitude/0.3/set
+"""
+
 BASIC_PATHS = '''
 note/press/note_on
 note/release/note_off
@@ -68,6 +84,7 @@ amplifier/envelope/sustain_level/0.001-1/cc66
 amplifier/envelope/release_time/0.001-1/cc72
 
 '''
+
 NOTE_PATHS = '''
 note/press/note_on
 note/release/note_off
@@ -120,20 +137,7 @@ filter/band_pass/resonance/0.1-2.0/cc71
 filter/band_pass/frequency/20-20000/cc70
 """
 
-AMPLITUDE_PATHS = '''
-note/press/note_on
-note/release/note_off
-note/oscillator/frequency/note_number/note_on
-note/amplifier/amplitude/0.001-1/velocity/note_on
 
-oscillator/waveform/saw/set
-
-'''
-"""
-note/amplifier/amplitude/0.001-1/velocity/note_on
-amplifier/amplitude/0.001-1/cc24
-amplifier/amplitude/0.3/set
-"""
 
 
 
