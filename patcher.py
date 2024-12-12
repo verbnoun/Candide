@@ -232,7 +232,8 @@ class MidiHandler:
     def handle_pitch_bend(self, msg):
         """Handle pitch bend message using routing table."""
         if 'pitchbend' in self.path_parser.enabled_messages:
-            midi_value = (msg.pitch_bend >> 7) & 0x7F
+            # Use full 14-bit pitch bend value
+            midi_value = msg.pitch_bend
             
             # Get all actions for pitch_bend
             actions = self.path_parser.midi_mappings.get('pitch_bend', [])
