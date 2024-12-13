@@ -14,33 +14,29 @@ ring_waveform (and its loop points)
 import sys
 from logging import log, TAG_INST
 
-
-NOTE_PATHS = '''
+BASIC_PATHS = '''
 note/press/note_on
 note/release/note_off
 note/oscillator/frequency/note_number/note_on
 
-note/amplifier/amplitude/0.001-1/pressure
+oscillator/waveform/sine/set
 
+filter/high_pass/resonance/0.1-2.0/cc71
+filter/high_pass/frequency/20-20000/cc70
 
-
-
+amplifier/envelope/attack_level/0.001-1/cc85
+amplifier/envelope/attack_time/0.001-0.5/cc73
+amplifier/envelope/decay_time/0.001-0.25/cc75
+amplifier/envelope/sustain_level/0.001-1/cc66
+amplifier/envelope/release_time/0.001-1/cc72
 
 '''
-"""
-note/amplifier/amplitude/0.001-1/velocity/note_on
-note/oscillator/ring/frequency/bend/n1-1/pitch_bend
-note/oscillator/frequency/bend/n1-1/pitch_bend
-
-
-note/amplifier/amplitude/0.001-1/pressure
-amplifier/amplitude/0.001-1/cc24
-"""
 
 OSCILLATOR_PATHS = '''
 note/press/note_on
 note/release/note_off
-note/oscillator/frequency/note_number/note_on
+
+oscillator/frequency/130.81-523.25/cc74
 
 note/oscillator/frequency/bend/n1-1/pitch_bend
 
@@ -80,6 +76,7 @@ AMPLITUDE_PATHS = '''
 note/press/note_on
 note/release/note_off
 note/oscillator/frequency/note_number/note_on
+
 note/amplifier/amplitude/0.001-1/velocity/note_on
 
 oscillator/waveform/saw/set
@@ -96,10 +93,10 @@ note/press/note_on
 note/release/note_off
 note/oscillator/frequency/note_number/note_on
 
-oscillator/waveform/saw/set
+oscillator/waveform/sine/set
 
-filter/band_pass/resonance/0.1-2.0/cc71
-filter/band_pass/frequency/20-20000/cc70
+filter/high_pass/resonance/0.1-2.0/cc71
+filter/high_pass/frequency/20-20000/cc70
 
 amplifier/envelope/attack_level/0.001-1/cc85
 amplifier/envelope/attack_time/0.001-0.5/cc73
@@ -109,9 +106,25 @@ amplifier/envelope/release_time/0.001-1/cc72
 
 '''
 
+NOTE_PATHS = '''
+note/press/note_on
+note/release/note_off
+note/oscillator/frequency/note_number/note_on
+
+note/amplifier/amplitude/0.001-1/pressure
+
+'''
+"""
+note/amplifier/amplitude/0.001-1/velocity/note_on
+note/oscillator/ring/frequency/bend/n1-1/pitch_bend
+note/oscillator/frequency/bend/n1-1/pitch_bend
 
 
-ENVELOPE_CC_PATHS = '''
+note/amplifier/amplitude/0.001-1/pressure
+amplifier/amplitude/0.001-1/cc24
+"""
+
+ENVELOPE_PATHS = '''
 note/press/note_on
 note/release/note_off
 note/oscillator/frequency/note_number/note_on
@@ -133,7 +146,7 @@ amplifier/envelope/sustain_level/0.3/set
 amplifier/envelope/release_time/0.5/set
 """
 
-FILTER_MINIMUM_PATHS = '''
+FILTER_PATHS = '''
 note/press/note_on
 note/release/note_off
 note/oscillator/frequency/note_number/note_on

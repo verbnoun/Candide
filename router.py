@@ -13,163 +13,250 @@ INTEGER_PARAMS = {
     'ring_morph_position'  # Used as MIDI value (0-127) for waveform lookup
 }
 
-# Parameters that synthio handles per-note
-PER_NOTE_PARAMS = {
-    'bend', 'amplitude', 'panning', 'waveform',
-    'waveform_loop_start', 'waveform_loop_end',
-    'filter', 'ring_frequency', 'ring_bend',
-    'ring_waveform', 'ring_waveform_loop_start',
-    'ring_waveform_loop_end'
-}
-
-class Route:
-    """Creates a route that maps MIDI values to parameter values."""
-    def __init__(self, name, min_val=None, max_val=None, fixed_value=None, is_integer=False, 
-                 is_note_to_freq=False, waveform_sequence=None, is_14_bit=False):
-        self.name = name
-        self.is_integer = is_integer
-        self.fixed_value = fixed_value
-        self.is_note_to_freq = is_note_to_freq
-        self.is_waveform_sequence = waveform_sequence is not None
-        self.is_14_bit = is_14_bit
-        self.waveform_sequence = waveform_sequence
-        self.waveform_morph = None
-        
-        # Initialize WaveformMorph if sequence provided
-        if self.is_waveform_sequence:
-            self.waveform_morph = WaveformMorph(name, waveform_sequence)
-            log(TAG_ROUTE, f"Created morph table for {'-'.join(waveform_sequence)}")
-        
-        # Only create lookup table if range is specified or note_to_freq
-        if is_note_to_freq or (min_val is not None and max_val is not None):
-            # Use 14-bit table size for 14-bit values
-            table_size = 16384 if is_14_bit else 128
-            self.lookup_table = array.array('f', [0] * table_size)
-            if is_note_to_freq:
-                self._build_note_to_freq_lookup()
-                log(TAG_ROUTE, "Created route: {} [MIDI note to Hz]".format(name))
-            else:
-                self.min_val = float(min_val)
-                self.max_val = float(max_val)
-                self._build_lookup()
-                log(TAG_ROUTE, "Created route: {} [{} to {}] {}".format(
-                    name, min_val, max_val, '(integer)' if is_integer else ''))
-        else:
-            self.lookup_table = None
-            if fixed_value is not None:
-                log(TAG_ROUTE, f"Created route: {name} [fixed: {fixed_value}]")
-            else:
-                log(TAG_ROUTE, f"Created route: {name} [pass through]")
+class ValueType:
+    """Handles all value conversions and validations."""
     
-    def _build_note_to_freq_lookup(self):
-        """Build lookup table for MIDI note number to Hz conversion."""
-        for i in range(128):
-            self.lookup_table[i] = synthio.midi_to_hz(i)
+    @staticmethod
+    def to_waveform(value):
+        """Convert string to waveform buffer or morph table.
+        
+        Args:
+            value: String like 'sine' or 'sine-triangle-square'
+        """
+        if '-' in value:
+            # Multiple waveforms - create morph table
+            log(TAG_ROUTE, f"Creating morph table for sequence: {value}")
+            return WaveformMorph('waveform', value.split('-'))
             
-        log(TAG_ROUTE, "Note to Hz lookup table for {} (sample values):".format(self.name))
-        log(TAG_ROUTE, "  0: {:.2f} Hz".format(self.lookup_table[0]))
-        log(TAG_ROUTE, " 60 (middle C): {:.2f} Hz".format(self.lookup_table[60]))
-        log(TAG_ROUTE, " 69 (A440): {:.2f} Hz".format(self.lookup_table[69]))
-        log(TAG_ROUTE, "127: {:.2f} Hz".format(self.lookup_table[127]))
+        # Single waveform - create lookup table with one entry
+        log(TAG_ROUTE, f"Creating single waveform: {value}")
+        waveform = SynthioInterfaces.create_waveform(value)
+        return array.array('h', waveform)  # Convert to array for consistent lookup
         
-    def _build_lookup(self):
-        """Build MIDI value lookup table for fast conversion."""
-        table_size = len(self.lookup_table)
+    @staticmethod
+    def to_number(value, as_int=False):
+        """Convert string to number or range tuple.
         
-        if self.is_14_bit:
+        Args:
+            value: String like '220' or '0.001-1'
+            as_int: Whether to convert to integer
+        
+        Returns:
+            Single value or (min, max) tuple
+        """
+        if '-' in value:
+            # Parse range
+            min_str, max_str = value.split('-')
+            # Handle negative numbers with 'n' prefix
+            min_val = -float(min_str[1:]) if min_str.startswith('n') else float(min_str)
+            max_val = float(max_str)
+            if as_int:
+                return (int(min_val), int(max_val))
+            return (min_val, max_val)
+        # Parse direct value
+        return int(value) if as_int else float(value)
+        
+    @staticmethod
+    def to_frequency(value):
+        """Convert note number or direct frequency.
+        
+        Args:
+            value: 'note_number' or frequency string
+        """
+        if value == 'note_number':
+            table = array.array('f', [0] * 128)
+            for i in range(128):
+                table[i] = synthio.midi_to_hz(i)
+            return table
+        return float(value)
+
+class ValueConverter:
+    """Converts input values to target ranges."""
+    def __init__(self):
+        self.note_to_freq = ValueType.to_frequency('note_number')
+        
+    def _build_range_table(self, min_val, max_val, is_14_bit=False):
+        """Build lookup table for range conversion."""
+        size = 16384 if is_14_bit else 128
+        table = array.array('f', [0] * size)
+        
+        if is_14_bit:
             # For 14-bit values, normalize around center point (8192)
-            center = table_size // 2
-            for i in range(table_size):
+            center = size // 2
+            for i in range(size):
                 normalized = (i - center) / center
-                value = self.min_val + normalized * (self.max_val - self.min_val)
-                self.lookup_table[i] = int(value) if self.is_integer else value
+                table[i] = min_val + normalized * (max_val - min_val)
         else:
             # Standard 7-bit MIDI normalization
-            for i in range(table_size):
-                normalized = i / (table_size - 1)
-                value = self.min_val + normalized * (self.max_val - self.min_val)
-                self.lookup_table[i] = int(value) if self.is_integer else value
-            
-        log(TAG_ROUTE, "Lookup table for {} (sample values):".format(self.name))
-        log(TAG_ROUTE, "  0: {}".format(self.lookup_table[0]))
-        if self.is_14_bit:
-            log(TAG_ROUTE, "  8192 (center): {}".format(self.lookup_table[8192]))
-            log(TAG_ROUTE, "  16383: {}".format(self.lookup_table[16383]))
-        else:
-            log(TAG_ROUTE, "  64: {}".format(self.lookup_table[64]))
-            log(TAG_ROUTE, "  127: {}".format(self.lookup_table[127]))
-    
-    def convert(self, midi_value):
-        """Convert MIDI value to parameter value."""
-        max_val = 16383 if self.is_14_bit else 127
-        if not 0 <= midi_value <= max_val:
-            log(TAG_ROUTE, "Invalid MIDI value {} for {}".format(midi_value, self.name), is_error=True)
-            raise ValueError(f"MIDI value must be between 0 and {max_val}")
-            
-        if self.fixed_value is not None:
-            return self.fixed_value
-            
-        if self.lookup_table is None:
-            if self.is_waveform_sequence:
-                # Get pre-calculated waveform from morph table
-                return self.waveform_morph.get_waveform(midi_value)
-            return midi_value
-            
-        # Get value from lookup table
-        value = self.lookup_table[midi_value]
-        
-        # Convert to float unless parameter is in INTEGER_PARAMS
-        if self.name not in INTEGER_PARAMS:
-            try:
-                value = float(value)
-            except (TypeError, ValueError) as e:
-                log(TAG_ROUTE, f"Failed to convert parameter {self.name} to float: {str(e)}", is_error=True)
-                raise
+            for i in range(size):
+                normalized = i / (size - 1)
+                table[i] = min_val + normalized * (max_val - min_val)
                 
-        return value
+        return table
+        
+    def build_lookup_table(self, value_def, is_14_bit=False):
+        """Build lookup table for value definition.
+        
+        Args:
+            value_def: Range string, direct value, or special type
+            is_14_bit: Whether input is 14-bit value
+            
+        Returns:
+            Lookup table or direct value
+        """
+        try:
+            # Handle None value_def (direct actions like press/release)
+            if value_def is None:
+                return None
+                
+            # Handle waveform types
+            if any(wave in str(value_def) for wave in ('sine', 'triangle', 'square', 'saw', 'noise')):
+                return ValueType.to_waveform(value_def)
+                
+            # Handle note to frequency conversion
+            if value_def == 'note_number':
+                return self.note_to_freq
+                
+            # Handle range conversion
+            if '-' in value_def:
+                min_val, max_val = ValueType.to_number(value_def)
+                return self._build_range_table(min_val, max_val, is_14_bit)
+                
+            # For direct values, create single-value table
+            value = ValueType.to_number(value_def)
+            table = array.array('f', [value])
+            return table
+            
+        except Exception as e:
+            raise ValueError(str(e))
 
-    def __str__(self):
-        if self.fixed_value is not None:
-            return f"Route(fixed: {self.fixed_value})"
-        elif self.lookup_table is None:
-            if self.is_waveform_sequence:
-                return f"Route(waveform sequence: {'-'.join(self.waveform_sequence)})"
-            return "Route(pass through)"
-        elif self.is_note_to_freq:
-            return "Route(MIDI note to Hz)"
-        else:
-            return f"Route({self.min_val}-{self.max_val})"
+class TargetRouter:
+    """Routes values to synthesizer targets."""
+    def __init__(self):
+        # Special case handlers for note press/release
+        self.note_actions = {
+            'press': ('handle_press', None, 'press'),  # Added action type
+            'release': ('handle_release', None, 'release')  # Added action type
+        }
+        
+        # Normal target handlers
+        self.handlers = {
+            'note': {
+                'oscillator/frequency': ('store_value', 'frequency'),
+                'oscillator/ring/frequency': ('update_parameter', 'ring_frequency'),
+                'amplifier/amplitude': ('update_parameter', 'amplitude')
+            },
+            'oscillator': {
+                'frequency': ('store_value', 'frequency'),
+                'waveform': ('update_parameter', 'waveform'),
+                'ring/frequency': ('update_parameter', 'ring_frequency'),
+                'ring/waveform': ('update_parameter', 'ring_waveform')
+            },
+            'filter': {
+                'frequency': ('update_parameter', 'filter_frequency'),
+                'resonance': ('update_parameter', 'filter_resonance')
+            },
+            'amplifier': {
+                'amplitude': ('update_parameter', 'amplitude'),
+                'envelope': ('update_global_envelope', None)
+            }
+        }
+        
+    def get_handler(self, path_parts):
+        """Get handler info for path.
+        
+        Returns:
+            Tuple of (handler_name, target, action) or None if not found
+        """
+        # Special case: note press/release actions
+        if len(path_parts) == 2 and path_parts[0] == 'note':
+            return self.note_actions.get(path_parts[1])
+            
+        # Handle note component paths
+        if path_parts[0] == 'note':
+            component_path = '/'.join(path_parts[1:])
+            handler_info = self.handlers['note'].get(component_path)
+            if handler_info:
+                # Create new tuple with None action
+                handler, target = handler_info
+                return (handler, target, None)
+            return None
+            
+        # Handle component paths
+        component = path_parts[0]
+        if component in self.handlers:
+            if component == 'filter':
+                # Special case for filter type
+                handler_info = self.handlers[component][path_parts[2]]
+            elif component == 'amplifier' and path_parts[1] == 'envelope':
+                # Special case for envelope parameters
+                handler_info = self.handlers[component]['envelope']
+            else:
+                # Normal component paths
+                handler_info = self.handlers[component].get(path_parts[1])
+                
+            if handler_info:
+                # Create new tuple with None action
+                handler, target = handler_info
+                return (handler, target, None)
+            
+        return None
 
 class PathParser:
-    """Parses instrument paths and manages parameter conversions."""
+    """Maps MIDI values to synthesizer actions."""
     def __init__(self):
-        # Core collections for parameter management
-        self.midi_mappings = {}  # trigger -> [action objects]
+        # Core collections
+        self.midi_mappings = {}
         self.enabled_messages = set()
         self.enabled_ccs = set()
         
-        # Feature flags - only set when corresponding paths are found
+        # Feature flags
         self.has_envelope_paths = False
         self.has_filter = False
         self.has_ring_mod = False
         self.has_waveform_sequence = False
-        self.has_ring_waveform_sequence = False
-        self.has_math_ops = False
-        self.has_lfo = False
-        
-        # Path configurations - only set when found in paths
         self.filter_type = None
         self.waveform_sequence = None
-        self.ring_waveform_sequence = None
         
-    def parse_paths(self, paths, config_name=None):
+        # Initialize components
+        self.value_converter = ValueConverter()
+        self.target_router = TargetRouter()
+        
+    def _reset(self):
+        """Reset all collections before parsing new paths."""
+        self.midi_mappings.clear()
+        self.enabled_messages.clear()
+        self.enabled_ccs.clear()
+        
+        # Reset feature flags
+        self.has_envelope_paths = False
+        self.has_filter = False
+        self.has_ring_mod = False
+        self.has_waveform_sequence = False
+        self.filter_type = None
+        self.waveform_sequence = None
+        
+    def _track_midi_message(self, trigger):
+        """Update enabled messages and CCs based on trigger."""
+        if trigger.startswith('cc'):
+            cc_num = int(trigger[2:])
+            self.enabled_messages.add('cc')
+            self.enabled_ccs.add(cc_num)
+        elif trigger in ('note_on', 'note_off'):
+            self.enabled_messages.add(trigger.replace('_', ''))
+        elif trigger == 'pressure':
+            self.enabled_messages.add('channelpressure')
+        elif trigger == 'pitch_bend':
+            self.enabled_messages.add('pitchbend')
+            
+    def parse_paths(self, paths: str, config_name=None):
         """Parse instrument paths to extract parameters and mappings."""
         log(TAG_ROUTE, "Parsing instrument paths...")
         log(TAG_ROUTE, "----------------------------------------")
         
         if config_name:
             log(TAG_ROUTE, f"Using paths configuration: {config_name}")
-        
+            
         try:
             self._reset()
             
@@ -182,7 +269,74 @@ class PathParser:
                     
                 try:
                     parts = line.strip().split('/')
-                    self._parse_line(parts)
+                    if len(parts) < 3:
+                        continue
+                        
+                    # Special case: note press/release actions
+                    if parts[0] == 'note' and parts[1] in ('press', 'release'):
+                        trigger = parts[-1]
+                        target_parts = parts[:-1]  # Include press/release in target
+                        value_def = None
+                    else:
+                        # Normal value routing path
+                        trigger = parts[-1]
+                        value_def = parts[-2]
+                        target_parts = parts[:-2]
+                    
+                    # Track MIDI message
+                    self._track_midi_message(trigger)
+                    
+                    # Get handler info
+                    handler_info = self.target_router.get_handler(target_parts)
+                    if not handler_info:
+                        raise ValueError(f"Invalid target path: {'/'.join(target_parts)}")
+                        
+                    handler, target, action = handler_info  # Now includes action
+                    
+                    # Create action dict
+                    action_dict = {
+                        'handler': handler,
+                        'trigger': trigger
+                    }
+                    
+                    # Add target if provided
+                    if target:
+                        action_dict['target'] = target
+                        
+                    # Add action type if provided
+                    if action:
+                        action_dict['action'] = action
+                        
+                    # Add channel flag for note paths
+                    if parts[0] == 'note':
+                        action_dict['use_channel'] = True
+                        
+                    # Build lookup table for all values including set
+                    is_14_bit = (trigger == 'pitch_bend')
+                    lookup = self.value_converter.build_lookup_table(value_def, is_14_bit)
+                    if lookup is not None:
+                        action_dict['lookup'] = lookup
+                        # Mark waveform actions
+                        if target == 'waveform' or target == 'ring_waveform':
+                            action_dict['is_waveform'] = True
+                        
+                    # Add to mappings
+                    if trigger not in self.midi_mappings:
+                        self.midi_mappings[trigger] = []
+                    self.midi_mappings[trigger].append(action_dict)
+                    
+                    # Update feature flags
+                    if parts[0] == 'filter':
+                        self.has_filter = True
+                        self.filter_type = parts[1]
+                    elif parts[0] == 'amplifier' and parts[1] == 'envelope':
+                        self.has_envelope_paths = True
+                    elif 'ring' in parts:
+                        self.has_ring_mod = True
+                    elif 'waveform' in parts and '-' in str(value_def):
+                        self.has_waveform_sequence = True
+                        self.waveform_sequence = value_def.split('-')
+                    
                 except Exception as e:
                     log(TAG_ROUTE, f"Error parsing path: {line} - {str(e)}", is_error=True)
                     raise
@@ -192,14 +346,10 @@ class PathParser:
             for trigger, actions in self.midi_mappings.items():
                 log(TAG_ROUTE, f"{trigger} -> [")
                 for action in actions:
-                    if 'action' in action:
-                        log(TAG_ROUTE, f"  {{handler: {action['handler']}, action: {action['action']}, scope: {action['scope']}}}")
-                    elif 'source' in action:
-                        log(TAG_ROUTE, f"  {{handler: {action['handler']}, target: {action['target']}, scope: {action['scope']}, source: {action['source']}}}")
-                    elif 'lookup' in action:
-                        log(TAG_ROUTE, f"  {{handler: {action['handler']}, target: {action['target']}, scope: {action['scope']}, lookup: {action['lookup']}}}")
+                    if 'target' in action:
+                        log(TAG_ROUTE, f"  {{handler: {action['handler']}, target: {action['target']}, use_channel: {action.get('use_channel', False)}, lookup: {type(action.get('lookup', None)).__name__}}}")
                     else:
-                        log(TAG_ROUTE, f"  {{handler: {action['handler']}, target: {action['target']}, scope: {action['scope']}, value: {action['value']}}}")
+                        log(TAG_ROUTE, f"  {{handler: {action['handler']}, use_channel: {action.get('use_channel', False)}, lookup: {type(action.get('lookup', None)).__name__}}}")
                 log(TAG_ROUTE, "]")
                 
             # Log enabled messages
@@ -212,392 +362,26 @@ class PathParser:
         except Exception as e:
             log(TAG_ROUTE, f"Failed to parse paths: {str(e)}", is_error=True)
             raise
-    
-    def _reset(self):
-        """Reset all collections before parsing new paths."""
-        self.midi_mappings.clear()
-        self.enabled_messages.clear()
-        self.enabled_ccs.clear()
-        
-        # Reset feature flags
-        self.has_envelope_paths = False
-        self.has_filter = False
-        self.has_ring_mod = False
-        self.has_waveform_sequence = False
-        self.has_ring_waveform_sequence = False
-        self.has_math_ops = False
-        self.has_lfo = False
-        
-        # Reset path configurations
-        self.filter_type = None
-        self.waveform_sequence = None
-        self.ring_waveform_sequence = None
-
-    def _parse_range(self, range_str):
-        """Parse a range string, handling negative numbers with 'n' prefix."""
-        try:
-            if '-' not in range_str:
-                raise ValueError(f"Invalid range format: {range_str}")
+            
+    def get_value(self, action, input_value):
+        """Get value from pre-computed lookup table."""
+        # For actions with lookup tables, use table
+        if 'lookup' in action:
+            # For waveforms, return whole buffer
+            if action.get('is_waveform'):
+                return action['lookup']
                 
-            min_str, max_str = range_str.split('-')
-            
-            # Handle negative numbers with 'n' prefix
-            if min_str.startswith('n'):
-                min_val = -float(min_str[1:])
-            else:
-                min_val = float(min_str)
+            # For numeric lookup tables
+            if isinstance(action['lookup'], array.array):
+                if not 0 <= input_value < len(action['lookup']):
+                    raise ValueError(f"Input value {input_value} out of range")
+                return action['lookup'][input_value]
                 
-            max_val = float(max_str)
-            return min_val, max_val
-            
-        except ValueError as e:
-            raise ValueError(f"Invalid range format {range_str}: {str(e)}")
-            
-    def _parse_routing(self, parts):
-        """Parse path to build routing info."""
-        # Get trigger (note_on, cc74, etc)
-        trigger = parts[-1]
-        
-        # Handle standard MIDI message types
-        if trigger.startswith('cc'):
-            trigger = f"cc{int(trigger[2:])}"
-            self.enabled_messages.add('cc')
-            self.enabled_ccs.add(int(trigger[2:]))
-        elif trigger in ('note_on', 'note_off'):
-            self.enabled_messages.add(trigger.replace('_', ''))
-        elif trigger == 'pressure':
-            self.enabled_messages.add('channelpressure')
-            trigger = 'channelpressure'  # Use channelpressure as trigger
-        elif trigger == 'pitch_bend':
-            self.enabled_messages.add('pitchbend')
-        elif trigger == 'set':
-            # Handle set values - store directly in synth state through action
-            value_part = parts[-2]
-            
-            # Get the actual parameter name based on path structure
-            param_name = None
-            if parts[0] == 'oscillator':
-                if parts[1] == 'ring':
-                    param_name = f'ring_{parts[2]}'  # frequency, bend, etc
-                else:
-                    param_name = parts[1]  # waveform, frequency, etc
-            elif parts[0] == 'filter':
-                param_name = f'filter_{parts[2]}'  # frequency, resonance, etc
-            elif parts[0] == 'amplifier':
-                if parts[1] == 'envelope':
-                    param_name = parts[2]  # attack_time, decay_time, etc
-                else:
-                    param_name = parts[1]  # amplitude
-            
-            try:
-                # Convert numeric values to float unless in INTEGER_PARAMS
-                if param_name not in INTEGER_PARAMS:  # Check actual parameter name
-                    # Handle negative numbers with 'n' prefix
-                    if value_part.startswith('n'):
-                        value = -float(value_part[1:])
-                    else:
-                        value = float(value_part)
-                else:
-                    value = int(value_part)
-            except ValueError:
-                # Not a numeric value, must be a waveform type
-                if parts[0] == 'oscillator':
-                    if parts[1] == 'waveform':
-                        # Create waveform buffer immediately
-                        value = SynthioInterfaces.create_waveform(value_part)
-                    elif parts[1] == 'ring' and parts[2] == 'waveform':
-                        # Create ring waveform buffer immediately
-                        value = SynthioInterfaces.create_waveform(value_part)
-                else:
-                    value = value_part
+            # For WaveformMorph, get waveform for input value
+            if hasattr(action['lookup'], 'get_waveform'):
+                return action['lookup'].get_waveform(input_value)
                 
-            # Create store action based on path
-            if parts[0] == 'oscillator':
-                if parts[1] == 'frequency':
-                    target = 'frequency'
-                    handler = 'store_value'
-                elif parts[1] == 'bend':
-                    target = 'bend'
-                    handler = 'update_parameter'
-                elif parts[1] == 'waveform':
-                    target = 'waveform'
-                    handler = 'update_parameter'
-                elif parts[1] == 'ring':
-                    if parts[2] == 'waveform':
-                        target = 'ring_waveform'
-                        handler = 'update_parameter'
-                    else:
-                        target = f'ring_{parts[2]}'
-                        handler = 'update_parameter'
-            elif parts[0] == 'filter':
-                target = f'filter_{parts[2]}'
-                handler = 'update_parameter'
-                self.filter_type = parts[1]
-            elif parts[0] == 'amplifier':
-                if parts[1] == 'envelope':
-                    target = parts[2]
-                    handler = 'update_global_envelope'
-                elif parts[1] == 'amplitude':
-                    target = 'amplifier_amplitude'
-                    handler = 'update_parameter'
-                
-            # Determine scope based on path starting with 'note'
-            scope = 'per_key' if parts[0] == 'note' else 'global'
-                
-            # Create action for storing value
-            action = {
-                'handler': handler,
-                'target': target,
-                'scope': scope,
-                'value': value,
-                'all_channels': scope == 'per_key'  # Set values for note paths go to all channels
-            }
+            return action['lookup']  # Direct value
             
-            # If global scope and target is a per-note parameter, store in all channels
-            if scope == 'global' and target in PER_NOTE_PARAMS:
-                action['store_in_channels'] = True
-                log(TAG_ROUTE, f"Global per-note parameter {target} will be stored in all channels")
-            
-            # Initialize array if needed
-            if trigger not in self.midi_mappings:
-                self.midi_mappings[trigger] = []
-            self.midi_mappings[trigger].append(action)
-            
-            log(TAG_ROUTE, f"Created store action for {target}: {value}")
-            return
-            
-        # Initialize array if needed
-        if trigger not in self.midi_mappings:
-            self.midi_mappings[trigger] = []
-            
-        # Create appropriate action object
-        if parts[0] == 'note':
-            if parts[1] == 'press' or parts[1] == 'release':
-                # Direct action
-                action = {
-                    'handler': f'handle_{parts[1]}',
-                    'action': parts[1],
-                    'scope': 'per_key'
-                }
-            else:
-                # Nested path after note/ prefix
-                # Skip 'note' prefix and process rest of path
-                nested_parts = parts[1:]  # ['oscillator', 'frequency', 'bend', 'n1-1', 'pitch_bend']
-                
-                # Set default handler and target
-                handler = 'update_parameter'
-                target = None
-                
-                # Handle nested paths
-                if nested_parts[0] == 'oscillator':
-                    if nested_parts[1] == 'frequency':
-                        target = 'frequency'
-                        if nested_parts[-2] == 'note_number':
-                            action = {
-                                'handler': handler,
-                                'target': target,
-                                'scope': 'per_key',
-                                'lookup': Route(target, is_note_to_freq=True)
-                            }
-                            self.midi_mappings[trigger].append(action)
-                            return
-                        elif nested_parts[2] == 'bend':
-                            target = 'bend'
-                            min_val, max_val = self._parse_range(nested_parts[-2])
-                            action = {
-                                'handler': handler,
-                                'target': target,
-                                'scope': 'per_key',
-                                'lookup': Route(target, min_val=min_val, max_val=max_val, is_14_bit=True)
-                            }
-                            self.midi_mappings[trigger].append(action)
-                            return
-                    elif nested_parts[1] == 'ring':
-                        if nested_parts[2] == 'frequency' and nested_parts[3] == 'bend':
-                            target = 'ring_bend'
-                            min_val, max_val = self._parse_range(nested_parts[-2])
-                            action = {
-                                'handler': handler,
-                                'target': target,
-                                'scope': 'per_key',
-                                'lookup': Route(target, min_val=min_val, max_val=max_val, is_14_bit=True)
-                            }
-                            self.midi_mappings[trigger].append(action)
-                            return
-                    elif nested_parts[1] == 'waveform':
-                        target = 'waveform'
-                        if '-' in nested_parts[-2]:
-                            waveform_sequence = nested_parts[-2].split('-')
-                            action = {
-                                'handler': handler,
-                                'target': target,
-                                'scope': 'per_key',
-                                'lookup': Route(target, waveform_sequence=waveform_sequence)
-                            }
-                            self.waveform_sequence = waveform_sequence
-                            self.has_waveform_sequence = True
-                            self.midi_mappings[trigger].append(action)
-                            return
-                        else:
-                            value = SynthioInterfaces.create_waveform(nested_parts[-2])
-                            action = {
-                                'handler': handler,
-                                'target': target,
-                                'scope': 'per_key',
-                                'value': value
-                            }
-                elif nested_parts[0] == 'amplifier':
-                    if nested_parts[1] == 'amplitude':
-                        target = 'amplitude'
-                        range_str = nested_parts[2]  # Get range value directly
-                        min_val, max_val = self._parse_range(range_str)
-                        
-                        # Handle velocity and pressure
-                        if nested_parts[-1] == 'note_on' and nested_parts[-2] == 'velocity':
-                            action = {
-                                'handler': handler,
-                                'target': target,
-                                'scope': 'per_key',
-                                'lookup': Route(target, min_val=min_val, max_val=max_val)
-                            }
-                            self.midi_mappings[trigger].append(action)
-                            return
-                        elif nested_parts[-1] == 'pressure':
-                            action = {
-                                'handler': handler,
-                                'target': target,
-                                'scope': 'per_key',
-                                'lookup': Route(target, min_val=min_val, max_val=max_val)
-                            }
-                            self.midi_mappings['channelpressure'].append(action)  # Add to channelpressure trigger
-                            return
-                
-                if target is None:
-                    raise ValueError(f"Could not determine target for path: {'/'.join(parts)}")
-                
-                action = {
-                    'handler': handler,
-                    'target': target,
-                    'scope': 'per_key'
-                }
-                
-                # Determine value source
-                if nested_parts[-2] in ('velocity', 'pressure'):
-                    action['source'] = nested_parts[-2]
-                elif '-' in nested_parts[-2]:
-                    min_val, max_val = self._parse_range(nested_parts[-2])
-                    action['lookup'] = Route(target, min_val, max_val, is_integer=target in INTEGER_PARAMS)
-                else:
-                    action['value'] = nested_parts[-2]
-        else:
-            # Global scope paths
-            value_part = parts[-2]
-            
-            # Determine target and handler
-            if parts[0] == 'oscillator':
-                if parts[1] == 'frequency':
-                    if parts[2] == 'bend':
-                        target = 'bend'
-                        handler = 'update_parameter'
-                    else:
-                        target = 'frequency'
-                        handler = 'store_value'
-                elif parts[1] == 'ring':
-                    if parts[2] == 'frequency' and parts[3] == 'bend':
-                        target = 'ring_bend'
-                        handler = 'update_parameter'
-                    elif parts[2] == 'waveform':
-                        target = 'ring_waveform'
-                        handler = 'update_parameter'
-                    else:
-                        target = f'ring_{parts[2]}'
-                        handler = 'update_parameter'
-                elif parts[1] == 'waveform':
-                    target = 'waveform'
-                    handler = 'update_parameter'
-                    if '-' in value_part:
-                        waveform_sequence = value_part.split('-')
-                        action = {
-                            'handler': handler,
-                            'target': target,
-                            'scope': 'global',
-                            'lookup': Route(target, waveform_sequence=waveform_sequence)
-                        }
-                        self.waveform_sequence = waveform_sequence
-                        self.has_waveform_sequence = True
-                        self.midi_mappings[trigger].append(action)
-                        return
-                    else:
-                        value = SynthioInterfaces.create_waveform(value_part)
-                        action = {
-                            'handler': handler,
-                            'target': target,
-                            'scope': 'global',
-                            'value': value
-                        }
-            elif parts[0] == 'filter':
-                target = f'filter_{parts[2]}'
-                handler = 'update_parameter'
-                self.filter_type = parts[1]
-            elif parts[0] == 'amplifier':
-                if parts[1] == 'envelope':
-                    target = parts[2]
-                    handler = 'update_global_envelope'
-                elif parts[1] == 'amplitude':
-                    target = 'amplifier_amplitude'
-                    handler = 'update_parameter'
-            elif parts[0] == 'math':
-                target = f'math_{parts[1]}'
-                handler = 'update_math_parameter'
-                self.has_math_ops = True
-            elif parts[0] == 'lfo':
-                if parts[1] == 'target':
-                    target = f'lfo_target_{parts[2]}'
-                    handler = 'update_lfo_target'
-                elif parts[1] == 'waveform':
-                    target = 'lfo_waveform'
-                    handler = 'update_lfo_waveform'
-                else:
-                    target = f'lfo_{parts[1]}'
-                    handler = 'update_lfo_parameter'
-                self.has_lfo = True
-                
-            action = {
-                'handler': handler,
-                'target': target,
-                'scope': 'global'
-            }
-            
-            # If global scope and target is a per-note parameter, store in all channels
-            if target in PER_NOTE_PARAMS:
-                action['store_in_channels'] = True
-                log(TAG_ROUTE, f"Global per-note parameter {target} will be stored in all channels")
-            
-            # Determine value source
-            if value_part in ('velocity', 'pressure'):
-                action['source'] = value_part
-            elif '-' in value_part:
-                min_val, max_val = self._parse_range(value_part)
-                action['lookup'] = Route(target, min_val, max_val, is_integer=target in INTEGER_PARAMS)
-            else:
-                action['value'] = value_part
-                
-        self.midi_mappings[trigger].append(action)
-        
-        # Set feature flags based on path
-        if parts[0] == 'filter' or (parts[0] == 'note' and parts[1] == 'filter'):
-            self.has_filter = True
-        elif (parts[0] == 'amplifier' and parts[1] == 'envelope') or \
-             (parts[0] == 'note' and parts[1] == 'amplifier' and parts[2] == 'envelope'):
-            self.has_envelope_paths = True
-        elif (parts[0] == 'oscillator' and parts[1] == 'ring') or \
-             (parts[0] == 'note' and parts[1] == 'oscillator' and parts[2] == 'ring'):
-            self.has_ring_mod = True
-    
-    def _parse_line(self, parts):
-        """Parse a single path line."""
-        if len(parts) < 3:
-            raise ValueError(f"Invalid path format: {'/'.join(parts)}")
-            
-        # Parse routing info
-        self._parse_routing(parts)
+        # For actions without lookup, return input directly
+        return input_value

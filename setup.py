@@ -57,21 +57,19 @@ class SynthesizerSetup:
             path_parser.has_envelope_paths = envelope_paths
             log(TAG_SETUP, f"Found envelope paths: {envelope_paths}")
             
-            # Let patcher handle set actions using its existing handler
-            if 'set' in path_parser.midi_mappings:
-                self.synthesizer.midi_handler.handle_set_actions()
-            
-            self._configure_waveforms(synth_state, store, path_parser)
-            
             # Create synth parameters
             params = {
                 'sample_rate': SAMPLE_RATE,
                 'channel_count': AUDIO_CHANNEL_COUNT
             }
             
-            # Add waveform if available, otherwise let synthio use default
-            if synth_state.global_waveform is not None:
-                params['waveform'] = synth_state.global_waveform
+            # Add waveform if available from store
+            waveform = store.get('waveform')
+            if waveform is not None:
+                params['waveform'] = waveform
+                log(TAG_SETUP, "Using waveform from store")
+            else:
+                log(TAG_SETUP, "Using default synthio waveform")
             
             # Check for envelope parameters before creating synth
             if path_parser.has_envelope_paths:
@@ -133,14 +131,17 @@ class SynthesizerSetup:
             # 2. Parse paths
             self.synthesizer.path_parser.parse_paths(paths, config_name)
             
-            # 3. Create synthesizer with base parameters
+            # 3. Send set values immediately after parsing paths
+            self.synthesizer.midi_handler.send_set_values()
+            
+            # 4. Create synthesizer with base parameters (now has set values in store)
             self.synthesizer.synth = self.setup_synthio(
                 self.synthesizer.state,
                 self.synthesizer.state,
                 self.synthesizer.path_parser
             )
             
-            # 4. Setup MIDI handlers
+            # 5. Setup MIDI handlers
             self.synthesizer.midi_handler.setup_handlers()
             
             log(TAG_SETUP, "----------------------------------------")
@@ -159,27 +160,6 @@ class SynthesizerSetup:
     def set_synthesizer(self, synthesizer):
         """Set synthesizer reference for updates."""
         self.synthesizer = synthesizer
-
-    def _configure_waveforms(self, synth_state, store, path_parser):
-        """Store waveform buffers from router"""
-        # Get base waveform from store if available
-        waveform = store.get('waveform')
-        if waveform is not None:
-            # Store pre-made waveform buffer
-            synth_state.global_waveform = waveform
-            log(TAG_SETUP, "Stored base waveform buffer")
-        else:
-            # Let synthio use default waveform
-            synth_state.global_waveform = None
-            log(TAG_SETUP, "Using default synthio waveform")
-            
-        # Get ring waveform if ring mod is enabled
-        if path_parser.has_ring_mod:
-            ring_waveform = store.get('ring_waveform')
-            if ring_waveform is not None:
-                # Store pre-made ring waveform buffer
-                synth_state.global_ring_waveform = ring_waveform
-                log(TAG_SETUP, "Stored ring waveform buffer")
 
     def cleanup(self, synthesizer):
         """Clean up resources."""

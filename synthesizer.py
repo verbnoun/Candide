@@ -6,7 +6,7 @@ import time
 from constants import SAMPLE_RATE, AUDIO_CHANNEL_COUNT
 from logging import log, TAG_SYNTH
 from voices import VoicePool
-from router import PathParser, PER_NOTE_PARAMS  # Import PER_NOTE_PARAMS from router
+from router import PathParser
 from patcher import MidiHandler
 from interfaces import SynthioInterfaces
 from setup import SynthesizerSetup
@@ -19,10 +19,6 @@ class SynthState:
         self.per_channel_values = {i: {} for i in range(1, 16)}  # Channel-specific values (1-15)
         self.previous = {}  # Previous global values
         self.previous_channel = {i: {} for i in range(1, 16)}  # Previous channel values
-        
-        # Global waveform storage
-        self.global_waveform = None
-        self.global_ring_waveform = None
         
     def store(self, name, value, channel=None):
         """Store a value and keep track of previous.
@@ -96,8 +92,6 @@ class SynthState:
         for channel in range(1, 16):
             self.per_channel_values[channel].clear()
             self.previous_channel[channel].clear()
-        self.global_waveform = None
-        self.global_ring_waveform = None
 
 class SynthMonitor:
     """Handles health monitoring and error recovery."""
@@ -195,13 +189,6 @@ class Synthesizer:
         
         # Store value based on channel specification
         self.state.store(store_name, value, channel)
-            
-        # Special handling for waveforms
-        if channel is None:
-            if param_name == 'waveform':
-                self.state.global_waveform = value
-            elif param_name == 'ring_waveform':
-                self.state.global_ring_waveform = value
                 
         # Handling for filter parameters
         if param_name.startswith('filter_'):
@@ -396,8 +383,8 @@ class Synthesizer:
         if frequency is not None:
             params['frequency'] = frequency
             
-        # Get all per-note parameters from router's list
-        for name in PER_NOTE_PARAMS:
+        # Get all per-note parameters that synthio.Note accepts
+        for name in self._param_updates.keys():
             # Start with global value
             value = self.state.get(name)
             
@@ -425,13 +412,17 @@ class Synthesizer:
                 params['ring_waveform_loop_end'] = len(channel_ring_waveform)
                 
         # Fall back to global waveforms
-        if 'waveform' not in params and self.state.global_waveform is not None:
-            params['waveform'] = self.state.global_waveform
-            params['waveform_loop_end'] = len(self.state.global_waveform)
+        if 'waveform' not in params:
+            waveform = self.state.get('waveform')
+            if waveform is not None:
+                params['waveform'] = waveform
+                params['waveform_loop_end'] = len(waveform)
             
-        if 'ring_waveform' not in params and self.state.global_ring_waveform is not None:
-            params['ring_waveform'] = self.state.global_ring_waveform
-            params['ring_waveform_loop_end'] = len(self.state.global_ring_waveform)
+        if 'ring_waveform' not in params:
+            ring_waveform = self.state.get('ring_waveform')
+            if ring_waveform is not None:
+                params['ring_waveform'] = ring_waveform
+                params['ring_waveform_loop_end'] = len(ring_waveform)
             
         # Add filter if configured - get global values first, override with channel
         if self.path_parser.filter_type:
