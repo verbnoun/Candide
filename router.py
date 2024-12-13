@@ -135,17 +135,12 @@ class TargetRouter:
     def __init__(self):
         # Special case handlers for note press/release
         self.note_actions = {
-            'press': ('handle_press', None, 'press'),  # Added action type
-            'release': ('handle_release', None, 'release')  # Added action type
+            'press': ('handle_press', None, 'press'),
+            'release': ('handle_release', None, 'release')
         }
         
-        # Normal target handlers
+        # Component handlers
         self.handlers = {
-            'note': {
-                'oscillator/frequency': ('store_value', 'frequency'),
-                'oscillator/ring/frequency': ('update_parameter', 'ring_frequency'),
-                'amplifier/amplitude': ('update_parameter', 'amplitude')
-            },
             'oscillator': {
                 'frequency': ('store_value', 'frequency'),
                 'waveform': ('update_parameter', 'waveform'),
@@ -153,12 +148,24 @@ class TargetRouter:
                 'ring/waveform': ('update_parameter', 'ring_waveform')
             },
             'filter': {
-                'frequency': ('update_parameter', 'filter_frequency'),
-                'resonance': ('update_parameter', 'filter_resonance')
+                'high_pass/frequency': ('update_parameter', 'filter_frequency'),
+                'high_pass/resonance': ('update_parameter', 'filter_resonance'),
+                'low_pass/frequency': ('update_parameter', 'filter_frequency'),
+                'low_pass/resonance': ('update_parameter', 'filter_resonance'),
+                'band_pass/frequency': ('update_parameter', 'filter_frequency'),
+                'band_pass/resonance': ('update_parameter', 'filter_resonance'),
+                'notch/frequency': ('update_parameter', 'filter_frequency'),
+                'notch/resonance': ('update_parameter', 'filter_resonance')
             },
             'amplifier': {
                 'amplitude': ('update_parameter', 'amplitude'),
-                'envelope': ('update_global_envelope', None)
+                'envelope': {
+                    'attack_level': ('update_envelope_param', 'attack_level'),
+                    'attack_time': ('update_envelope_param', 'attack_time'),
+                    'decay_time': ('update_envelope_param', 'decay_time'),
+                    'sustain_level': ('update_envelope_param', 'sustain_level'),
+                    'release_time': ('update_envelope_param', 'release_time')
+                }
             }
         }
         
@@ -169,36 +176,39 @@ class TargetRouter:
             Tuple of (handler_name, target, action) or None if not found
         """
         # Special case: note press/release actions
-        if len(path_parts) == 2 and path_parts[0] == 'note':
+        if len(path_parts) == 2 and path_parts[0] == 'note' and path_parts[1] in ('press', 'release'):
             return self.note_actions.get(path_parts[1])
             
-        # Handle note component paths
+        # For paths starting with note, strip the note prefix
         if path_parts[0] == 'note':
-            component_path = '/'.join(path_parts[1:])
-            handler_info = self.handlers['note'].get(component_path)
-            if handler_info:
-                # Create new tuple with None action
-                handler, target = handler_info
-                return (handler, target, None)
-            return None
+            path_parts = path_parts[1:]
             
         # Handle component paths
+        if not path_parts:
+            return None
+            
         component = path_parts[0]
-        if component in self.handlers:
-            if component == 'filter':
-                # Special case for filter type
-                handler_info = self.handlers[component][path_parts[2]]
-            elif component == 'amplifier' and path_parts[1] == 'envelope':
-                # Special case for envelope parameters
-                handler_info = self.handlers[component]['envelope']
-            else:
-                # Normal component paths
-                handler_info = self.handlers[component].get(path_parts[1])
-                
+        if component not in self.handlers:
+            return None
+            
+        # Get the parameter path (everything after component)
+        param_path = '/'.join(path_parts[1:])
+        
+        # Look up handler based on component
+        if component == 'amplifier' and param_path.startswith('envelope/'):
+            # Special case for envelope parameters
+            envelope_param = param_path.split('/')[1]
+            handler_info = self.handlers[component]['envelope'].get(envelope_param)
             if handler_info:
-                # Create new tuple with None action
-                handler, target = handler_info
-                return (handler, target, None)
+                return (handler_info[0], handler_info[1], None)
+        else:
+            # Normal component paths
+            handler_info = self.handlers[component].get(param_path)
+            if handler_info:
+                # Store filter type if this is a filter path
+                if component == 'filter':
+                    self.filter_type = path_parts[1]
+                return (handler_info[0], handler_info[1], None)
             
         return None
 
@@ -278,10 +288,26 @@ class PathParser:
                         target_parts = parts[:-1]  # Include press/release in target
                         value_def = None
                     else:
-                        # Normal value routing path
+                        # Get trigger from last part
                         trigger = parts[-1]
-                        value_def = parts[-2]
-                        target_parts = parts[:-2]
+                        
+                        # Find parameter name in path
+                        param_index = None
+                        for i, part in enumerate(parts[:-1]):  # Skip trigger
+                            if part in ('frequency', 'waveform', 'amplitude', 'resonance',
+                                      'attack_level', 'attack_time', 'decay_time',
+                                      'sustain_level', 'release_time'):
+                                param_index = i
+                                break
+                                
+                        if param_index is None:
+                            raise ValueError(f"No parameter found in path: {line}")
+                            
+                        # Value comes right after parameter
+                        value_def = parts[param_index + 1]
+                        
+                        # Target path is everything before value
+                        target_parts = parts[:param_index + 1]
                     
                     # Track MIDI message
                     self._track_midi_message(trigger)

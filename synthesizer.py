@@ -11,6 +11,65 @@ from patcher import MidiHandler
 from interfaces import SynthioInterfaces
 from setup import SynthesizerSetup
 
+class EnvelopeHandler:
+    """Manages envelope parameters and creation."""
+    PARAMS = ['attack_time', 'decay_time', 'release_time', 
+              'attack_level', 'sustain_level']
+
+    def __init__(self, state, synth):
+        self.state = state
+        self.synth = synth
+
+    def store_param(self, param, value, channel=None):
+        """Store param in state."""
+        if param not in self.PARAMS:
+            log(TAG_SYNTH, f"Invalid envelope parameter: {param}", is_error=True)
+            return
+            
+        self.state.store(param, value, channel)
+        if channel is None:
+            self._check_global_envelope()
+
+    def _check_global_envelope(self):
+        """Check if we have complete global set."""
+        params = {}
+        for param in self.PARAMS:
+            value = self.state.get(param)
+            if value is None:
+                return
+            try:
+                params[param] = float(value)
+            except (TypeError, ValueError) as e:
+                log(TAG_SYNTH, f"Invalid envelope parameter {param}: {value}", is_error=True)
+                return
+                
+        # Create and set on synth if complete
+        try:
+            envelope = SynthioInterfaces.create_envelope(**params)
+            self.synth.envelope = envelope
+            log(TAG_SYNTH, "Successfully created and set global envelope")
+        except Exception as e:
+            log(TAG_SYNTH, f"Error creating global envelope: {str(e)}", is_error=True)
+
+    def get_note_envelope(self, channel):
+        """Get envelope for note, mixing global + channel."""
+        params = {}
+        for param in self.PARAMS:
+            value = self.state.get(param, channel)
+            if value is None:
+                return None
+            try:
+                params[param] = float(value)
+            except (TypeError, ValueError) as e:
+                log(TAG_SYNTH, f"Invalid envelope parameter {param}: {value}", is_error=True)
+                return None
+                
+        try:
+            return SynthioInterfaces.create_envelope(**params)
+        except Exception as e:
+            log(TAG_SYNTH, f"Error creating note envelope: {str(e)}", is_error=True)
+            return None
+
 class SynthState:
     """Centralized store for synthesizer state including values and waveforms."""
     def __init__(self):
@@ -160,6 +219,9 @@ class Synthesizer:
         self.monitor = components['monitor']
         self.midi_handler = components['midi_handler']
         
+        # Initialize envelope handler
+        self.envelope_handler = EnvelopeHandler(self.state, self.synth)
+        
         # Set synthesizer reference in midi_handler
         self.midi_handler.synthesizer = self
         
@@ -281,14 +343,12 @@ class Synthesizer:
         """Update global filter with new parameter."""
         self.update_parameter(param_name, value, None)
 
-    def update_global_envelope(self, param_name, value):
-        """Update global envelope with new parameter."""
+    def update_envelope_param(self, param_name, value, channel=None):
+        """Update envelope parameter in state."""
         if not self.path_parser.has_envelope_paths:
-            return
-            
-        # Store the incoming parameter
+            return        
         if param_name is not None and value is not None:
-            self.state.store(param_name, value)
+            self.state.store(param_name, value, channel)  # Pass channel to store
         
         # Check store for all required envelope parameters
         envelope_params = {}
@@ -297,7 +357,7 @@ class Synthesizer:
         
         # Get required parameters
         for param in required_params:
-            value = self.state.get(param)
+            value = self.state.get(param)  # Always use global for now
             if value is None:
                 log(TAG_SYNTH, f"Missing required envelope parameter: {param}")
                 return
@@ -309,7 +369,7 @@ class Synthesizer:
                 
         # Get optional parameters
         for param in optional_params:
-            value = self.state.get(param)
+            value = self.state.get(param)  # Always use global for now
             if value is not None:
                 try:
                     envelope_params[param] = float(value)
@@ -363,14 +423,7 @@ class Synthesizer:
 
     # Voice Management Helpers (private)
     def _build_note_params(self, channel):
-        """Build note parameters from stored values.
-        
-        Args:
-            channel: Channel number to get channel-specific values
-            
-        Returns:
-            Dict of parameters for synthio.Note creation
-        """
+        """Build note parameters from stored values."""
         # Start with empty params
         params = {}
         
@@ -385,6 +438,10 @@ class Synthesizer:
             
         # Get all per-note parameters that synthio.Note accepts
         for name in self._param_updates.keys():
+            # Skip filter parameters - handled separately
+            if name.startswith('filter_'):
+                continue
+                
             # Start with global value
             value = self.state.get(name)
             
@@ -426,6 +483,7 @@ class Synthesizer:
             
         # Add filter if configured - get global values first, override with channel
         if self.path_parser.filter_type:
+            # Get filter values from store
             filter_freq = self.state.get('filter_frequency')
             filter_res = self.state.get('filter_resonance')
             
@@ -438,18 +496,23 @@ class Synthesizer:
                 if channel_res is not None:
                     filter_res = channel_res
                     
+            # Create filter if we have both values
             if filter_freq is not None and filter_res is not None:
                 try:
-                    filter = SynthioInterfaces.create_filter(
-                        self.synth,
-                        self.path_parser.filter_type,
-                        filter_freq,
-                        filter_res
+                    # Create BlockBiquad directly
+                    filter = synthio.BlockBiquad(
+                        mode=getattr(synthio.FilterMode, self.path_parser.filter_type.upper()),
+                        frequency=filter_freq,  # Pass frequency directly
+                        Q=filter_res           # Pass Q directly
                     )
-                    if filter:
-                        params['filter'] = filter
+                    params['filter'] = filter  # Add to note params
                 except Exception as e:
                     log(TAG_SYNTH, f"Failed to create filter: {str(e)}", is_error=True)
+                    
+        # Get note envelope if available
+        envelope = self.envelope_handler.get_note_envelope(channel)
+        if envelope is not None:
+            params['envelope'] = envelope
                     
         return params
 

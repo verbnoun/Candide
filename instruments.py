@@ -14,23 +14,26 @@ ring_waveform (and its loop points)
 import sys
 from logging import log, TAG_INST
 
-BASIC_PATHS = '''
+
+
+
+NOTE_PATHS = '''
 note/press/note_on
 note/release/note_off
 note/oscillator/frequency/note_number/note_on
 
-oscillator/waveform/sine/set
-
-filter/high_pass/resonance/0.1-2.0/cc71
-filter/high_pass/frequency/20-20000/cc70
-
-amplifier/envelope/attack_level/0.001-1/cc85
-amplifier/envelope/attack_time/0.001-0.5/cc73
-amplifier/envelope/decay_time/0.001-0.25/cc75
-amplifier/envelope/sustain_level/0.001-1/cc66
-amplifier/envelope/release_time/0.001-1/cc72
+note/amplifier/amplitude/0.001-1/pressure
 
 '''
+"""
+note/amplifier/amplitude/0.001-1/velocity/note_on
+note/oscillator/ring/frequency/bend/n1-1/pitch_bend
+note/oscillator/frequency/bend/n1-1/pitch_bend
+
+
+note/amplifier/amplitude/0.001-1/pressure
+amplifier/amplitude/0.001-1/cc24
+"""
 
 OSCILLATOR_PATHS = '''
 note/press/note_on
@@ -70,58 +73,6 @@ note/oscillator/ring/frequency/bend/n1-1/pitch_bend
 oscillator/ring/frequency/bend/n12-12/cc85
 oscillator/ring/frequency/bend/n2/set
 
-"""
-
-AMPLITUDE_PATHS = '''
-note/press/note_on
-note/release/note_off
-note/oscillator/frequency/note_number/note_on
-
-note/amplifier/amplitude/0.001-1/velocity/note_on
-
-oscillator/waveform/saw/set
-
-'''
-"""
-note/amplifier/amplitude/0.001-1/velocity/note_on
-amplifier/amplitude/0.001-1/cc24
-amplifier/amplitude/0.3/set
-"""
-
-BASIC_PATHS = '''
-note/press/note_on
-note/release/note_off
-note/oscillator/frequency/note_number/note_on
-
-oscillator/waveform/sine/set
-
-filter/high_pass/resonance/0.1-2.0/cc71
-filter/high_pass/frequency/20-20000/cc70
-
-amplifier/envelope/attack_level/0.001-1/cc85
-amplifier/envelope/attack_time/0.001-0.5/cc73
-amplifier/envelope/decay_time/0.001-0.25/cc75
-amplifier/envelope/sustain_level/0.001-1/cc66
-amplifier/envelope/release_time/0.001-1/cc72
-
-'''
-
-NOTE_PATHS = '''
-note/press/note_on
-note/release/note_off
-note/oscillator/frequency/note_number/note_on
-
-note/amplifier/amplitude/0.001-1/pressure
-
-'''
-"""
-note/amplifier/amplitude/0.001-1/velocity/note_on
-note/oscillator/ring/frequency/bend/n1-1/pitch_bend
-note/oscillator/frequency/bend/n1-1/pitch_bend
-
-
-note/amplifier/amplitude/0.001-1/pressure
-amplifier/amplitude/0.001-1/cc24
 """
 
 ENVELOPE_PATHS = '''
@@ -166,8 +117,43 @@ filter/band_pass/resonance/0.1-2.0/cc71
 filter/band_pass/frequency/20-20000/cc70
 """
 
+BASIC_PATHS = '''
+note/press/note_on
+note/release/note_off
+note/oscillator/frequency/note_number/note_on
+
+oscillator/waveform/saw/set
+
+filter/high_pass/resonance/0.1-2.0/cc71
+filter/high_pass/frequency/20-20000/cc70
 
 
+amplifier/envelope/attack_level/0.001-1/cc85
+amplifier/envelope/attack_time/0.001-0.5/cc73
+amplifier/envelope/decay_time/0.001-0.25/cc75
+amplifier/envelope/sustain_level/0.001-1/cc66
+amplifier/envelope/release_time/0.001-1/cc72
+
+'''
+"""
+
+
+"""
+AMPLIFIER_PATHS = '''
+note/press/note_on
+note/release/note_off
+note/oscillator/frequency/note_number/note_on
+
+note/amplifier/amplitude/0.001-1/velocity/note_on
+
+oscillator/waveform/saw/set
+
+'''
+"""
+note/amplifier/amplitude/0.001-1/velocity/note_on
+amplifier/amplitude/0.001-1/cc24
+amplifier/amplitude/0.3/set
+"""
 
 
 class InstrumentManager:
