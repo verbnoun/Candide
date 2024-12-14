@@ -112,10 +112,9 @@ class ConnectionManager:
         # Reset synth ready state on new detection
         self.synth_ready = False
         self.waiting_for_synth = False
-        # Request current instrument config
+        # Send current instrument config without resetting instrument
         if self.instrument_manager:
-            current = self.instrument_manager.current_instrument
-            self.instrument_manager.set_instrument(current)
+            self.send_config()
         
     def _handle_disconnection(self):
         log(TAG_CONNECT, "Base station disconnected (GP22 LOW)")

@@ -1,6 +1,5 @@
 """Synthesizer setup and initialization module."""
 
-
 from constants import SAMPLE_RATE, AUDIO_CHANNEL_COUNT
 from logging import log, TAG_SETUP
 from interfaces import SynthioInterfaces
@@ -18,7 +17,7 @@ class SynthesizerSetup:
         
     def initialize(self):
         """Initialize all synthesizer components."""
-        from synthesizer import SynthState, SynthMonitor
+        from synthesizer import SynthStore, SynthMonitor
         
         log(TAG_SETUP, "Initializing synthesizer components...")
         
@@ -26,7 +25,7 @@ class SynthesizerSetup:
             'synth': None,
             'voice_pool': VoicePool(5),
             'path_parser': PathParser(),
-            'state': SynthState(),
+            'state': SynthStore(),
             'monitor': SynthMonitor()
         }
         
@@ -47,7 +46,7 @@ class SynthesizerSetup:
         
         return synth_components
         
-    def setup_synthio(self, synth_state, store, path_parser):
+    def setup_synthio(self, state):
         """Initialize or update synthio synthesizer based on global settings."""
         try:
             log(TAG_SETUP, "Setting up synthio...")
@@ -58,44 +57,6 @@ class SynthesizerSetup:
                 'channel_count': AUDIO_CHANNEL_COUNT
             }
             log(TAG_SETUP, f"Base params: sample_rate={SAMPLE_RATE}, channel_count={AUDIO_CHANNEL_COUNT}")
-            
-            # Add waveform if available from store
-            waveform = store.get('waveform')
-            if waveform is not None:
-                log(TAG_SETUP, f"Found waveform in store: {type(waveform)}")
-                params['waveform'] = waveform
-                log(TAG_SETUP, "Using waveform from store")
-            else:
-                log(TAG_SETUP, "Using default synthio waveform")
-            
-            # Check for envelope parameters
-            envelope_params = {}
-            for param in ['attack_time', 'decay_time', 'release_time', 
-                        'attack_level', 'sustain_level']:
-                value = store.get(param)
-                if value is not None:
-                    try:
-                        envelope_params[param] = float(value)
-                        log(TAG_SETUP, f"Using envelope parameter {param}: {value}")
-                    except (TypeError, ValueError) as e:
-                        log(TAG_SETUP, f"Invalid envelope parameter {param}: {value}", is_error=True)
-                        continue
-            
-            # Create envelope if we have all parameters
-            if len(envelope_params) == 5:
-                try:
-                    log(TAG_SETUP, "Creating envelope with params:")
-                    for param, value in envelope_params.items():
-                        log(TAG_SETUP, f"  {param}: {value}")
-                    envelope = SynthioInterfaces.create_envelope(**envelope_params)
-                    params['envelope'] = envelope
-                    log(TAG_SETUP, "Created envelope for synth initialization")
-                except Exception as e:
-                    log(TAG_SETUP, f"Failed to create envelope: {str(e)}", is_error=True)
-            else:
-                missing = set(['attack_time', 'decay_time', 'release_time', 
-                            'attack_level', 'sustain_level']) - set(envelope_params.keys())
-                log(TAG_SETUP, f"Missing envelope parameters: {missing}")
             
             # Create synth with base parameters
             log(TAG_SETUP, "Creating synthesizer with params:")
@@ -140,13 +101,9 @@ class SynthesizerSetup:
             log(TAG_SETUP, "Sending startup values...")
             self.synthesizer.midi_handler.send_startup_values()
             
-            # 4. Create synthesizer with base parameters (now has startup values in store)
+            # 4. Create synthesizer with base parameters
             log(TAG_SETUP, "Creating new synthesizer instance...")
-            self.synthesizer.synth = self.setup_synthio(
-                self.synthesizer.state,
-                self.synthesizer.state,
-                self.synthesizer.path_parser
-            )
+            self.synthesizer.synth = self.setup_synthio(self.synthesizer.state)
             
             # 5. Setup MIDI handlers
             log(TAG_SETUP, "Setting up MIDI handlers...")

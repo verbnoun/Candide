@@ -231,7 +231,8 @@ class PathParser:
             
             action = {
                 'handler': parts[1],  # press_voice or release_voice
-                'scope': 'channel'
+                'scope': 'channel',
+                'use_channel': True  # Always use MIDI channel for voice handling
             }
             self.midi_mappings[midi_value].append(action)
             self.enabled_messages.add(midi_value)  # No conversion needed
@@ -285,7 +286,8 @@ class PathParser:
             action = {
                 'handler': handler,
                 'scope': scope,
-                'route': route
+                'route': route,
+                'use_channel': scope == 'channel'  # True for channel scope, False for synth scope
             }
             self.midi_mappings[midi_value].append(action)
             
@@ -295,12 +297,18 @@ class PathParser:
                 try:
                     # Create waveform buffer immediately
                     value = SynthioInterfaces.create_waveform(value_or_range)
-                    self.startup_values[handler] = value
+                    self.startup_values[handler] = {
+                        'value': value,
+                        'use_channel': scope == 'channel'  # True for channel scope, False for synth scope
+                    }
                 except Exception as e:
                     log(TAG_ROUTE, f"Failed to create waveform: {str(e)}", is_error=True)
                     raise
             else:
-                self.startup_values[handler] = value_or_range
+                self.startup_values[handler] = {
+                    'value': value_or_range,
+                    'use_channel': scope == 'channel'  # True for channel scope, False for synth scope
+                }
 
     def get_startup_values(self):
         """Get all startup values."""

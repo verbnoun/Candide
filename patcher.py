@@ -47,11 +47,14 @@ class MidiHandler:
             return
             
         log(TAG_PATCH, "Sending startup values...")
-        for handler, value in startup_values.items():
+        for handler, config in startup_values.items():
             try:
                 method = getattr(self.synthesizer, handler)
-                log(TAG_PATCH, f"Setting {handler} = {value}")
-                method(value)
+                value = config['value']
+                # Use channel 0 for synth scope (non-channel) values
+                channel = 1 if config['use_channel'] else 0
+                log(TAG_PATCH, f"Setting {handler} = {value} (channel {channel})")
+                method(value, channel)
             except Exception as e:
                 log(TAG_PATCH, f"Failed to send startup value: {str(e)}", is_error=True)
 
@@ -137,7 +140,9 @@ class MidiHandler:
         actions = self.path_parser.midi_mappings.get('note_on', [])
         for action in actions:
             if action['handler'] == 'press_voice':
-                self.synthesizer.press_voice(msg.note, msg.channel, note_values)
+                # Channel 0 means write to all channels
+                channel = msg.channel  # Already 0 if global channel
+                self.synthesizer.press_voice(msg.note, channel, note_values)
                 break
 
     def handle_note_off(self, msg):
@@ -163,7 +168,9 @@ class MidiHandler:
                         converted = action['route'].convert(value)
                         handler = getattr(self.synthesizer, action['handler'])
                         log(TAG_PATCH, f"{attr_name}={value} -> {action['handler']}={converted}")
-                        handler(converted, msg.channel)
+                        # Channel 0 or synth scope both mean write to all channels
+                        channel = 0 if msg.channel == 0 or not action['use_channel'] else msg.channel
+                        handler(converted, channel)
                     except Exception as e:
                         log(TAG_PATCH, f"Failed to handle {attr_name}: {str(e)}", is_error=True)
         
@@ -171,7 +178,9 @@ class MidiHandler:
         actions = self.path_parser.midi_mappings.get('note_off', [])
         for action in actions:
             if action['handler'] == 'release_voice':
-                self.synthesizer.release_voice(msg.note, msg.channel)
+                # Channel 0 means write to all channels
+                channel = msg.channel  # Already 0 if global channel
+                self.synthesizer.release_voice(msg.note, channel)
                 break
 
     def handle_cc(self, msg):
@@ -195,8 +204,8 @@ class MidiHandler:
                     # Get handler method from synthesizer
                     handler = getattr(self.synthesizer, action['handler'])
                     
-                    # Call handler with value and channel if scope is channel
-                    channel = msg.channel if action['scope'] == 'channel' else None
+                    # Channel 0 or synth scope both mean write to all channels
+                    channel = 0 if msg.channel == 0 or not action['use_channel'] else msg.channel
                     handler(value, channel)
                     
                 except Exception as e:
@@ -206,7 +215,7 @@ class MidiHandler:
         """Handle pitch bend message using routing table."""
         if 'pitch_bend' in self.path_parser.enabled_messages:
             # Use full 14-bit pitch bend value
-            midi_value = msg.bend  # Changed from pitch_bend to bend
+            midi_value = msg.bend
             
             # Get all actions for pitch_bend
             actions = self.path_parser.midi_mappings.get('pitch_bend', [])
@@ -223,8 +232,8 @@ class MidiHandler:
                     # Get handler method from synthesizer
                     handler = getattr(self.synthesizer, action['handler'])
                     
-                    # Call handler with value and channel if scope is channel
-                    channel = msg.channel if action['scope'] == 'channel' else None
+                    # Channel 0 or synth scope both mean write to all channels
+                    channel = 0 if msg.channel == 0 or not action['use_channel'] else msg.channel
                     handler(value, channel)
                     
                 except Exception as e:
@@ -232,9 +241,9 @@ class MidiHandler:
 
     def handle_pressure(self, msg):
         """Handle pressure message using routing table."""
-        if 'channel_pressure' in self.path_parser.enabled_messages:  # Changed from channelpressure
+        if 'channel_pressure' in self.path_parser.enabled_messages:
             # Get all actions for channel_pressure
-            actions = self.path_parser.midi_mappings.get('channel_pressure', [])  # Changed from channelpressure
+            actions = self.path_parser.midi_mappings.get('channel_pressure', [])
             
             # Execute each action
             for action in actions:
@@ -248,8 +257,8 @@ class MidiHandler:
                     # Get handler method from synthesizer
                     handler = getattr(self.synthesizer, action['handler'])
                     
-                    # Call handler with value and channel if scope is channel
-                    channel = msg.channel if action['scope'] == 'channel' else None
+                    # Channel 0 or synth scope both mean write to all channels
+                    channel = 0 if msg.channel == 0 or not action['use_channel'] else msg.channel
                     handler(value, channel)
                     
                 except Exception as e:
