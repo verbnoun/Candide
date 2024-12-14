@@ -10,20 +10,20 @@ channel/release_voice/note_off
 
 # Basic oscillator control
 synth/set_frequency/130.81-523.25/cc74
-synth/set_waveform/triangle/set
+synth/set_waveform/triangle
 '''
 """
 # Frequency control
 synth/set_frequency/130.81-523.25/cc74
-synth/set_frequency/220/set
+synth/set_frequency/220
 
 # Waveform control
-synth/set_waveform/saw/set
-synth/set_waveform/sine/set
-synth/set_waveform/triangle/set
-synth/set_waveform/square/set
-synth/set_waveform/noise/set
-synth/set_waveform/white_noise/set
+synth/set_waveform/saw
+synth/set_waveform/sine
+synth/set_waveform/triangle
+synth/set_waveform/square
+synth/set_waveform/noise
+synth/set_waveform/white_noise
 
 # Waveform morphing
 synth/set_waveform/sine-triangle-square-saw/cc72
@@ -31,28 +31,28 @@ synth/set_waveform/sine-triangle-square-saw/cc72
 # Bend control
 channel/set_bend/n1-1/pitch_bend
 synth/set_bend/n12-12/cc85
-synth/set_bend/n2/set
+synth/set_bend/n2
 
 # Ring modulation
 synth/set_ring_frequency/0.5-2000/cc76
-synth/set_ring_frequency/440/set
+synth/set_ring_frequency/440
 
-synth/set_ring_waveform/sine/set
+synth/set_ring_waveform/sine
 synth/set_ring_waveform/sine-triangle-square-saw/cc78
 
 channel/set_ring_bend/n1-1/pitch_bend
 synth/set_ring_bend/n12-12/cc85
-synth/set_ring_bend/n2/set
+synth/set_ring_bend/n2
 """
 
 ENVELOPE_PATHS = '''
 # Note handling
 channel/press_voice/note_on
 channel/release_voice/note_off
-channel/set_frequency/note_number/note_on
+channel/set_frequency/0-127/note_number
 
 # Basic waveform
-synth/set_waveform/sine/set
+synth/set_waveform/sine
 
 # Envelope control
 synth/set_envelope_param/attack_level/0.001-1/cc85
@@ -63,21 +63,21 @@ synth/set_envelope_param/release_time/0.001-1/cc72
 '''
 """
 # Set envelope values
-synth/set_envelope_param/attack_level/0.75/set
-synth/set_envelope_param/attack_time/0.1/set
-synth/set_envelope_param/decay_time/0.25/set
-synth/set_envelope_param/sustain_level/0.3/set
-synth/set_envelope_param/release_time/0.5/set
+synth/set_envelope_param/attack_level/0.75
+synth/set_envelope_param/attack_time/0.1
+synth/set_envelope_param/decay_time/0.25
+synth/set_envelope_param/sustain_level/0.3
+synth/set_envelope_param/release_time/0.5
 """
 
 FILTER_PATHS = '''
 # Note handling
 channel/press_voice/note_on
 channel/release_voice/note_off
-channel/set_frequency/note_number/note_on
+channel/set_frequency/0-127/note_number
 
 # Basic waveform
-synth/set_waveform/saw/set
+synth/set_waveform/saw
 
 # Filter control
 synth/set_synth_filter_notch_frequency/20-20000/cc70
@@ -99,7 +99,7 @@ NOTE_PATHS = '''
 # Note handling
 channel/press_voice/note_on
 channel/release_voice/note_off
-channel/set_frequency/note_number/note_on
+channel/set_frequency/0-127/note_number
 
 # Amplitude control
 channel/set_amplitude/0.001-1/pressure
@@ -119,29 +119,29 @@ AMPLIFIER_PATHS = '''
 # Note handling
 channel/press_voice/note_on
 channel/release_voice/note_off
-channel/set_frequency/note_number/note_on
+channel/set_frequency/0-127/note_number
 
 # Amplitude control
 channel/set_amplitude/0.001-1/velocity
 
 # Basic waveform
-synth/set_waveform/saw/set
+synth/set_waveform/saw
 '''
 """
 # Additional amplitude controls
 channel/set_amplitude/0.001-1/velocity
 synth/set_amplitude/0.001-1/cc24
-synth/set_amplitude/0.3/set
+synth/set_amplitude/0.3
 """
 
 BASIC_PATHS = '''
 # Note handling
 channel/press_voice/note_on
 channel/release_voice/note_off
-channel/set_frequency/note_number/note_on
+channel/set_frequency/0-127/note_number
 
 # Basic waveform
-synth/set_waveform/saw/set
+synth/set_waveform/saw
 
 # Filter control
 synth/set_synth_filter_high_pass_frequency/20-20000/cc70
