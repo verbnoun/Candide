@@ -352,3 +352,56 @@ class PathParser:
             
         # For actions without lookup, return input directly
         return input_value
+
+class PathDiscovery:
+    """Discovers CC configurations and other path information from new path format."""
+    
+    @staticmethod
+    def get_cc_configs(paths):
+        """Get all CC numbers and parameter names from paths.
+        
+        Args:
+            paths: String containing all path definitions
+            
+        Returns:
+            List of (cc_number, parameter_name) tuples
+        """
+        cc_configs = []
+        seen_ccs = set()
+        
+        for line in paths.strip().split('\n'):
+            if not line or line.startswith('#'):
+                continue
+                
+            parts = line.strip().split('/')
+            
+            # Check if last part is a CC number
+            if not parts[-1].startswith('cc'):
+                continue
+                
+            try:
+                cc_num = int(parts[-1][2:])  # Extract number after 'cc'
+                if cc_num in seen_ccs:
+                    continue
+                    
+                # Build parameter name from handler and param
+                param_name = None
+                if len(parts) >= 4:  # scope/handler/param/value/interface
+                    if parts[1] == 'update_global_filter':
+                        # synth/update_global_filter/notch/filter_frequency/20-20000/cc70
+                        param_name = f"{parts[2]}_{parts[3]}"  # e.g. notch_filter_frequency
+                    elif parts[1] in ['update_envelope_param', 'update_voice_parameter']:
+                        param_name = parts[2]  # e.g. frequency, attack_time
+                    elif parts[1] == 'update_ring_modulation':
+                        param_name = f"ring_{parts[2]}"  # e.g. ring_frequency
+                
+                if param_name:
+                    cc_configs.append((cc_num, param_name))
+                    seen_ccs.add(cc_num)
+                    log(TAG_ROUTE, f"Found CC mapping: cc{cc_num} -> {param_name}")
+                
+            except (ValueError, IndexError) as e:
+                log(TAG_ROUTE, f"Error parsing CC config line '{line}': {str(e)}", is_error=True)
+                continue
+                
+        return cc_configs

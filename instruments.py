@@ -1,154 +1,159 @@
-"""Instrument configuration management system defining synthesizer paths and parameter mappings.
-
-Updatable Note Properties from synthio docs:
-bend
-amplitude
-panning
-waveform (and its loop points)
-filter
-ring_frequency
-ring_bend
-ring_waveform (and its loop points)
-"""
+"""Instrument configuration management system defining synthesizer paths and parameter mappings."""
 
 import sys
 from logging import log, TAG_INST
 
-
 OSCILLATOR_PATHS = '''
-note/press/note_on
-note/release/note_off
+# Note handling
+channel/press_voice/note_on
+channel/release_voice/note_off
 
-oscillator/frequency/130.81-523.25/cc74
-
-oscillator/waveform/triangle/set
-
+# Basic oscillator control
+synth/set_frequency/130.81-523.25/cc74
+synth/set_waveform/triangle/set
 '''
 """
-oscillator/frequency/130.81-523.25/cc74
-oscillator/frequency/220/set
+# Frequency control
+synth/set_frequency/130.81-523.25/cc74
+synth/set_frequency/220/set
 
-oscillator/waveform/saw/set
-oscillator/waveform/sine/set
-oscillator/waveform/triangle/set
-oscillator/waveform/square/set
-oscillator/waveform/noise/set
-oscillator/waveform/white_noise/set
+# Waveform control
+synth/set_waveform/saw/set
+synth/set_waveform/sine/set
+synth/set_waveform/triangle/set
+synth/set_waveform/square/set
+synth/set_waveform/noise/set
+synth/set_waveform/white_noise/set
 
-oscillator/waveform/sine-triangle-square-saw/cc72
+# Waveform morphing
+synth/set_waveform/sine-triangle-square-saw/cc72
 
-note/oscillator/frequency/bend/n1-1/pitch_bend
-oscillator/frequency/bend/n12-12/cc85
-oscillator/frequency/bend/n2/set
+# Bend control
+channel/set_bend/n1-1/pitch_bend
+synth/set_bend/n12-12/cc85
+synth/set_bend/n2/set
 
-oscillator/ring/frequency/0.5-2000/cc76
-oscillator/ring/frequency/440/set
+# Ring modulation
+synth/set_ring_frequency/0.5-2000/cc76
+synth/set_ring_frequency/440/set
 
-oscillator/ring/waveform/sine/set
-oscillator/ring/waveform/sine-triangle-square-saw/cc78
+synth/set_ring_waveform/sine/set
+synth/set_ring_waveform/sine-triangle-square-saw/cc78
 
-note/oscillator/ring/frequency/bend/n1-1/pitch_bend
-oscillator/ring/frequency/bend/n12-12/cc85
-oscillator/ring/frequency/bend/n2/set
-
+channel/set_ring_bend/n1-1/pitch_bend
+synth/set_ring_bend/n12-12/cc85
+synth/set_ring_bend/n2/set
 """
 
 ENVELOPE_PATHS = '''
-note/press/note_on
-note/release/note_off
-note/oscillator/frequency/note_number/note_on
+# Note handling
+channel/press_voice/note_on
+channel/release_voice/note_off
+channel/set_frequency/note_number/note_on
 
-oscillator/waveform/sine/set
+# Basic waveform
+synth/set_waveform/sine/set
 
-amplifier/envelope/attack_level/0.001-1/cc85
-amplifier/envelope/attack_time/0.001-0.5/cc73
-amplifier/envelope/decay_time/0.001-0.25/cc75
-amplifier/envelope/sustain_level/0.001-1/cc66
-amplifier/envelope/release_time/0.001-1/cc72
-
+# Envelope control
+synth/set_envelope_param/attack_level/0.001-1/cc85
+synth/set_envelope_param/attack_time/0.001-0.5/cc73
+synth/set_envelope_param/decay_time/0.001-0.25/cc75
+synth/set_envelope_param/sustain_level/0.001-1/cc66
+synth/set_envelope_param/release_time/0.001-1/cc72
 '''
 """
-amplifier/envelope/attack_level/0.75/set
-amplifier/envelope/attack_time/0.1/set
-amplifier/envelope/decay_time/0.25/set
-amplifier/envelope/sustain_level/0.3/set
-amplifier/envelope/release_time/0.5/set
+# Set envelope values
+synth/set_envelope_param/attack_level/0.75/set
+synth/set_envelope_param/attack_time/0.1/set
+synth/set_envelope_param/decay_time/0.25/set
+synth/set_envelope_param/sustain_level/0.3/set
+synth/set_envelope_param/release_time/0.5/set
 """
 
 FILTER_PATHS = '''
-note/press/note_on
-note/release/note_off
-note/oscillator/frequency/note_number/note_on
+# Note handling
+channel/press_voice/note_on
+channel/release_voice/note_off
+channel/set_frequency/note_number/note_on
 
-oscillator/waveform/saw/set
+# Basic waveform
+synth/set_waveform/saw/set
 
-filter/notch/resonance/0.1-2.0/cc71
-filter/notch/frequency/20-20000/cc70
-
+# Filter control
+synth/set_synth_filter_notch_frequency/20-20000/cc70
+synth/set_synth_filter_notch_resonance/0.1-2.0/cc71
 '''
 """
-filter/low_pass/resonance/0.1-2.0/cc71
-filter/low_pass/frequency/20-20000/cc70
-filter/high_pass/resonance/0.1-2.0/cc71
-filter/high_pass/frequency/20-20000/cc70
-filter/band_pass/resonance/0.1-2.0/cc71
-filter/band_pass/frequency/20-20000/cc70
+# Filter types with explicit filter names
+synth/set_synth_filter_low_pass_frequency/20-20000/cc70
+synth/set_synth_filter_low_pass_resonance/0.1-2.0/cc71
+
+synth/set_synth_filter_high_pass_frequency/20-20000/cc70
+synth/set_synth_filter_high_pass_resonance/0.1-2.0/cc71
+
+synth/set_synth_filter_band_pass_frequency/20-20000/cc70
+synth/set_synth_filter_band_pass_resonance/0.1-2.0/cc71
 """
+
 NOTE_PATHS = '''
-note/press/note_on
-note/release/note_off
-note/oscillator/frequency/note_number/note_on
+# Note handling
+channel/press_voice/note_on
+channel/release_voice/note_off
+channel/set_frequency/note_number/note_on
 
-note/amplifier/amplitude/0.001-1/pressure
-
+# Amplitude control
+channel/set_amplitude/0.001-1/pressure
 '''
 """
-note/amplifier/amplitude/0.001-1/velocity/note_on
-note/oscillator/ring/frequency/bend/n1-1/pitch_bend
-note/oscillator/frequency/bend/n1-1/pitch_bend
+# Additional amplitude controls
+channel/set_amplitude/0.001-1/velocity
+channel/set_ring_bend/n1-1/pitch_bend
+channel/set_bend/n1-1/pitch_bend
 
-
-note/amplifier/amplitude/0.001-1/pressure
-amplifier/amplitude/0.001-1/cc24
+# Pressure and CC control
+channel/set_amplitude/0.001-1/pressure
+synth/set_amplitude/0.001-1/cc24
 """
 
 AMPLIFIER_PATHS = '''
-note/press/note_on
-note/release/note_off
-note/oscillator/frequency/note_number/note_on
+# Note handling
+channel/press_voice/note_on
+channel/release_voice/note_off
+channel/set_frequency/note_number/note_on
 
-note/amplifier/amplitude/0.001-1/velocity/note_on
+# Amplitude control
+channel/set_amplitude/0.001-1/velocity
 
-oscillator/waveform/saw/set
-
+# Basic waveform
+synth/set_waveform/saw/set
 '''
 """
-note/amplifier/amplitude/0.001-1/velocity/note_on
-amplifier/amplitude/0.001-1/cc24
-amplifier/amplitude/0.3/set
+# Additional amplitude controls
+channel/set_amplitude/0.001-1/velocity
+synth/set_amplitude/0.001-1/cc24
+synth/set_amplitude/0.3/set
 """
+
 BASIC_PATHS = '''
-note/press/note_on
-note/release/note_off
-note/oscillator/frequency/note_number/note_on
+# Note handling
+channel/press_voice/note_on
+channel/release_voice/note_off
+channel/set_frequency/note_number/note_on
 
-oscillator/waveform/saw/set
+# Basic waveform
+synth/set_waveform/saw/set
 
-filter/high_pass/resonance/0.1-2.0/cc71
-filter/high_pass/frequency/20-20000/cc70
+# Filter control
+synth/set_synth_filter_high_pass_frequency/20-20000/cc70
+synth/set_synth_filter_high_pass_resonance/0.1-2.0/cc71
 
-
-amplifier/envelope/attack_level/0.001-1/cc85
-amplifier/envelope/attack_time/0.001-0.5/cc73
-amplifier/envelope/decay_time/0.001-0.25/cc75
-amplifier/envelope/sustain_level/0.001-1/cc66
-amplifier/envelope/release_time/0.001-1/cc72
-
+# Envelope control
+synth/set_envelope_param/attack_level/0.001-1/cc85
+synth/set_envelope_param/attack_time/0.001-0.5/cc73
+synth/set_envelope_param/decay_time/0.001-0.25/cc75
+synth/set_envelope_param/sustain_level/0.001-1/cc66
+synth/set_envelope_param/release_time/0.001-1/cc72
 '''
-"""
-
-
-"""
 
 class InstrumentManager:
     def __init__(self):
@@ -210,53 +215,8 @@ class InstrumentManager:
             log(TAG_INST, "No paths found for current instrument", is_error=True)
             return []
             
-        cc_configs = []
-        seen_ccs = set()
-        
-        for line in paths.strip().split('\n'):
-            if not line:
-                continue
-                
-            parts = line.strip().split('/')
-            
-            # Check if last part is a CC number
-            if not parts[-1].startswith('cc'):
-                continue
-                
-            try:
-                cc_num = int(parts[-1][2:])  # Extract number after 'cc'
-                if cc_num in seen_ccs:
-                    continue
-                    
-                # Build parameter name based on path components
-                param_name = None
-                if parts[0] == 'filter':
-                    param_name = f"filter_{parts[2]}"  # e.g., filter_resonance
-                elif parts[0] == 'amplifier' and parts[1] == 'envelope':
-                    param_name = parts[2]  # e.g., attack_time
-                elif parts[0] == 'oscillator':
-                    if parts[1] == 'ring':
-                        param_name = f"ring_{parts[2]}"  # e.g., ring_frequency
-                    elif parts[1] == 'waveform':
-                        param_name = 'waveform'
-                    else:
-                        param_name = parts[1]  # e.g., frequency
-                elif parts[0] == 'amplifier':
-                    param_name = parts[1]  # e.g., amplitude
-                
-                if param_name:
-                    cc_configs.append((cc_num, param_name))
-                    seen_ccs.add(cc_num)
-                    log(TAG_INST, f"Found CC mapping: cc{cc_num} -> {param_name}")
-                
-            except (ValueError, IndexError) as e:
-                log(TAG_INST, f"Error parsing CC config line '{line}': {str(e)}", is_error=True)
-                continue
-                
-        if not cc_configs:
-            log(TAG_INST, "No CC configurations found in current instrument paths")
-            
-        return cc_configs
+        # Use PathDiscovery to get CC configs
+        return PathDiscovery.get_cc_configs(paths)
 
     def set_instrument(self, instrument_name):
         """Set current instrument and update components."""
@@ -295,11 +255,6 @@ class InstrumentManager:
         return self.instrument_order[next_index]
 
     def cleanup(self):
-        """Clean up component references."""
-        log(TAG_INST, "Cleaning up instrument manager")
-        self.connection_manager = None
-        self.synthesizer = None
-        self.setup = None
         """Clean up component references."""
         log(TAG_INST, "Cleaning up instrument manager")
         self.connection_manager = None

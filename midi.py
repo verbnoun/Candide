@@ -46,13 +46,13 @@ class MPEMessageCounter:
     def can_process_message(self, msg_type, channel):
         """Check if a message can be processed based on ratios"""
         # Note messages are always processed
-        if msg_type in ['noteon', 'noteoff']:
+        if msg_type in ['note_on', 'note_off']:
             return True
             
         # Map message type to ratio config and counter key
         ratio_map = {
-            'pitchbend': ('pitch_bend_ratio', 'pitch_bend'),
-            'channelpressure': ('pressure_ratio', 'pressure'),
+            'pitch_bend': ('pitch_bend_ratio', 'pitch_bend'),
+            'channel_pressure': ('pressure_ratio', 'pressure'),
             'cc': ('timbre_ratio', 'timbre')
         }
         
@@ -127,7 +127,7 @@ class MPEZone:
                 'active_notes': {},  # note_num: velocity
                 'pressure': 0,
                 'timbre': 64,  # CC 74
-                'pitch_bend': 8192  # 14-bit centered
+                'bend': 8192  # 14-bit centered
             }
             
     def get_physical_channel(self, member_channel):
@@ -153,12 +153,12 @@ class MPEZone:
         channel = msg.channel
         zone_name = 'lower' if self.is_lower_zone else 'upper'
         
-        if msg.type == 'noteon':
+        if msg.type == 'note_on':
             log(TAG_MIDI, f"MPE Note On: zone={zone_name} ch={channel} note={msg.note} vel={msg.velocity}")
             if channel in self.channel_states:
                 self.channel_states[channel]['active_notes'][msg.note] = msg.velocity
                 
-        elif msg.type == 'noteoff':
+        elif msg.type == 'note_off':
             log(TAG_MIDI, f"MPE Note Off: zone={zone_name} ch={channel} note={msg.note}")
             if channel in self.channel_states:
                 if msg.note in self.channel_states[channel]['active_notes']:
@@ -180,15 +180,15 @@ class MPEZone:
                     log(TAG_MIDI, f"        Filtered: {filtered['timbre']}")
                     log(TAG_MIDI, f"        Total: {stats['timbre'] + filtered['timbre']}")
                     
-        elif msg.type == 'channelpressure':
+        elif msg.type == 'channel_pressure':
             if channel in self.channel_states:
                 log(TAG_MIDI, f"MPE Pressure: zone={zone_name} ch={channel} pressure={msg.pressure}")
                 self.channel_states[channel]['pressure'] = msg.pressure
                 
-        elif msg.type == 'pitchbend':
+        elif msg.type == 'pitch_bend':
             if channel in self.channel_states:
-                log(TAG_MIDI, f"MPE Pitch Bend: zone={zone_name} ch={channel} value={msg.pitch_bend}")
-                self.channel_states[channel]['pitch_bend'] = msg.pitch_bend
+                log(TAG_MIDI, f"MPE Pitch Bend: zone={zone_name} ch={channel} value={msg.bend}")
+                self.channel_states[channel]['bend'] = msg.bend
                 
         elif msg.type == 'cc':
             if msg.control == MPE_TIMBRE_CC and channel in self.channel_states:
@@ -210,7 +210,7 @@ class MidiMessage:
         self.control = 0
         self.value = 0
         self.pressure = 0
-        self.pitch_bend = 8192
+        self.bend = 8192
 
     def _parse_message(self):
         """Parse MIDI message and set appropriate properties"""
@@ -218,11 +218,11 @@ class MidiMessage:
             if self.message_type == MIDI_NOTE_ON:
                 self.note = self.data[0]
                 self.velocity = self.data[1]
-                self.type = 'noteon' if self.velocity > 0 else 'noteoff'
+                self.type = 'note_on' if self.velocity > 0 else 'note_off'
                 log(TAG_MIDI, f"Created Note {self.type}: ch={self.channel} note={self.note} vel={self.velocity}")
                 
             elif self.message_type == MIDI_NOTE_OFF:
-                self.type = 'noteoff'
+                self.type = 'note_off'
                 self.note = self.data[0]
                 self.velocity = self.data[1]
                 log(TAG_MIDI, f"Created Note Off: ch={self.channel} note={self.note}")
@@ -234,14 +234,14 @@ class MidiMessage:
                 log(TAG_MIDI, f"Created CC: ch={self.channel} cc={self.control} val={self.value}")
                 
             elif self.message_type == MIDI_CHANNEL_PRESSURE:
-                self.type = 'channelpressure'
+                self.type = 'channel_pressure'
                 self.pressure = self.data[0]
                 log(TAG_MIDI, f"Created Channel Pressure: ch={self.channel} pressure={self.pressure}")
                 
             elif self.message_type == MIDI_PITCH_BEND:
-                self.type = 'pitchbend'
-                self.pitch_bend = (self.data[1] << 7) | self.data[0]
-                log(TAG_MIDI, f"Created Pitch Bend: ch={self.channel} value={self.pitch_bend}")
+                self.type = 'pitch_bend'
+                self.bend = (self.data[1] << 7) | self.data[0]
+                log(TAG_MIDI, f"Created Pitch Bend: ch={self.channel} value={self.bend}")
                 
         except Exception as e:
             log(TAG_MIDI, f"Error parsing MIDI message: {str(e)}", is_error=True)
@@ -280,9 +280,9 @@ class MidiParser:
         """Get message type from status byte for early filtering"""
         message_type = status_byte & 0xF0
         if message_type == MIDI_CHANNEL_PRESSURE:
-            return 'channelpressure'
+            return 'channel_pressure'
         elif message_type == MIDI_PITCH_BEND:
-            return 'pitchbend'
+            return 'pitch_bend'
         elif message_type == MIDI_CONTROL_CHANGE:
             return 'cc'
         return None
@@ -302,13 +302,13 @@ class MidiParser:
                 'timbre': 64
             }
             
-        if msg_type == 'channelpressure':
+        if msg_type == 'channel_pressure':
             delta = abs(data[0] - self.channel_states[channel]['pressure'])
             if delta < MPE_FILTER_CONFIG['pressure_threshold']:
                 return False
             self.channel_states[channel]['pressure'] = data[0]
             
-        elif msg_type == 'pitchbend':
+        elif msg_type == 'pitch_bend':
             # Compare 14-bit values without creating objects
             current = (self.channel_states[channel]['pitch_bend_msb'] << 7) | self.channel_states[channel]['pitch_bend_lsb']
             new = (data[1] << 7) | data[0]

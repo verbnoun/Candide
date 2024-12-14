@@ -173,11 +173,6 @@ class SynthMonitor:
 class Synthesizer:
     """Main synthesizer class coordinating sound generation."""
     
-    # Parameter name mappings
-    _param_mappings = {
-        'amplifier_amplitude': 'amplitude',  # Map our abstraction name to synthio name
-    }
-    
     # Parameter update functions using synthio vocabulary
     _param_updates = {
         # Direct synthio properties
@@ -192,9 +187,6 @@ class Synthesizer:
         'ring_waveform': lambda note, value: setattr(note, 'ring_waveform', value),
         'ring_waveform_loop_start': lambda note, value: setattr(note, 'ring_waveform_loop_start', value),
         'ring_waveform_loop_end': lambda note, value: setattr(note, 'ring_waveform_loop_end', value),
-        
-        # Our abstraction layer names - map to synthio properties
-        'amplifier_amplitude': lambda note, value: setattr(note, 'amplitude', value),
         
         # Filter logging (handled in filter block)
         'filter_frequency': lambda note, value: log(TAG_SYNTH, "Filter update handled by filter block"),
@@ -238,19 +230,9 @@ class Synthesizer:
         """Register a callback to be notified when synth is ready."""
         self.midi_handler.register_ready_callback(callback)
 
-    def update_parameter(self, param_name, value, channel=None):
-        """Update parameter on notes based on channel specification.
-        
-        Args:
-            param_name: Parameter to update
-            value: New value to set
-            channel: None for all notes, or specific channel number
-        """
-        # Map parameter name if needed
-        store_name = self._param_mappings.get(param_name, param_name)
-        
-        # Store value based on channel specification
-        self.state.store(store_name, value, channel)
+    def set_parameter(self, param_name, value, channel=None):
+        """Update parameter on notes based on channel specification."""
+        self.state.store(param_name, value, channel)
                 
         # Handling for filter parameters
         if param_name.startswith('filter_'):
@@ -318,73 +300,86 @@ class Synthesizer:
                     except Exception as e:
                         log(TAG_SYNTH, f"Failed to update {param_name} on channel {channel}: {str(e)}", is_error=True)
 
-    # Action Handlers (public interface)
-    def update_voice_parameter(self, param_name, value, channel):
-        """Update parameter on voice by channel."""
-        self.update_parameter(param_name, value, channel)
+    # Core Parameter Handlers
+    def set_frequency(self, value, channel=None):
+        """Set frequency value."""
+        self.set_parameter('frequency', value, channel)
 
-    def update_voice_waveform(self, waveform_buffer, channel):
-        """Update waveform for a specific voice."""
-        self.update_parameter('waveform', waveform_buffer, channel)
+    def set_amplitude(self, value, channel=None):
+        """Set amplitude value."""
+        self.set_parameter('amplitude', value, channel)
 
-    def update_global_waveform(self, waveform_buffer):
-        """Update global waveform with new buffer."""
-        self.update_parameter('waveform', waveform_buffer, None)
+    def set_bend(self, value, channel=None):
+        """Set bend value."""
+        self.set_parameter('bend', value, channel)
 
-    def update_amplifier_amplitude(self, target, value):
-        """Update global amplifier amplitude."""
-        self.update_parameter('amplifier_amplitude', value, None)
+    def set_panning(self, value, channel=None):
+        """Set panning value."""
+        self.set_parameter('panning', value, channel)
 
-    def update_ring_modulation(self, param_name, value):
-        """Update ring modulation parameters."""
-        self.update_parameter(param_name, value, None)
+    def set_waveform(self, value, channel=None):
+        """Set waveform value."""
+        self.set_parameter('waveform', value, channel)
 
-    def update_global_filter(self, param_name, value):
-        """Update global filter with new parameter."""
-        self.update_parameter(param_name, value, None)
+    def set_ring_frequency(self, value, channel=None):
+        """Set ring modulation frequency."""
+        self.set_parameter('ring_frequency', value, channel)
 
-    def update_envelope_param(self, param_name, value, channel=None):
-        """Update envelope parameter in state."""
+    def set_ring_bend(self, value, channel=None):
+        """Set ring modulation bend."""
+        self.set_parameter('ring_bend', value, channel)
+
+    def set_ring_waveform(self, value, channel=None):
+        """Set ring modulation waveform."""
+        self.set_parameter('ring_waveform', value, channel)
+
+    def set_synth_filter_low_pass_frequency(self, value, channel=None):
+        """Set low-pass filter frequency."""
+        self.path_parser.filter_type = 'low_pass'
+        self.set_parameter('filter_frequency', value, channel)
+
+    def set_synth_filter_low_pass_resonance(self, value, channel=None):
+        """Set low-pass filter resonance."""
+        self.path_parser.filter_type = 'low_pass'
+        self.set_parameter('filter_resonance', value, channel)
+
+    def set_synth_filter_high_pass_frequency(self, value, channel=None):
+        """Set high-pass filter frequency."""
+        self.path_parser.filter_type = 'high_pass'
+        self.set_parameter('filter_frequency', value, channel)
+
+    def set_synth_filter_high_pass_resonance(self, value, channel=None):
+        """Set high-pass filter resonance."""
+        self.path_parser.filter_type = 'high_pass'
+        self.set_parameter('filter_resonance', value, channel)
+
+    def set_synth_filter_band_pass_frequency(self, value, channel=None):
+        """Set band-pass filter frequency."""
+        self.path_parser.filter_type = 'band_pass'
+        self.set_parameter('filter_frequency', value, channel)
+
+    def set_synth_filter_band_pass_resonance(self, value, channel=None):
+        """Set band-pass filter resonance."""
+        self.path_parser.filter_type = 'band_pass'
+        self.set_parameter('filter_resonance', value, channel)
+
+    def set_synth_filter_notch_frequency(self, value, channel=None):
+        """Set notch filter frequency."""
+        self.path_parser.filter_type = 'notch'
+        self.set_parameter('filter_frequency', value, channel)
+
+    def set_synth_filter_notch_resonance(self, value, channel=None):
+        """Set notch filter resonance."""
+        self.path_parser.filter_type = 'notch'
+        self.set_parameter('filter_resonance', value, channel)
+
+    def set_envelope_param(self, param_name, value, channel=None):
+        """Set envelope parameter."""
         if not self.path_parser.has_envelope_paths:
-            return        
-        if param_name is not None and value is not None:
-            self.state.store(param_name, value, channel)  # Pass channel to store
-        
-        # Check store for all required envelope parameters
-        envelope_params = {}
-        required_params = ['attack_time', 'decay_time', 'release_time', 'attack_level']
-        optional_params = ['sustain_level']
-        
-        # Get required parameters
-        for param in required_params:
-            value = self.state.get(param)  # Always use global for now
-            if value is None:
-                log(TAG_SYNTH, f"Missing required envelope parameter: {param}")
-                return
-            try:
-                envelope_params[param] = float(value)
-            except (TypeError, ValueError) as e:
-                log(TAG_SYNTH, f"Invalid envelope parameter {param}: {value}", is_error=True)
-                return
-                
-        # Get optional parameters
-        for param in optional_params:
-            value = self.state.get(param)  # Always use global for now
-            if value is not None:
-                try:
-                    envelope_params[param] = float(value)
-                except (TypeError, ValueError) as e:
-                    log(TAG_SYNTH, f"Invalid envelope parameter {param}: {value}", is_error=True)
-        
-        # Create and apply envelope if we have all required parameters
-        try:
-            envelope = SynthioInterfaces.create_envelope(**envelope_params)
-            self.synth.envelope = envelope
-            log(TAG_SYNTH, "Successfully created and set envelope")
-        except Exception as e:
-            log(TAG_SYNTH, f"Error creating/setting envelope: {str(e)}", is_error=True)
+            return
+        self.envelope_handler.store_param(param_name, value, channel)
 
-    def press(self, note_number, channel, note_values):
+    def press_voice(self, note_number, channel, note_values):
         """Press note with given values."""
         voice = self.voice_pool.press_note(note_number, channel)
         if not voice:
@@ -408,7 +403,7 @@ class Synthesizer:
             log(TAG_SYNTH, f"Failed to create note: {str(e)}", is_error=True)
             self.voice_pool.release_note(note_number)
 
-    def release(self, note_number, channel, note_values=None):
+    def release_voice(self, note_number, channel, note_values=None):
         """Release note."""
         voice = self.voice_pool.get_voice_by_channel(channel)
         if voice and voice.note_number == note_number:
@@ -421,13 +416,11 @@ class Synthesizer:
             self.synth.release(voice.active_note)
             voice.active_note = None
 
-    # Voice Management Helpers (private)
     def _build_note_params(self, channel):
         """Build note parameters from stored values."""
-        # Start with empty params
         params = {}
         
-        # Always need frequency - get global first, override with channel
+        # Get frequency
         frequency = self.state.get('frequency')
         if channel is not None:
             channel_freq = self.state.get('frequency', channel)
@@ -436,58 +429,34 @@ class Synthesizer:
         if frequency is not None:
             params['frequency'] = frequency
             
-        # Get all per-note parameters that synthio.Note accepts
-        for name in self._param_updates.keys():
-            # Skip filter parameters - handled separately
-            if name.startswith('filter_'):
-                continue
-                
-            # Start with global value
+        # Get all note parameters
+        note_params = [
+            'amplitude', 'bend', 'panning',
+            'waveform', 'waveform_loop_start', 'waveform_loop_end',
+            'ring_frequency', 'ring_bend', 'ring_waveform',
+            'ring_waveform_loop_start', 'ring_waveform_loop_end'
+        ]
+        
+        for name in note_params:
             value = self.state.get(name)
-            
-            # Override with channel value if it exists
             if channel is not None:
                 channel_value = self.state.get(name, channel)
                 if channel_value is not None:
                     value = channel_value
-                    
-            # Add to params if we have a value
             if value is not None:
                 params[name] = value
                 
-        # Special handling for waveforms
-        if channel is not None:
-            # Check channel waveforms first
-            channel_waveform = self.state.get('waveform', channel)
-            if channel_waveform is not None:
-                params['waveform'] = channel_waveform
-                params['waveform_loop_end'] = len(channel_waveform)
-                
-            channel_ring_waveform = self.state.get('ring_waveform', channel)
-            if channel_ring_waveform is not None:
-                params['ring_waveform'] = channel_ring_waveform
-                params['ring_waveform_loop_end'] = len(channel_ring_waveform)
-                
-        # Fall back to global waveforms
-        if 'waveform' not in params:
-            waveform = self.state.get('waveform')
-            if waveform is not None:
-                params['waveform'] = waveform
-                params['waveform_loop_end'] = len(waveform)
+        # Handle waveform loop ends
+        if 'waveform' in params and 'waveform_loop_end' not in params:
+            params['waveform_loop_end'] = len(params['waveform'])
+        if 'ring_waveform' in params and 'ring_waveform_loop_end' not in params:
+            params['ring_waveform_loop_end'] = len(params['ring_waveform'])
             
-        if 'ring_waveform' not in params:
-            ring_waveform = self.state.get('ring_waveform')
-            if ring_waveform is not None:
-                params['ring_waveform'] = ring_waveform
-                params['ring_waveform_loop_end'] = len(ring_waveform)
-            
-        # Add filter if configured - get global values first, override with channel
+        # Add filter if configured
         if self.path_parser.filter_type:
-            # Get filter values from store
             filter_freq = self.state.get('filter_frequency')
             filter_res = self.state.get('filter_resonance')
             
-            # Override with channel values if they exist
             if channel is not None:
                 channel_freq = self.state.get('filter_frequency', channel)
                 channel_res = self.state.get('filter_resonance', channel)
@@ -496,16 +465,14 @@ class Synthesizer:
                 if channel_res is not None:
                     filter_res = channel_res
                     
-            # Create filter if we have both values
             if filter_freq is not None and filter_res is not None:
                 try:
-                    # Create BlockBiquad directly
                     filter = synthio.BlockBiquad(
                         mode=getattr(synthio.FilterMode, self.path_parser.filter_type.upper()),
-                        frequency=filter_freq,  # Pass frequency directly
-                        Q=filter_res           # Pass Q directly
+                        frequency=filter_freq,
+                        Q=filter_res
                     )
-                    params['filter'] = filter  # Add to note params
+                    params['filter'] = filter
                 except Exception as e:
                     log(TAG_SYNTH, f"Failed to create filter: {str(e)}", is_error=True)
                     
@@ -540,12 +507,10 @@ class Synthesizer:
             except Exception as e:
                 log(TAG_SYNTH, f"Failed to update voice filter: {str(e)}", is_error=True)
 
-    # State Management Helper (private)
     def store_value(self, name, value, channel=None):
         """Store a value in the state."""
         self.state.store(name, value, channel)
 
-    # Error Handling
     def _emergency_cleanup(self):
         """Perform emergency cleanup in case of critical errors."""
         log(TAG_SYNTH, "Performing emergency cleanup", is_error=True)
