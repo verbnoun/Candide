@@ -10,90 +10,6 @@ from patcher import MidiHandler
 from interfaces import SynthioInterfaces, FilterMode, Math, LFO
 from setup import SynthesizerSetup
 
-class EnvelopeHandler:
-    """Manages envelope parameters and creation."""
-    PARAMS = ['attack_time', 'decay_time', 'release_time', 
-              'attack_level', 'sustain_level']
-
-    def __init__(self, state, synth):
-        self.state = state
-        self.synth = synth
-
-    def store_param(self, param, value, channel=None):
-        """Store param in state and check for complete envelope."""
-        if param not in self.PARAMS:
-            log(TAG_SYNTH, f"Invalid envelope parameter: {param}", is_error=True)
-            return
-            
-        # Store the parameter
-        self.state.store(param, value, channel)
-        
-        # For global params, check if we have a complete set
-        if channel is None:
-            self._update_global_envelope()
-
-    def _update_global_envelope(self):
-        """Check store for complete parameter set and update synth envelope."""
-        params = {}
-        
-        # Check for all required parameters
-        for param in self.PARAMS:
-            value = self.state.get(param)  # Get from global store
-            if value is None:
-                # Missing a parameter, can't update yet
-                return
-            try:
-                params[param] = float(value)
-            except (TypeError, ValueError) as e:
-                log(TAG_SYNTH, f"Invalid envelope parameter {param}: {value}", is_error=True)
-                return
-                
-        # We have all parameters, create and set envelope
-        try:
-            if self.synth is not None:
-                envelope = SynthioInterfaces.create_envelope(**params)
-                self.synth.envelope = envelope
-                log(TAG_SYNTH, "Updated global envelope")
-        except Exception as e:
-            log(TAG_SYNTH, f"Error updating global envelope: {str(e)}", is_error=True)
-
-    def get_note_envelope(self, channel):
-        """Get envelope for note, using channel params with global fallback."""
-        if channel is None:
-            return None
-            
-        params = {}
-        has_channel_params = False
-        
-        # Try to get each parameter, falling back to global if needed
-        for param in self.PARAMS:
-            # First check channel-specific value
-            value = self.state.get(param, channel)
-            if value is None:
-                # Fall back to global value
-                value = self.state.get(param)
-                if value is None:
-                    # No value found, can't create envelope
-                    return None
-            else:
-                has_channel_params = True
-                
-            try:
-                params[param] = float(value)
-            except (TypeError, ValueError) as e:
-                log(TAG_SYNTH, f"Invalid envelope parameter {param}: {value}", is_error=True)
-                return None
-                
-        # Only create note envelope if we found at least one channel-specific param
-        if has_channel_params:
-            try:
-                return SynthioInterfaces.create_envelope(**params)
-            except Exception as e:
-                log(TAG_SYNTH, f"Error creating note envelope: {str(e)}", is_error=True)
-                return None
-                
-        return None
-
 class SynthState:
     """Centralized store for synthesizer state including values and waveforms."""
     def __init__(self):
@@ -193,6 +109,90 @@ class SynthMonitor:
             self.last_health_check = current_time
             return True
         return True
+    
+class EnvelopeHandler:
+    """Manages envelope parameters and creation."""
+    PARAMS = ['attack_time', 'decay_time', 'release_time', 
+              'attack_level', 'sustain_level']
+
+    def __init__(self, state, synth):
+        self.state = state
+        self.synth = synth
+
+    def store_param(self, param, value, channel=None):
+        """Store param in state and check for complete envelope."""
+        if param not in self.PARAMS:
+            log(TAG_SYNTH, f"Invalid envelope parameter: {param}", is_error=True)
+            return
+            
+        # Store the parameter
+        self.state.store(param, value, channel)
+        
+        # For global params, check if we have a complete set
+        if channel is None:
+            self._update_global_envelope()
+
+    def _update_global_envelope(self):
+        """Check store for complete parameter set and update synth envelope."""
+        params = {}
+        
+        # Check for all required parameters
+        for param in self.PARAMS:
+            value = self.state.get(param)  # Get from global store
+            if value is None:
+                # Missing a parameter, can't update yet
+                return
+            try:
+                params[param] = float(value)
+            except (TypeError, ValueError) as e:
+                log(TAG_SYNTH, f"Invalid envelope parameter {param}: {value}", is_error=True)
+                return
+                
+        # We have all parameters, create and set envelope
+        try:
+            if self.synth is not None:
+                envelope = SynthioInterfaces.create_envelope(**params)
+                self.synth.envelope = envelope
+                log(TAG_SYNTH, "Updated global envelope")
+        except Exception as e:
+            log(TAG_SYNTH, f"Error updating global envelope: {str(e)}", is_error=True)
+
+    def get_note_envelope(self, channel):
+        """Get envelope for note, using channel params with global fallback."""
+        if channel is None:
+            return None
+            
+        params = {}
+        has_channel_params = False
+        
+        # Try to get each parameter, falling back to global if needed
+        for param in self.PARAMS:
+            # First check channel-specific value
+            value = self.state.get(param, channel)
+            if value is None:
+                # Fall back to global value
+                value = self.state.get(param)
+                if value is None:
+                    # No value found, can't create envelope
+                    return None
+            else:
+                has_channel_params = True
+                
+            try:
+                params[param] = float(value)
+            except (TypeError, ValueError) as e:
+                log(TAG_SYNTH, f"Invalid envelope parameter {param}: {value}", is_error=True)
+                return None
+                
+        # Only create note envelope if we found at least one channel-specific param
+        if has_channel_params:
+            try:
+                return SynthioInterfaces.create_envelope(**params)
+            except Exception as e:
+                log(TAG_SYNTH, f"Error creating note envelope: {str(e)}", is_error=True)
+                return None
+                
+        return None
 
 class Synthesizer:
     """Main synthesizer class coordinating sound generation."""
@@ -427,10 +427,6 @@ class Synthesizer:
         if not voice:
             return
             
-        # Store bundled values to channel
-        for name, value in note_values.items():
-            self.state.store(name, value, channel)
-            
         # Build note parameters from stored values
         params = self._build_note_params(channel)
         
@@ -444,6 +440,10 @@ class Synthesizer:
         except Exception as e:
             log(TAG_SYNTH, f"Failed to create note: {str(e)}", is_error=True)
             self.voice_pool.release_note(note_number)
+        
+        # Store bundled values to channel
+        for name, value in note_values.items():
+            self.state.store(name, value, channel)
 
     def release_voice(self, note_number, channel, note_values=None):
         """Release note."""
@@ -526,35 +526,6 @@ class Synthesizer:
                     
         return params
 
-    def _update_voice_param(self, param_name, value, voice):
-        """Internal method to update voice parameter."""
-        if voice.active_note and hasattr(voice.active_note, param_name):
-            try:
-                setattr(voice.active_note, param_name, value)
-                log(TAG_SYNTH, f"Updated voice parameter {param_name} = {value}")
-            except Exception as e:
-                log(TAG_SYNTH, f"Failed to update voice parameter {param_name}: {str(e)}", is_error=True)
-
-    def _update_voice_filter(self, voice):
-        """Internal method to update voice filter."""
-        if self._current_filter_type and voice.active_note:
-            filter_freq = self.state.get('filter_frequency')
-            filter_res = self.state.get('filter_resonance')
-            
-            if filter_freq is not None and filter_res is not None:
-                try:
-                    filter = SynthioInterfaces.create_filter(
-                        self.synth,
-                        self._current_filter_type,
-                        filter_freq,
-                        filter_res
-                    )
-                    if filter:
-                        voice.active_note.filter = filter
-                        log(TAG_SYNTH, f"Updated filter for voice {voice.get_address()}")
-                except Exception as e:
-                    log(TAG_SYNTH, f"Failed to update voice filter: {str(e)}", is_error=True)
-
     def store_value(self, name, value, channel=None):
         """Store a value in the state."""
         self.state.store(name, value, channel)
@@ -590,13 +561,3 @@ class Synthesizer:
             
         except Exception as e:
             log(TAG_SYNTH, f"Error during emergency cleanup: {str(e)}", is_error=True)
-
-    def _update_math(self, name, value):
-        """Handle math operation updates."""
-        log(TAG_SYNTH, f"Math update: {name}={value}")
-        # TODO: Implement math operations
-
-    def _update_lfo(self, name, value):
-        """Handle LFO parameter updates."""
-        log(TAG_SYNTH, f"LFO update: {name}={value}")
-        # TODO: Implement LFO operations
