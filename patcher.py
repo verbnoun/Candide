@@ -40,41 +40,21 @@ class MidiHandler:
             log(TAG_PATCH, "Configuration complete - signaling ready")
             self.ready_callback()
 
-    def send_set_values(self):
-        """Send set values to targets."""
-        actions = self.path_parser.midi_mappings.get('set', [])
-        if not actions:
+    def send_startup_values(self):
+        """Send startup values to synthesizer."""
+        startup_values = self.path_parser.get_startup_values()
+        if not startup_values:
             return
             
-        log(TAG_PATCH, "Sending set values...")
-        for action in actions:
+        log(TAG_PATCH, "Sending startup values...")
+        for handler, value in startup_values.items():
             try:
                 # Get the handler method from synthesizer
-                handler = getattr(self.synthesizer, action['handler'])
-                
-                # Get value from lookup table
-                if 'lookup' in action:
-                    # For waveforms, use whole buffer
-                    if action.get('is_waveform'):
-                        value = action['lookup']
-                    # For numeric tables, use index 0
-                    else:
-                        value = action['lookup'][0]
-                else:
-                    value = None
-                
-                log(TAG_PATCH, f"Setting {action['target']} = {value}")
-                
-                # Special case for waveform updates which only take the buffer
-                if action['handler'] == 'update_global_waveform':
-                    handler(value)
-                else:
-                    # Only include channel if router says to
-                    channel = 0 if 'use_channel' in action else None
-                    handler(action['target'], value, channel)
-                        
+                method = getattr(self.synthesizer, handler)
+                log(TAG_PATCH, f"Setting {handler} = {value}")
+                method(value)
             except Exception as e:
-                log(TAG_PATCH, f"Failed to send set value: {str(e)}", is_error=True)
+                log(TAG_PATCH, f"Failed to send startup value: {str(e)}", is_error=True)
 
     def cleanup(self):
         """Clean up MIDI subscription."""
@@ -132,32 +112,12 @@ class MidiHandler:
         # Get all actions for note_on
         actions = self.path_parser.midi_mappings.get('note_on', [])
         
-        # Collect values defined by actions
-        note_values = {}
-        
-        # Process non-press actions first to collect values
+        # Process press_voice handler
         for action in actions:
-            if not 'action' in action:
-                # Get value from lookup table
-                if 'lookup' in action:
-                    # For waveforms, use whole buffer
-                    if action.get('is_waveform'):
-                        value = action['lookup']
-                    # For numeric tables, use input value
-                    else:
-                        input_value = msg.note if action['target'] == 'frequency' else msg.velocity
-                        value = action['lookup'][input_value]
-                else:
-                    value = None
-                note_values[action['target']] = value
-        
-        # Now handle press action with collected values
-        for action in actions:
-            if 'action' in action and action['action'] == 'press':
-                if action['handler'] == 'press':  # Changed from handle_press to press
-                    # Pass note number, channel, and any collected values
-                    self.synthesizer.press(note_number, msg.channel, note_values)
-                    break
+            if action['handler'] == 'press_voice':
+                # Call press_voice on synthesizer
+                self.synthesizer.press_voice(note_number, msg.channel, {})
+                break
 
     def handle_note_off(self, msg):
         """Handle note-off message using routing table."""
@@ -167,32 +127,12 @@ class MidiHandler:
         # Get all actions for note_off
         actions = self.path_parser.midi_mappings.get('note_off', [])
         
-        # Collect values defined by actions
-        note_values = {}
-        
-        # Process non-release actions first to collect values
+        # Process release_voice handler
         for action in actions:
-            if not 'action' in action:
-                # Get value from lookup table
-                if 'lookup' in action:
-                    # For waveforms, use whole buffer
-                    if action.get('is_waveform'):
-                        value = action['lookup']
-                    # For numeric tables, use input value
-                    else:
-                        input_value = msg.velocity if hasattr(msg, 'velocity') else 0
-                        value = action['lookup'][input_value]
-                else:
-                    value = None
-                note_values[action['target']] = value
-        
-        # Now handle release action with collected values
-        for action in actions:
-            if 'action' in action and action['action'] == 'release':
-                if action['handler'] == 'release':
-                    # Pass note number, channel, and any collected values
-                    self.synthesizer.release(note_number, msg.channel, note_values)
-                    break
+            if action['handler'] == 'release_voice':
+                # Call release_voice on synthesizer
+                self.synthesizer.release_voice(note_number, msg.channel)
+                break
 
     def handle_cc(self, msg):
         """Handle CC message using routing table."""
@@ -203,29 +143,24 @@ class MidiHandler:
             
             # Execute each action
             for action in actions:
-                # Get value from lookup table
-                if 'lookup' in action:
-                    # For waveforms, use whole buffer
-                    if action.get('is_waveform'):
-                        value = action['lookup']
-                    # For numeric tables, use input value
+                try:
+                    # Get value from route
+                    if 'route' in action:
+                        value = action['route'].convert(msg.value)
                     else:
-                        value = action['lookup'][msg.value]
-                else:
-                    value = None
+                        value = msg.value
+                        
+                    log(TAG_PATCH, f"CC{msg.control} -> {action['handler']} = {value}")
                     
-                log(TAG_PATCH, f"CC{msg.control} -> {action['target']} = {value}")
-                
-                # Route to appropriate handler
-                handler = getattr(self.synthesizer, action['handler'])
-                
-                # Special case for waveform updates which only take the buffer
-                if action['handler'] == 'update_global_waveform':
-                    handler(value)
-                else:
-                    # Only include channel if router says to
-                    channel = msg.channel if 'use_channel' in action else None
-                    handler(action['target'], value, channel)
+                    # Get handler method from synthesizer
+                    handler = getattr(self.synthesizer, action['handler'])
+                    
+                    # Call handler with value and channel if scope is channel
+                    channel = msg.channel if action['scope'] == 'channel' else None
+                    handler(value, channel)
+                    
+                except Exception as e:
+                    log(TAG_PATCH, f"Failed to handle CC: {str(e)}", is_error=True)
 
     def handle_pitch_bend(self, msg):
         """Handle pitch bend message using routing table."""
@@ -238,23 +173,22 @@ class MidiHandler:
             
             # Execute each action
             for action in actions:
-                # Get value from lookup table
-                if 'lookup' in action:
-                    # For waveforms, use whole buffer
-                    if action.get('is_waveform'):
-                        value = action['lookup']
-                    # For numeric tables, use input value
+                try:
+                    # Get value from route
+                    if 'route' in action:
+                        value = action['route'].convert(midi_value)
                     else:
-                        value = action['lookup'][midi_value]
-                else:
-                    value = None
-                
-                # Route to appropriate handler
-                handler = getattr(self.synthesizer, action['handler'])
-                
-                # Only include channel if router says to
-                channel = msg.channel if 'use_channel' in action else None
-                handler(action['target'], value, channel)
+                        value = midi_value
+                    
+                    # Get handler method from synthesizer
+                    handler = getattr(self.synthesizer, action['handler'])
+                    
+                    # Call handler with value and channel if scope is channel
+                    channel = msg.channel if action['scope'] == 'channel' else None
+                    handler(value, channel)
+                    
+                except Exception as e:
+                    log(TAG_PATCH, f"Failed to handle pitch bend: {str(e)}", is_error=True)
 
     def handle_pressure(self, msg):
         """Handle pressure message using routing table."""
@@ -264,20 +198,19 @@ class MidiHandler:
             
             # Execute each action
             for action in actions:
-                # Get value from lookup table
-                if 'lookup' in action:
-                    # For waveforms, use whole buffer
-                    if action.get('is_waveform'):
-                        value = action['lookup']
-                    # For numeric tables, use input value
+                try:
+                    # Get value from route
+                    if 'route' in action:
+                        value = action['route'].convert(msg.pressure)
                     else:
-                        value = action['lookup'][msg.pressure]
-                else:
-                    value = None
-                
-                # Route to appropriate handler
-                handler = getattr(self.synthesizer, action['handler'])
-                
-                # Only include channel if router says to
-                channel = msg.channel if 'use_channel' in action else None
-                handler(action['target'], value, channel)
+                        value = msg.pressure
+                    
+                    # Get handler method from synthesizer
+                    handler = getattr(self.synthesizer, action['handler'])
+                    
+                    # Call handler with value and channel if scope is channel
+                    channel = msg.channel if action['scope'] == 'channel' else None
+                    handler(value, channel)
+                    
+                except Exception as e:
+                    log(TAG_PATCH, f"Failed to handle pressure: {str(e)}", is_error=True)

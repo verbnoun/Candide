@@ -2,6 +2,7 @@
 
 import sys
 from logging import log, TAG_INST
+from router import PathParser
 
 OSCILLATOR_PATHS = '''
 # Note handling
@@ -215,8 +216,10 @@ class InstrumentManager:
             log(TAG_INST, "No paths found for current instrument", is_error=True)
             return []
             
-        # Use PathDiscovery to get CC configs
-        return PathDiscovery.get_cc_configs(paths)
+        # Create temporary PathParser to get CC configs
+        parser = PathParser()
+        parser.parse_paths(paths, config_name)
+        return parser.get_cc_configs()
 
     def set_instrument(self, instrument_name):
         """Set current instrument and update components."""

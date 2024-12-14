@@ -1,26 +1,9 @@
 """Parameter and path management module."""
 
-import synthio
 import array
 import math
 from logging import log, TAG_ROUTE
 from interfaces import SynthioInterfaces, WaveformMorph
-
-# Parameters that should stay as integers
-INTEGER_PARAMS = {
-    'note_number',      # MIDI note numbers are integers
-    'morph_position',   # Used as MIDI value (0-127) for waveform lookup
-    'ring_morph_position'  # Used as MIDI value (0-127) for waveform lookup
-}
-
-# Parameters that synthio handles per-note
-PER_NOTE_PARAMS = {
-    'bend', 'amplitude', 'panning', 'waveform',
-    'waveform_loop_start', 'waveform_loop_end',
-    'filter', 'ring_frequency', 'ring_bend',
-    'ring_waveform', 'ring_waveform_loop_start',
-    'ring_waveform_loop_end'
-}
 
 class Route:
     """Creates a route that maps MIDI values to parameter values."""
@@ -64,7 +47,7 @@ class Route:
     def _build_note_to_freq_lookup(self):
         """Build lookup table for MIDI note number to Hz conversion."""
         for i in range(128):
-            self.lookup_table[i] = synthio.midi_to_hz(i)
+            self.lookup_table[i] = SynthioInterfaces.midi_to_hz(i)
             
         log(TAG_ROUTE, "Note to Hz lookup table for {} (sample values):".format(self.name))
         log(TAG_ROUTE, "  0: {:.2f} Hz".format(self.lookup_table[0]))
@@ -134,20 +117,8 @@ class PathParser:
         # Core collections for parameter management
         self.midi_mappings = {}  # midi_value -> [action objects]
         self.startup_values = {}  # handler -> value
-        self.enabled_messages = set()
-        self.enabled_ccs = set()
-        
-        # Feature flags - only set when corresponding paths are found
-        self.has_envelope_paths = False
-        self.has_filter = False
-        self.has_ring_mod = False
-        self.has_waveform_sequence = False
-        self.has_ring_waveform_sequence = False
-        
-        # Path configurations - only set when found in paths
-        self.filter_type = None
-        self.waveform_sequence = None
-        self.ring_waveform_sequence = None
+        self.enabled_messages = set()  # Track which MIDI messages to subscribe to
+        self.enabled_ccs = set()      # Track which CC numbers to subscribe to
         
     def parse_paths(self, paths, config_name=None):
         """Parse instrument paths to extract parameters and mappings."""
@@ -204,18 +175,6 @@ class PathParser:
         self.startup_values.clear()
         self.enabled_messages.clear()
         self.enabled_ccs.clear()
-        
-        # Reset feature flags
-        self.has_envelope_paths = False
-        self.has_filter = False
-        self.has_ring_mod = False
-        self.has_waveform_sequence = False
-        self.has_ring_waveform_sequence = False
-        
-        # Reset path configurations
-        self.filter_type = None
-        self.waveform_sequence = None
-        self.ring_waveform_sequence = None
 
     def _parse_range(self, range_str):
         """Parse a range string, handling negative numbers with 'n' prefix."""
@@ -299,12 +258,6 @@ class PathParser:
                 if '-' in value_or_range and handler.endswith('waveform'):
                     waveform_sequence = value_or_range.split('-')
                     route = Route(handler, waveform_sequence=waveform_sequence)
-                    if handler == 'set_waveform':
-                        self.waveform_sequence = waveform_sequence
-                        self.has_waveform_sequence = True
-                    elif handler == 'set_ring_waveform':
-                        self.ring_waveform_sequence = waveform_sequence
-                        self.has_ring_waveform_sequence = True
                 else:
                     route = Route(handler, fixed_value=value_or_range)
                     
@@ -321,28 +274,16 @@ class PathParser:
             
         else:
             # Startup value path
-            if handler.startswith('set_synth_filter'):
-                self.has_filter = True
-                filter_parts = handler.split('_')
-                self.filter_type = '_'.join(filter_parts[3:-1])  # Extract filter type
-                
-            elif handler == 'set_envelope_param':
-                self.has_envelope_paths = True
-                
-            elif handler.startswith('set_ring'):
-                self.has_ring_mod = True
-                
-            # Store startup value
-            self.startup_values[handler] = value_or_range
-            
-            # Create waveform if needed
             if handler.endswith('waveform'):
                 try:
+                    # Create waveform buffer immediately
                     value = SynthioInterfaces.create_waveform(value_or_range)
                     self.startup_values[handler] = value
                 except Exception as e:
                     log(TAG_ROUTE, f"Failed to create waveform: {str(e)}", is_error=True)
                     raise
+            else:
+                self.startup_values[handler] = value_or_range
 
     def get_startup_values(self):
         """Get all startup values."""
@@ -351,3 +292,34 @@ class PathParser:
     def get_midi_mappings(self):
         """Get all MIDI mappings."""
         return self.midi_mappings.copy()
+
+    def get_cc_configs(self):
+        """Get all CC numbers and parameter names for connection manager."""
+        cc_configs = []
+        seen_ccs = set()
+        
+        # Look through MIDI mappings for CC actions
+        for midi_value, actions in self.midi_mappings.items():
+            if not midi_value.startswith('cc'):
+                continue
+                
+            try:
+                cc_num = int(midi_value[2:])  # Extract number after 'cc'
+                if cc_num in seen_ccs:
+                    continue
+                    
+                # Get first action's handler as parameter name
+                if actions:
+                    handler = actions[0]['handler']
+                    # Remove 'set_' prefix if present
+                    if handler.startswith('set_'):
+                        handler = handler[4:]
+                    cc_configs.append((cc_num, handler))
+                    seen_ccs.add(cc_num)
+                    log(TAG_ROUTE, f"Found CC mapping: cc{cc_num} -> {handler}")
+                
+            except (ValueError, IndexError) as e:
+                log(TAG_ROUTE, f"Error parsing CC config: {str(e)}", is_error=True)
+                continue
+                
+        return cc_configs

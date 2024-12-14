@@ -1,6 +1,5 @@
 """High-level synthesizer coordination module."""
 
-import synthio
 import sys
 import time
 from constants import SAMPLE_RATE, AUDIO_CHANNEL_COUNT
@@ -8,7 +7,7 @@ from logging import log, TAG_SYNTH
 from voices import VoicePool
 from router import PathParser
 from patcher import MidiHandler
-from interfaces import SynthioInterfaces
+from interfaces import SynthioInterfaces, FilterMode, Math, LFO
 from setup import SynthesizerSetup
 
 class EnvelopeHandler:
@@ -220,6 +219,9 @@ class Synthesizer:
         # Set synthesizer reference in setup for updates
         self.setup.set_synthesizer(self)
         
+        # Initialize current filter type
+        self._current_filter_type = None
+        
         log(TAG_SYNTH, "Synthesizer initialized")
 
     def cleanup(self):
@@ -249,17 +251,16 @@ class Synthesizer:
                 if channel_res is not None:
                     filter_res = channel_res
                     
-            filter_type = self.path_parser.filter_type
-            
             # Only proceed if we have all required filter parameters
-            if filter_freq is not None and filter_res is not None and filter_type:
+            if filter_freq is not None and filter_res is not None:
                 def update_voice(voice):
                     if voice.active_note:
                         try:
                             # Create new filter for each voice
+                            # Note: filter_type is set by the specific handler (e.g. set_synth_filter_notch_frequency)
                             filter = SynthioInterfaces.create_filter(
                                 self.synth,
-                                filter_type,
+                                self._current_filter_type,  # Set by handler
                                 filter_freq,
                                 filter_res
                             )
@@ -333,50 +334,49 @@ class Synthesizer:
         """Set ring modulation waveform."""
         self.set_parameter('ring_waveform', value, channel)
 
+    # Filter handlers - each sets its own type
     def set_synth_filter_low_pass_frequency(self, value, channel=None):
         """Set low-pass filter frequency."""
-        self.path_parser.filter_type = 'low_pass'
+        self._current_filter_type = 'low_pass'
         self.set_parameter('filter_frequency', value, channel)
 
     def set_synth_filter_low_pass_resonance(self, value, channel=None):
         """Set low-pass filter resonance."""
-        self.path_parser.filter_type = 'low_pass'
+        self._current_filter_type = 'low_pass'
         self.set_parameter('filter_resonance', value, channel)
 
     def set_synth_filter_high_pass_frequency(self, value, channel=None):
         """Set high-pass filter frequency."""
-        self.path_parser.filter_type = 'high_pass'
+        self._current_filter_type = 'high_pass'
         self.set_parameter('filter_frequency', value, channel)
 
     def set_synth_filter_high_pass_resonance(self, value, channel=None):
         """Set high-pass filter resonance."""
-        self.path_parser.filter_type = 'high_pass'
+        self._current_filter_type = 'high_pass'
         self.set_parameter('filter_resonance', value, channel)
 
     def set_synth_filter_band_pass_frequency(self, value, channel=None):
         """Set band-pass filter frequency."""
-        self.path_parser.filter_type = 'band_pass'
+        self._current_filter_type = 'band_pass'
         self.set_parameter('filter_frequency', value, channel)
 
     def set_synth_filter_band_pass_resonance(self, value, channel=None):
         """Set band-pass filter resonance."""
-        self.path_parser.filter_type = 'band_pass'
+        self._current_filter_type = 'band_pass'
         self.set_parameter('filter_resonance', value, channel)
 
     def set_synth_filter_notch_frequency(self, value, channel=None):
         """Set notch filter frequency."""
-        self.path_parser.filter_type = 'notch'
+        self._current_filter_type = 'notch'
         self.set_parameter('filter_frequency', value, channel)
 
     def set_synth_filter_notch_resonance(self, value, channel=None):
         """Set notch filter resonance."""
-        self.path_parser.filter_type = 'notch'
+        self._current_filter_type = 'notch'
         self.set_parameter('filter_resonance', value, channel)
 
     def set_envelope_param(self, param_name, value, channel=None):
         """Set envelope parameter."""
-        if not self.path_parser.has_envelope_paths:
-            return
         self.envelope_handler.store_param(param_name, value, channel)
 
     def press_voice(self, note_number, channel, note_values):
@@ -452,30 +452,31 @@ class Synthesizer:
         if 'ring_waveform' in params and 'ring_waveform_loop_end' not in params:
             params['ring_waveform_loop_end'] = len(params['ring_waveform'])
             
-        # Add filter if configured
-        if self.path_parser.filter_type:
-            filter_freq = self.state.get('filter_frequency')
-            filter_res = self.state.get('filter_resonance')
-            
-            if channel is not None:
-                channel_freq = self.state.get('filter_frequency', channel)
-                channel_res = self.state.get('filter_resonance', channel)
-                if channel_freq is not None:
-                    filter_freq = channel_freq
-                if channel_res is not None:
-                    filter_res = channel_res
-                    
-            if filter_freq is not None and filter_res is not None:
-                try:
-                    filter = synthio.BlockBiquad(
-                        mode=getattr(synthio.FilterMode, self.path_parser.filter_type.upper()),
-                        frequency=filter_freq,
-                        Q=filter_res
-                    )
-                    params['filter'] = filter
-                except Exception as e:
-                    log(TAG_SYNTH, f"Failed to create filter: {str(e)}", is_error=True)
-                    
+        # Add filter if we have all parameters
+        filter_freq = self.state.get('filter_frequency')
+        filter_res = self.state.get('filter_resonance')
+        
+        if channel is not None:
+            channel_freq = self.state.get('filter_frequency', channel)
+            channel_res = self.state.get('filter_resonance', channel)
+            if channel_freq is not None:
+                filter_freq = channel_freq
+            if channel_res is not None:
+                filter_res = channel_res
+                
+        if filter_freq is not None and filter_res is not None and self._current_filter_type:
+            try:
+                # Use SynthioInterfaces to create filter
+                filter = SynthioInterfaces.create_filter(
+                    self.synth,
+                    self._current_filter_type,  # Use current filter type
+                    filter_freq,
+                    filter_res
+                )
+                params['filter'] = filter
+            except Exception as e:
+                log(TAG_SYNTH, f"Failed to create filter: {str(e)}", is_error=True)
+                
         # Get note envelope if available
         envelope = self.envelope_handler.get_note_envelope(channel)
         if envelope is not None:
@@ -494,18 +495,23 @@ class Synthesizer:
 
     def _update_voice_filter(self, voice):
         """Internal method to update voice filter."""
-        if voice.active_note:
-            try:
-                filter = SynthioInterfaces.create_filter(
-                    self.synth,
-                    self.path_parser.filter_type,
-                    self.state.get('filter_frequency'),
-                    self.state.get('filter_resonance')
-                )
-                if filter:
-                    voice.active_note.filter = filter
-            except Exception as e:
-                log(TAG_SYNTH, f"Failed to update voice filter: {str(e)}", is_error=True)
+        if self._current_filter_type and voice.active_note:
+            filter_freq = self.state.get('filter_frequency')
+            filter_res = self.state.get('filter_resonance')
+            
+            if filter_freq is not None and filter_res is not None:
+                try:
+                    filter = SynthioInterfaces.create_filter(
+                        self.synth,
+                        self._current_filter_type,
+                        filter_freq,
+                        filter_res
+                    )
+                    if filter:
+                        voice.active_note.filter = filter
+                        log(TAG_SYNTH, f"Updated filter for voice {voice.get_address()}")
+                except Exception as e:
+                    log(TAG_SYNTH, f"Failed to update voice filter: {str(e)}", is_error=True)
 
     def store_value(self, name, value, channel=None):
         """Store a value in the state."""
