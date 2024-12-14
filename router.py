@@ -5,6 +5,22 @@ import math
 from logging import log, TAG_ROUTE
 from interfaces import SynthioInterfaces, WaveformMorph
 
+# Parameters that should stay as integers
+INTEGER_PARAMS = {
+    'note_number',      # MIDI note numbers are integers
+    'morph_position',   # Used as MIDI value (0-127) for waveform lookup
+    'ring_morph_position'  # Used as MIDI value (0-127) for waveform lookup
+}
+
+# Parameters that synthio handles per-note
+PER_NOTE_PARAMS = {
+    'bend', 'amplitude', 'panning', 'waveform',
+    'waveform_loop_start', 'waveform_loop_end',
+    'filter', 'ring_frequency', 'ring_bend',
+    'ring_waveform', 'ring_waveform_loop_start',
+    'ring_waveform_loop_end'
+}
+
 class Route:
     """Creates a route that maps MIDI values to parameter values."""
     def __init__(self, name, min_val=None, max_val=None, fixed_value=None, is_integer=False, 
@@ -218,7 +234,7 @@ class PathParser:
                 'scope': 'channel'
             }
             self.midi_mappings[midi_value].append(action)
-            self.enabled_messages.add(midi_value.replace('_', ''))
+            self.enabled_messages.add(midi_value)  # No conversion needed
             return
             
         # Regular path handling
@@ -237,12 +253,12 @@ class PathParser:
                 self.enabled_ccs.add(cc_num)
                 midi_value = f"cc{cc_num}"
             elif midi_value == 'pitch_bend':
-                self.enabled_messages.add('pitchbend')
+                self.enabled_messages.add('pitch_bend')  # No conversion needed
             elif midi_value == 'pressure':
-                self.enabled_messages.add('channelpressure')
-                midi_value = 'channelpressure'
+                self.enabled_messages.add('channel_pressure')  # Match midi.py
+                midi_value = 'channel_pressure'  # Match midi.py
             elif midi_value == 'note_number':
-                self.enabled_messages.add('noteon')
+                self.enabled_messages.add('note_on')  # For note number tracking
                 
             # Create route for value conversion
             if '-' in value_or_range:

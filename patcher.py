@@ -23,7 +23,7 @@ class MidiHandler:
         log(TAG_PATCH, "Setting up MIDI handlers...")
             
         message_types = [msg_type for msg_type in 
-                        ('noteon', 'noteoff', 'cc', 'pitchbend', 'channelpressure')
+                        ('note_on', 'note_off', 'cc', 'pitch_bend', 'channel_pressure')
                         if msg_type in self.path_parser.enabled_messages]
             
         if not message_types:
@@ -49,7 +49,6 @@ class MidiHandler:
         log(TAG_PATCH, "Sending startup values...")
         for handler, value in startup_values.items():
             try:
-                # Get the handler method from synthesizer
                 method = getattr(self.synthesizer, handler)
                 log(TAG_PATCH, f"Setting {handler} = {value}")
                 method(value)
@@ -76,62 +75,100 @@ class MidiHandler:
     def handle_message(self, msg):
         """Log and route incoming MIDI messages."""
         # Log received MIDI message
-        if msg.type == 'noteon':
+        if msg.type == 'note_on':
             log(TAG_PATCH, "Received MIDI note-on: ch={} note={} vel={}".format(
                 msg.channel, msg.note, msg.velocity))
-        elif msg.type == 'noteoff':
+        elif msg.type == 'note_off':
             log(TAG_PATCH, "Received MIDI note-off: ch={} note={}".format(
                 msg.channel, msg.note))
         elif msg.type == 'cc':
             log(TAG_PATCH, "Received MIDI CC: ch={} cc={} val={}".format(
                 msg.channel, msg.control, msg.value))
-        elif msg.type == 'pitchbend':
+        elif msg.type == 'pitch_bend':
             log(TAG_PATCH, "Received MIDI pitch bend: ch={} val={}".format(
-                msg.channel, msg.pitch_bend))
-        elif msg.type == 'channelpressure':
+                msg.channel, msg.bend))
+        elif msg.type == 'channel_pressure':
             log(TAG_PATCH, "Received MIDI pressure: ch={} val={}".format(
-                msg.channel, msg.pressure))
+                msg.channel, msg.value))
 
         # Route message to appropriate handler
-        if msg.type == 'noteon' and msg.velocity > 0:
+        if msg.type == 'note_on' and msg.velocity > 0:
             self.handle_note_on(msg)
-        elif msg.type == 'noteoff' or (msg.type == 'noteon' and msg.velocity == 0):
+        elif msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0):
             self.handle_note_off(msg)
         elif msg.type == 'cc':
             self.handle_cc(msg)
-        elif msg.type == 'pitchbend':
+        elif msg.type == 'pitch_bend':
             self.handle_pitch_bend(msg)
-        elif msg.type == 'channelpressure':
+        elif msg.type == 'channel_pressure':
             self.handle_pressure(msg)
 
     def handle_note_on(self, msg):
         """Handle note-on message using routing table."""
-        note_number = msg.note
-        log(TAG_PATCH, "Targeting {}.{} with note-on".format(note_number, msg.channel))
+        # First handle any values in the message
+        for attr_name in dir(msg):
+            # Skip internal attributes
+            if attr_name.startswith('_'):
+                continue
+                
+            # Get the value
+            value = getattr(msg, attr_name)
+            
+            # Skip methods and non-data attributes
+            if callable(value) or attr_name in ('type', 'channel'):
+                continue
+                
+            # Check if this value has any routes
+            actions = self.path_parser.midi_mappings.get(attr_name, [])
+            for action in actions:
+                if 'route' in action:
+                    try:
+                        converted = action['route'].convert(value)
+                        handler = getattr(self.synthesizer, action['handler'])
+                        log(TAG_PATCH, f"{attr_name}={value} -> {action['handler']}={converted}")
+                        handler(converted, msg.channel)
+                    except Exception as e:
+                        log(TAG_PATCH, f"Failed to handle {attr_name}: {str(e)}", is_error=True)
         
-        # Get all actions for note_on
+        # Then handle note_on trigger (press_voice)
         actions = self.path_parser.midi_mappings.get('note_on', [])
-        
-        # Process press_voice handler
         for action in actions:
             if action['handler'] == 'press_voice':
-                # Call press_voice on synthesizer
-                self.synthesizer.press_voice(note_number, msg.channel, {})
+                self.synthesizer.press_voice(msg.note, msg.channel)
                 break
 
     def handle_note_off(self, msg):
         """Handle note-off message using routing table."""
-        note_number = msg.note
-        log(TAG_PATCH, "Targeting {}.{} with note-off".format(note_number, msg.channel))
+        # First handle any values in the message
+        for attr_name in dir(msg):
+            # Skip internal attributes
+            if attr_name.startswith('_'):
+                continue
+                
+            # Get the value
+            value = getattr(msg, attr_name)
+            
+            # Skip methods and non-data attributes
+            if callable(value) or attr_name in ('type', 'channel'):
+                continue
+                
+            # Check if this value has any routes
+            actions = self.path_parser.midi_mappings.get(attr_name, [])
+            for action in actions:
+                if 'route' in action:
+                    try:
+                        converted = action['route'].convert(value)
+                        handler = getattr(self.synthesizer, action['handler'])
+                        log(TAG_PATCH, f"{attr_name}={value} -> {action['handler']}={converted}")
+                        handler(converted, msg.channel)
+                    except Exception as e:
+                        log(TAG_PATCH, f"Failed to handle {attr_name}: {str(e)}", is_error=True)
         
-        # Get all actions for note_off
+        # Then handle note_off trigger (release_voice)
         actions = self.path_parser.midi_mappings.get('note_off', [])
-        
-        # Process release_voice handler
         for action in actions:
             if action['handler'] == 'release_voice':
-                # Call release_voice on synthesizer
-                self.synthesizer.release_voice(note_number, msg.channel)
+                self.synthesizer.release_voice(msg.note, msg.channel)
                 break
 
     def handle_cc(self, msg):
@@ -164,9 +201,9 @@ class MidiHandler:
 
     def handle_pitch_bend(self, msg):
         """Handle pitch bend message using routing table."""
-        if 'pitchbend' in self.path_parser.enabled_messages:
+        if 'pitch_bend' in self.path_parser.enabled_messages:
             # Use full 14-bit pitch bend value
-            midi_value = msg.pitch_bend
+            midi_value = msg.bend  # Changed from pitch_bend to bend
             
             # Get all actions for pitch_bend
             actions = self.path_parser.midi_mappings.get('pitch_bend', [])
@@ -192,9 +229,9 @@ class MidiHandler:
 
     def handle_pressure(self, msg):
         """Handle pressure message using routing table."""
-        if 'channelpressure' in self.path_parser.enabled_messages:
-            # Get all actions for channelpressure
-            actions = self.path_parser.midi_mappings.get('channelpressure', [])
+        if 'channel_pressure' in self.path_parser.enabled_messages:  # Changed from channelpressure
+            # Get all actions for channel_pressure
+            actions = self.path_parser.midi_mappings.get('channel_pressure', [])  # Changed from channelpressure
             
             # Execute each action
             for action in actions:
