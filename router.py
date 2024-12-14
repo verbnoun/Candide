@@ -240,11 +240,11 @@ class PathParser:
         # Regular path handling
         scope = parts[0]  # channel or synth
         handler = parts[1]  # set_frequency, set_waveform, etc.
-        value_or_range = parts[2]  # 130.81-523.25, triangle, etc.
+        value_or_range = parts[2]  # note_number, 130.81-523.25, triangle, etc.
         
         # Check if this is a MIDI control path (has 4 parts)
         if len(parts) == 4:
-            midi_value = parts[3]  # cc74, note_number, etc.
+            midi_value = parts[3]  # cc74, note, etc.
             
             # Handle CC numbers
             if midi_value.startswith('cc'):
@@ -257,8 +257,9 @@ class PathParser:
             elif midi_value == 'pressure':
                 self.enabled_messages.add('channel_pressure')  # Match midi.py
                 midi_value = 'channel_pressure'  # Match midi.py
-            elif midi_value == 'note_number':
+            elif midi_value == 'note':
                 self.enabled_messages.add('note_on')  # For note number tracking
+                midi_value = 'note'  # Use note as the trigger
                 
             # Create route for value conversion
             if '-' in value_or_range:

@@ -157,6 +157,12 @@ class SynthioInterfaces:
     _morphed_waveform_cache = {}
     
     @staticmethod
+    def midi_to_hz(note):
+        """Convert MIDI note number to frequency in Hz.
+        Uses synthio's built-in conversion."""
+        return synthio.midi_to_hz(note)
+    
+    @staticmethod
     def create_note(frequency, **kwargs):
         """Create a synthio note with the given parameters.
         

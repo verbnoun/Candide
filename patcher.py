@@ -105,7 +105,10 @@ class MidiHandler:
 
     def handle_note_on(self, msg):
         """Handle note-on message using routing table."""
-        # First handle any values in the message
+        # Collect note values from message attributes
+        note_values = {}
+        
+        # Process message attributes
         for attr_name in dir(msg):
             # Skip internal attributes
             if attr_name.startswith('_'):
@@ -115,7 +118,7 @@ class MidiHandler:
             value = getattr(msg, attr_name)
             
             # Skip methods and non-data attributes
-            if callable(value) or attr_name in ('type', 'channel'):
+            if callable(value) or attr_name in ('type', 'channel', 'note'):
                 continue
                 
             # Check if this value has any routes
@@ -124,17 +127,17 @@ class MidiHandler:
                 if 'route' in action:
                     try:
                         converted = action['route'].convert(value)
-                        handler = getattr(self.synthesizer, action['handler'])
+                        # Store converted value in note_values
+                        note_values[action['handler']] = converted
                         log(TAG_PATCH, f"{attr_name}={value} -> {action['handler']}={converted}")
-                        handler(converted, msg.channel)
                     except Exception as e:
                         log(TAG_PATCH, f"Failed to handle {attr_name}: {str(e)}", is_error=True)
         
-        # Then handle note_on trigger (press_voice)
+        # Handle note_on trigger (press_voice) with collected values
         actions = self.path_parser.midi_mappings.get('note_on', [])
         for action in actions:
             if action['handler'] == 'press_voice':
-                self.synthesizer.press_voice(msg.note, msg.channel)
+                self.synthesizer.press_voice(msg.note, msg.channel, note_values)
                 break
 
     def handle_note_off(self, msg):
