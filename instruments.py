@@ -18,11 +18,11 @@ synth/set_synth_filter_high_pass_frequency/20-20000/cc70
 synth/set_synth_filter_high_pass_resonance/0.1-2.0/cc71
 
 # Envelope control
-synth/set_envelope_param/attack_level/0.001-1/cc85
-synth/set_envelope_param/attack_time/0.001-0.5/cc73
-synth/set_envelope_param/decay_time/0.001-0.25/cc75
-synth/set_envelope_param/sustain_level/0.001-1/cc66
-synth/set_envelope_param/release_time/0.001-1/cc72
+synth/set_envelope_attack_level/0.001-1/cc85
+synth/set_envelope_attack_time/0.001-0.5/cc73
+synth/set_envelope_decay_time/0.001-0.25/cc75
+synth/set_envelope_sustain_level/0.001-1/cc66
+synth/set_envelope_release_time/0.001-1/cc72
 '''
 
 OSCILLATOR_PATHS = '''
@@ -77,19 +77,19 @@ channel/set_frequency/note_number/note
 synth/set_waveform/sine
 
 # Envelope control
-synth/set_envelope_param/attack_level/0.001-1/cc85
-synth/set_envelope_param/attack_time/0.001-0.5/cc73
-synth/set_envelope_param/decay_time/0.001-0.25/cc75
-synth/set_envelope_param/sustain_level/0.001-1/cc66
-synth/set_envelope_param/release_time/0.001-1/cc72
+synth/set_envelope_attack_level/0.001-1/cc85
+synth/set_envelope_attack_time/0.001-0.5/cc73
+synth/set_envelope_decay_time/0.001-0.25/cc75
+synth/set_envelope_sustain_level/0.001-1/cc66
+synth/set_envelope_release_time/0.001-1/cc72
 '''
 """
 # Set envelope values
-synth/set_envelope_param/attack_level/0.75
-synth/set_envelope_param/attack_time/0.1
-synth/set_envelope_param/decay_time/0.25
-synth/set_envelope_param/sustain_level/0.3
-synth/set_envelope_param/release_time/0.5
+synth/set_envelope_attack_level/0.75
+synth/set_envelope_attack_time/0.1
+synth/set_envelope_decay_time/0.25
+synth/set_envelope_sustain_level/0.3
+synth/set_envelope_release_time/0.5
 """
 
 FILTER_PATHS = '''
