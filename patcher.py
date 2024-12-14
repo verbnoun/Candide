@@ -154,7 +154,7 @@ class MidiHandler:
         # Now handle press action with collected values
         for action in actions:
             if 'action' in action and action['action'] == 'press':
-                if action['handler'] == 'handle_press':
+                if action['handler'] == 'press':  # Changed from handle_press to press
                     # Pass note number, channel, and any collected values
                     self.synthesizer.press(note_number, msg.channel, note_values)
                     break
@@ -180,7 +180,8 @@ class MidiHandler:
                         value = action['lookup']
                     # For numeric tables, use input value
                     else:
-                        value = action['lookup'][msg.velocity]
+                        input_value = msg.velocity if hasattr(msg, 'velocity') else 0
+                        value = action['lookup'][input_value]
                 else:
                     value = None
                 note_values[action['target']] = value
@@ -188,7 +189,7 @@ class MidiHandler:
         # Now handle release action with collected values
         for action in actions:
             if 'action' in action and action['action'] == 'release':
-                if action['handler'] == 'handle_release':
+                if action['handler'] == 'release':
                     # Pass note number, channel, and any collected values
                     self.synthesizer.release(note_number, msg.channel, note_values)
                     break

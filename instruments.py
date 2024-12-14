@@ -15,33 +15,11 @@ import sys
 from logging import log, TAG_INST
 
 
-
-
-NOTE_PATHS = '''
-note/press/note_on
-note/release/note_off
-note/oscillator/frequency/note_number/note_on
-
-note/amplifier/amplitude/0.001-1/pressure
-
-'''
-"""
-note/amplifier/amplitude/0.001-1/velocity/note_on
-note/oscillator/ring/frequency/bend/n1-1/pitch_bend
-note/oscillator/frequency/bend/n1-1/pitch_bend
-
-
-note/amplifier/amplitude/0.001-1/pressure
-amplifier/amplitude/0.001-1/cc24
-"""
-
 OSCILLATOR_PATHS = '''
 note/press/note_on
 note/release/note_off
 
 oscillator/frequency/130.81-523.25/cc74
-
-note/oscillator/frequency/bend/n1-1/pitch_bend
 
 oscillator/waveform/triangle/set
 
@@ -116,7 +94,39 @@ filter/high_pass/frequency/20-20000/cc70
 filter/band_pass/resonance/0.1-2.0/cc71
 filter/band_pass/frequency/20-20000/cc70
 """
+NOTE_PATHS = '''
+note/press/note_on
+note/release/note_off
+note/oscillator/frequency/note_number/note_on
 
+note/amplifier/amplitude/0.001-1/pressure
+
+'''
+"""
+note/amplifier/amplitude/0.001-1/velocity/note_on
+note/oscillator/ring/frequency/bend/n1-1/pitch_bend
+note/oscillator/frequency/bend/n1-1/pitch_bend
+
+
+note/amplifier/amplitude/0.001-1/pressure
+amplifier/amplitude/0.001-1/cc24
+"""
+
+AMPLIFIER_PATHS = '''
+note/press/note_on
+note/release/note_off
+note/oscillator/frequency/note_number/note_on
+
+note/amplifier/amplitude/0.001-1/velocity/note_on
+
+oscillator/waveform/saw/set
+
+'''
+"""
+note/amplifier/amplitude/0.001-1/velocity/note_on
+amplifier/amplitude/0.001-1/cc24
+amplifier/amplitude/0.3/set
+"""
 BASIC_PATHS = '''
 note/press/note_on
 note/release/note_off
@@ -139,22 +149,6 @@ amplifier/envelope/release_time/0.001-1/cc72
 
 
 """
-AMPLIFIER_PATHS = '''
-note/press/note_on
-note/release/note_off
-note/oscillator/frequency/note_number/note_on
-
-note/amplifier/amplitude/0.001-1/velocity/note_on
-
-oscillator/waveform/saw/set
-
-'''
-"""
-note/amplifier/amplitude/0.001-1/velocity/note_on
-amplifier/amplitude/0.001-1/cc24
-amplifier/amplitude/0.3/set
-"""
-
 
 class InstrumentManager:
     def __init__(self):
