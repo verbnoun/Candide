@@ -7,14 +7,12 @@ from constants import SAMPLE_RATE, AUDIO_CHANNEL_COUNT, STATIC_WAVEFORM_SAMPLES,
 from logging import log, TAG_IFACE
 
 class FilterMode:
-    """The type of filter, matching synthio.FilterMode."""
     LOW_PASS = synthio.FilterMode.LOW_PASS
     HIGH_PASS = synthio.FilterMode.HIGH_PASS
     BAND_PASS = synthio.FilterMode.BAND_PASS
     NOTCH = synthio.FilterMode.NOTCH
 
 class MathOperation:
-    """Operation for a Math block, matching synthio.MathOperation."""
     SUM = synthio.MathOperation.SUM
     ADD_SUB = synthio.MathOperation.ADD_SUB
     PRODUCT = synthio.MathOperation.PRODUCT
@@ -31,19 +29,15 @@ class MathOperation:
     ABS = synthio.MathOperation.ABS
 
 class Math:
-    """An arithmetic block matching synthio.Math."""
-    def __init__(self, operation, a=0.0, b=0.0, c=1.0):
-        """Initialize Math block with operation and values."""
-        self._math = synthio.Math(operation=operation, a=a, b=b, c=c)
+    def __init__(self, operation, a, **kwargs):
+        self._math = synthio.Math(operation=operation, a=a, **kwargs)
     
     @property
     def value(self):
-        """Current output value of the math block."""
         return self._math.value
     
     @property
     def a(self):
-        """First input value."""
         return self._math.a
     
     @a.setter
@@ -52,7 +46,6 @@ class Math:
     
     @property
     def b(self):
-        """Second input value."""
         return self._math.b
     
     @b.setter
@@ -61,7 +54,6 @@ class Math:
     
     @property
     def c(self):
-        """Third input value."""
         return self._math.c
     
     @c.setter
@@ -69,42 +61,26 @@ class Math:
         self._math.c = value
 
 class LFO:
-    """A low-frequency oscillator block matching synthio.LFO."""
-    def __init__(self, waveform=None, rate=1.0, scale=1.0, offset=0.0,
-                 phase_offset=0.0, once=False, interpolate=True):
-        """Initialize LFO with given parameters."""
-        self._lfo = synthio.LFO(
-            waveform=waveform,
-            rate=rate,
-            scale=scale,
-            offset=offset,
-            phase_offset=phase_offset,
-            once=once,
-            interpolate=interpolate
-        )
+    def __init__(self, **kwargs):
+        self._lfo = synthio.LFO(**kwargs)
     
     def retrigger(self):
-        """Reset the LFO's internal phase to the start."""
         self._lfo.retrigger()
     
     @property
     def phase(self):
-        """Current phase of the LFO (0.0 to 1.0)."""
         return self._lfo.phase
     
     @phase.setter
     def phase(self, value):
-        """Set the phase directly (0.0 to 1.0)."""
         self._lfo.phase = value
     
     @property
     def value(self):
-        """Current output value of the LFO."""
         return self._lfo.value
     
     @property
     def rate(self):
-        """Oscillation rate in Hz."""
         return self._lfo.rate
     
     @rate.setter
@@ -113,7 +89,6 @@ class LFO:
     
     @property
     def scale(self):
-        """Output amplitude scaling."""
         return self._lfo.scale
     
     @scale.setter
@@ -122,7 +97,6 @@ class LFO:
     
     @property
     def offset(self):
-        """DC offset added to output."""
         return self._lfo.offset
     
     @offset.setter
@@ -131,69 +105,39 @@ class LFO:
         
     @property
     def once(self):
-        """One-shot mode state."""
         return self._lfo.once
     
     @once.setter
     def once(self, value):
-        """Set one-shot mode."""
         self._lfo.once = value
         
     @property
     def interpolate(self):
-        """Sample interpolation state."""
         return self._lfo.interpolate
     
     @interpolate.setter
     def interpolate(self, value):
-        """Set sample interpolation state."""
         self._lfo.interpolate = value
 
 class SynthioInterfaces:
-    """Clean interfaces for all synthio operations."""
-    
-    # Cache for pre-computed waveforms
     _waveform_cache = {}
     _morphed_waveform_cache = {}
     
     @staticmethod
     def midi_to_hz(note):
-        """Convert MIDI note number to frequency in Hz.
-        Uses synthio's built-in conversion."""
         return synthio.midi_to_hz(note)
     
     @staticmethod
-    def create_note(frequency, **kwargs):
-        """Create a synthio note with the given parameters.
-        
-        Required:
-        - frequency: Note frequency in Hz
-        
-        Optional keyword arguments:
-        - amplitude: Note amplitude (0.0 to 1.0)
-        - panning: Stereo panning (-1.0 to 1.0)
-        - waveform: Waveform buffer
-        - waveform_loop_start: Start index for waveform loop
-        - waveform_loop_end: End index for waveform loop
-        - envelope: Envelope object
-        - filter: Filter object
-        - ring_frequency: Ring modulation frequency in Hz
-        - ring_waveform: Ring modulation waveform buffer
-        - ring_waveform_loop_start: Start index for ring waveform loop
-        - ring_waveform_loop_end: End index for ring waveform loop
-        - ring_bend: Ring modulation frequency bend
-        """
+    def create_note(**kwargs):
         try:
-            # Handle waveform loop end if waveform is provided
+            if 'frequency' not in kwargs:
+                raise ValueError("frequency is required")
+                
             if 'waveform' in kwargs and 'waveform_loop_end' not in kwargs:
                 kwargs['waveform_loop_end'] = len(kwargs['waveform'])
             
-            # Handle ring waveform loop end if ring waveform is provided
             if 'ring_waveform' in kwargs and 'ring_waveform_loop_end' not in kwargs:
                 kwargs['ring_waveform_loop_end'] = len(kwargs['ring_waveform'])
-
-            # Add required frequency parameter
-            kwargs['frequency'] = frequency
 
             note = synthio.Note(**kwargs)
             return note
@@ -203,23 +147,10 @@ class SynthioInterfaces:
 
     @staticmethod
     def create_envelope(**kwargs):
-        """Create a synthio envelope with the given parameters.
-        
-        Optional keyword arguments:
-        - attack_time: Attack time in seconds (float)
-        - decay_time: Decay time in seconds (float)
-        - release_time: Release time in seconds (float)
-        - attack_level: Attack peak level (float)
-        - sustain_level: Sustain level (float)
-        
-        All parameters are optional and will use synthio defaults if not provided.
-        Values must be floats if provided.
-        """
         try:
-            # Type check any provided parameters
             for param, value in kwargs.items():
                 if not isinstance(value, float):
-                    raise TypeError(f"Envelope parameter {param} must be float, got {type(value)}")
+                    raise TypeError(f"Envelope parameter {param} must be float")
             
             envelope = synthio.Envelope(**kwargs)
             return envelope
@@ -228,15 +159,10 @@ class SynthioInterfaces:
             raise
 
     @staticmethod
-    def create_filter(synth, filter_type, frequency, Q=0.7071067811865475):
-        """Create a synthio filter with the given parameters."""
+    def create_filter(filter_type, frequency, resonance):
         try:
-            # Create a dynamic filter using BlockBiquad
-            filter = synthio.BlockBiquad(
-                mode=getattr(FilterMode, filter_type.upper()),
-                frequency=frequency,
-                Q=Q
-            )
+            mode = getattr(FilterMode, filter_type.upper())
+            filter = synthio.BlockBiquad(mode=mode, frequency=frequency, Q=resonance)
             return filter
         except Exception as e:
             log(TAG_IFACE, f"Error creating filter: {str(e)}", is_error=True)
@@ -244,15 +170,13 @@ class SynthioInterfaces:
 
     @staticmethod
     def get_cached_waveform(waveform_type):
-        """Get or create a waveform from cache."""
         if waveform_type not in SynthioInterfaces._waveform_cache:
-            SynthioInterfaces._waveform_cache[waveform_type] = SynthioInterfaces.create_waveform(waveform_type)
+            SynthioInterfaces._waveform_cache[waveform_type] = SynthioInterfaces.create_waveform(waveform_type, STATIC_WAVEFORM_SAMPLES)
             log(TAG_IFACE, f"Created and cached {waveform_type} waveform")
         return SynthioInterfaces._waveform_cache[waveform_type]
 
     @staticmethod
-    def create_waveform(waveform_type, samples=STATIC_WAVEFORM_SAMPLES):
-        """Create a waveform buffer based on type."""
+    def create_waveform(waveform_type, samples):
         try:
             buffer = array.array('h')
             
@@ -289,7 +213,7 @@ class SynthioInterfaces:
                 prev = 0
                 for _ in range(samples):
                     curr = random.uniform(-32767, 32767)
-                    value = int((prev + curr) / 2)  # Simple 1-pole filter
+                    value = int((prev + curr) / 2)
                     buffer.append(value)
                     prev = curr
             else:
@@ -301,76 +225,35 @@ class SynthioInterfaces:
             raise
 
     @staticmethod
-    def create_synthesizer(sample_rate=SAMPLE_RATE, channel_count=AUDIO_CHANNEL_COUNT,
-                          waveform=None, envelope=None, **kwargs):
-        """Create a synthio synthesizer with the given parameters.
-        
-        Required:
-        - sample_rate: Audio sample rate (default from constants)
-        - channel_count: Number of audio channels (default from constants)
-        
-        Optional:
-        - waveform: Default waveform buffer
-        - envelope: Default envelope object
-        
-        Optional keyword arguments:
-        - bend_range: Pitch bend range in semitones
-        - midi_channel: MIDI channel (None for all channels)
-        - block_size: Audio block processing size
-        """
+    def create_synthesizer(**kwargs):
         try:
-            params = {
-                'sample_rate': sample_rate,
-                'channel_count': channel_count
-            }
-            
-            # Add optional parameters if provided
-            if waveform is not None:
-                params['waveform'] = waveform
-            if envelope is not None:
-                params['envelope'] = envelope
-                
-            # Add any additional keyword arguments
-            params.update(kwargs)
-            
-            synth = synthio.Synthesizer(**params)
+            synth = synthio.Synthesizer(**kwargs)
             return synth
         except Exception as e:
             log(TAG_IFACE, f"Error creating synthesizer: {str(e)}", is_error=True)
             raise
 
     @staticmethod
-    def create_morphed_waveform(morph_position, waveform_sequence=None):
-        """Create a morphed waveform based on position and sequence."""
-        if waveform_sequence is None:
-            waveform_sequence = ['sine', 'triangle', 'square', 'saw']
-        
+    def create_morphed_waveform(morph_position, waveform_sequence):
         try:
-            # Calculate which waveforms to blend between
             num_transitions = len(waveform_sequence) - 1
             if num_transitions == 0:
                 return SynthioInterfaces.get_cached_waveform(waveform_sequence[0])
                 
-            # Scale position to total number of transitions
             scaled_pos = morph_position * num_transitions
             transition_index = int(scaled_pos)
             
-            # Clamp to valid range
             if transition_index >= num_transitions:
                 return SynthioInterfaces.get_cached_waveform(waveform_sequence[-1])
             
-            # Get the two waveforms to blend
             waveform1 = SynthioInterfaces.get_cached_waveform(waveform_sequence[transition_index])
             waveform2 = SynthioInterfaces.get_cached_waveform(waveform_sequence[transition_index + 1])
             
-            # Calculate blend amount within this transition
             t = scaled_pos - transition_index
             
-            # Create morphed buffer
             samples = MORPHED_WAVEFORM_SAMPLES
             morphed = array.array('h')
             for i in range(samples):
-                # Scale indices for potentially different sample counts
                 idx1 = (i * len(waveform1)) // samples
                 idx2 = (i * len(waveform2)) // samples
                 value = int(waveform1[idx1] * (1-t) + waveform2[idx2] * t)
@@ -385,28 +268,19 @@ class SynthioInterfaces:
 
     @staticmethod
     def update_amplifier_amplitude(voice_pool, amplitude):
-        """Update global amplifier amplitude.
-        
-        Parameters:
-        - voice_pool: VoicePool instance to update base_amplitude
-        - amplitude: New amplitude value (0.001 to 1.0)
-        """
-        # Clamp amplitude to valid range
         amplitude = max(0.001, min(1.0, amplitude))
         voice_pool.base_amplitude = amplitude
         log(TAG_IFACE, f"Updated global amplifier amplitude: {amplitude}")
 
 class WaveformMorph:
-    """Handles pre-calculated morphed waveforms for MIDI control."""
-    def __init__(self, name, waveform_sequence=None):
+    def __init__(self, name, waveform_sequence):
         self.name = name
-        self.waveform_sequence = waveform_sequence or ['sine', 'triangle', 'square', 'saw']
-        self.lookup_table = []  # Will be 128 morphed waveforms
+        self.waveform_sequence = waveform_sequence
+        self.lookup_table = []
         self._build_lookup()
         log(TAG_IFACE, f"Created waveform morph: {name}")
         
     def _build_lookup(self):
-        """Build lookup table of 128 morphed waveforms for MIDI control."""
         cache_key = '-'.join(self.waveform_sequence)
         if cache_key in SynthioInterfaces._morphed_waveform_cache:
             self.lookup_table = SynthioInterfaces._morphed_waveform_cache[cache_key]
@@ -426,12 +300,10 @@ class WaveformMorph:
                 )
             )
             
-        # Cache the computed morph table
         SynthioInterfaces._morphed_waveform_cache[cache_key] = self.lookup_table
         log(TAG_IFACE, f"Cached morph table for {cache_key}")
     
     def get_waveform(self, midi_value):
-        """Get pre-calculated morphed waveform for MIDI value."""
         if not 0 <= midi_value <= 127:
             log(TAG_IFACE, f"Invalid MIDI value {midi_value}", is_error=True)
             raise ValueError(f"MIDI value must be between 0 and 127")

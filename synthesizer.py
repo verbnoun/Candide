@@ -11,40 +11,24 @@ from interfaces import SynthioInterfaces, FilterMode, Math, LFO
 from setup import SynthesizerSetup
 
 class SynthStore:
-    """Centralized store for synthesizer state including values and waveforms."""
     def __init__(self):
-        # Channel-specific values (1-15)
         self.per_channel_values = {i: {} for i in range(1, 16)}
         self.previous_channel = {i: {} for i in range(1, 16)}
         
     def store(self, name, value, channel):
-        """Store a value and keep track of previous.
-        
-        Args:
-            name: Parameter name
-            value: Value to store
-            channel: Channel number (1-15)
-        """
         if channel < 1 or channel > 15:
             log(TAG_SYNTH, f"Invalid channel {channel}", is_error=True)
             return
                 
-        if name in self.per_channel_values[channel]:
-            self.previous_channel[channel][name] = self.per_channel_values[channel][name]
-        self.per_channel_values[channel][name] = value
-        log(TAG_SYNTH, f"Stored channel {channel} value {name}={value}")
+        # Strip 'set_' from name for storage and logging
+        value_name = name[4:] if name.startswith('set_') else name
+                
+        if value_name in self.per_channel_values[channel]:
+            self.previous_channel[channel][value_name] = self.per_channel_values[channel][value_name]
+        self.per_channel_values[channel][value_name] = value
+        log(TAG_SYNTH, f"Stored channel {channel} value {value_name}={value}")
         
     def get(self, name, channel, default=None):
-        """Get a stored value.
-        
-        Args:
-            name: Parameter name
-            channel: Channel number (1-15)
-            default: Default value if not found
-            
-        Returns:
-            Stored value or default
-        """
         if channel < 1 or channel > 15:
             log(TAG_SYNTH, f"Invalid channel {channel}", is_error=True)
             return default
@@ -52,16 +36,6 @@ class SynthStore:
         return self.per_channel_values[channel].get(name, default)
         
     def get_previous(self, name, channel, default=None):
-        """Get previous value if it exists.
-        
-        Args:
-            name: Parameter name
-            channel: Channel number (1-15)
-            default: Default value if not found
-            
-        Returns:
-            Previous value or default
-        """
         if channel < 1 or channel > 15:
             log(TAG_SYNTH, f"Invalid channel {channel}", is_error=True)
             return default
@@ -69,13 +43,11 @@ class SynthStore:
         return self.previous_channel[channel].get(name, default)
         
     def clear(self):
-        """Clear all stored values."""
         for channel in range(1, 16):
             self.per_channel_values[channel].clear()
             self.previous_channel[channel].clear()
 
 class SynthMonitor:
-    """Handles health monitoring and error recovery."""
     def __init__(self, interval=5.0):
         self.last_health_check = time.monotonic()
         self.health_check_interval = interval
@@ -93,7 +65,6 @@ class SynthMonitor:
         return True
     
 class EnvelopeHandler:
-    """Manages envelope parameters and creation."""
     PARAMS = ['attack_time', 'decay_time', 'release_time', 
               'attack_level', 'sustain_level']
 
@@ -102,30 +73,25 @@ class EnvelopeHandler:
         self.synth = synth
 
     def store_param(self, param, value, channel):
-        """Store param in state."""
         if param not in self.PARAMS:
             log(TAG_SYNTH, f"Invalid envelope parameter: {param}", is_error=True)
             return
             
-        # Store the parameter
-        if channel == 0:  # Store in all channels
+        if channel == 0:
             for ch in range(1, 16):
                 self.state.store(param, value, ch)
         else:
             self.state.store(param, value, channel)
 
     def get_note_envelope(self, channel):
-        """Get envelope for note using channel params."""
         if channel < 1 or channel > 15:
             return None
             
         params = {}
         
-        # Get envelope parameters for this channel
         for param in self.PARAMS:
             value = self.state.get(param, channel)
             if value is None:
-                # Missing a required parameter
                 return None
                 
             try:
@@ -141,11 +107,7 @@ class EnvelopeHandler:
             return None
 
 class Synthesizer:
-    """Main synthesizer class coordinating sound generation."""
-    
-    # Parameter update functions using synthio vocabulary
     _param_updates = {
-        # Direct synthio properties
         'bend': lambda note, value: setattr(note, 'bend', value),
         'amplitude': lambda note, value: setattr(note, 'amplitude', value),
         'panning': lambda note, value: setattr(note, 'panning', value),
@@ -157,22 +119,16 @@ class Synthesizer:
         'ring_waveform': lambda note, value: setattr(note, 'ring_waveform', value),
         'ring_waveform_loop_start': lambda note, value: setattr(note, 'ring_waveform_loop_start', value),
         'ring_waveform_loop_end': lambda note, value: setattr(note, 'ring_waveform_loop_end', value),
-        
-        # Filter logging (handled in filter block)
         'filter_frequency': lambda note, value: log(TAG_SYNTH, "Filter update handled by filter block"),
         'filter_resonance': lambda note, value: log(TAG_SYNTH, "Filter update handled by filter block"),
-        
-        # Unsupported operation logging
         'oscillator_frequency': lambda note, value: log(TAG_SYNTH, "Note frequency cannot be updated during play"),
         'math_operation': lambda note, value: log(TAG_SYNTH, "Math operations not yet implemented"),
         'lfo_parameter': lambda note, value: log(TAG_SYNTH, "LFO operations not yet implemented")
     }
     
     def __init__(self, midi_interface, audio_system=None):
-        # Initialize setup
         self.setup = SynthesizerSetup(midi_interface, audio_system)
         
-        # Initialize components through setup
         components = self.setup.initialize()
         self.synth = components['synth']
         self.voice_pool = components['voice_pool']
@@ -181,31 +137,23 @@ class Synthesizer:
         self.monitor = components['monitor']
         self.midi_handler = components['midi_handler']
         
-        # Initialize envelope handler
         self.envelope_handler = EnvelopeHandler(self.state, self.synth)
         
-        # Set synthesizer reference in midi_handler
         self.midi_handler.synthesizer = self
         
-        # Set synthesizer reference in setup for updates
         self.setup.set_synthesizer(self)
         
-        # Initialize current filter type
         self._current_filter_type = None
         
         log(TAG_SYNTH, "Synthesizer initialized")
 
     def cleanup(self):
-        """Clean up resources."""
         self.setup.cleanup(self)
     
     def register_ready_callback(self, callback):
-        """Register a callback to be notified when synth is ready."""
         self.midi_handler.register_ready_callback(callback)
 
     def set_parameter(self, param_name, value, channel):
-        """Update parameter on notes based on channel specification."""
-        # Channel 0 means store in all channels
         if channel == 0:
             for ch in range(1, 16):
                 self.state.store(param_name, value, ch)
@@ -215,24 +163,18 @@ class Synthesizer:
             self._update_parameter(param_name, value, channel)
 
     def _update_parameter(self, param_name, value, channel):
-        """Update a parameter for a specific channel."""
-        # Handling for filter parameters
         if param_name.startswith('filter_'):
-            # Get channel values
             filter_freq = self.state.get('filter_frequency', channel)
             filter_res = self.state.get('filter_resonance', channel)
                     
-            # Only proceed if we have all required filter parameters
             if filter_freq is not None and filter_res is not None:
                 def update_voice(voice):
                     if voice.active_note:
                         try:
-                            # Create new filter for each voice
                             filter = SynthioInterfaces.create_filter(
-                                self.synth,
                                 self._current_filter_type,
                                 filter_freq,
-                                filter_res
+                                resonance=filter_res
                             )
                             if filter:
                                 voice.active_note.filter = filter
@@ -240,15 +182,12 @@ class Synthesizer:
                         except Exception as e:
                             log(TAG_SYNTH, f"Failed to update voice filter: {str(e)}", is_error=True)
                 
-                # Update filters for specific channel
                 voice = self.voice_pool.get_voice_by_channel(channel)
                 if voice:
                     update_voice(voice)
             return
         
-        # If parameter has an update function, apply to active notes
         if param_name in self._param_updates:
-            # Update specific channel
             voice = self.voice_pool.get_voice_by_channel(channel)
             if voice and voice.active_note:
                 try:
@@ -257,125 +196,94 @@ class Synthesizer:
                 except Exception as e:
                     log(TAG_SYNTH, f"Failed to update {param_name} on channel {channel}: {str(e)}", is_error=True)
 
-    # Core Parameter Handlers
     def set_frequency(self, value, channel):
-        """Set frequency value."""
-        self.set_parameter('frequency', value, channel)
+        self.set_parameter('set_frequency', value, channel)
 
     def set_amplitude(self, value, channel):
-        """Set amplitude value."""
-        self.set_parameter('amplitude', value, channel)
+        self.set_parameter('set_amplitude', value, channel)
 
     def set_bend(self, value, channel):
-        """Set bend value."""
-        self.set_parameter('bend', value, channel)
+        self.set_parameter('set_bend', value, channel)
 
     def set_panning(self, value, channel):
-        """Set panning value."""
-        self.set_parameter('panning', value, channel)
+        self.set_parameter('set_panning', value, channel)
 
     def set_waveform(self, value, channel):
-        """Set waveform value."""
-        self.set_parameter('waveform', value, channel)
+        self.set_parameter('set_waveform', value, channel)
 
     def set_ring_frequency(self, value, channel):
-        """Set ring modulation frequency."""
-        self.set_parameter('ring_frequency', value, channel)
+        self.set_parameter('set_ring_frequency', value, channel)
 
     def set_ring_bend(self, value, channel):
-        """Set ring modulation bend."""
-        self.set_parameter('ring_bend', value, channel)
+        self.set_parameter('set_ring_bend', value, channel)
 
     def set_ring_waveform(self, value, channel):
-        """Set ring modulation waveform."""
-        self.set_parameter('ring_waveform', value, channel)
+        self.set_parameter('set_ring_waveform', value, channel)
 
-    # Filter handlers - each sets its own type
     def set_synth_filter_low_pass_frequency(self, value, channel):
-        """Set low-pass filter frequency."""
         self._current_filter_type = 'low_pass'
         self.set_parameter('filter_frequency', value, channel)
 
     def set_synth_filter_low_pass_resonance(self, value, channel):
-        """Set low-pass filter resonance."""
         self._current_filter_type = 'low_pass'
         self.set_parameter('filter_resonance', value, channel)
 
     def set_synth_filter_high_pass_frequency(self, value, channel):
-        """Set high-pass filter frequency."""
         self._current_filter_type = 'high_pass'
         self.set_parameter('filter_frequency', value, channel)
 
     def set_synth_filter_high_pass_resonance(self, value, channel):
-        """Set high-pass filter resonance."""
         self._current_filter_type = 'high_pass'
         self.set_parameter('filter_resonance', value, channel)
 
     def set_synth_filter_band_pass_frequency(self, value, channel):
-        """Set band-pass filter frequency."""
         self._current_filter_type = 'band_pass'
         self.set_parameter('filter_frequency', value, channel)
 
     def set_synth_filter_band_pass_resonance(self, value, channel):
-        """Set band-pass filter resonance."""
         self._current_filter_type = 'band_pass'
         self.set_parameter('filter_resonance', value, channel)
 
     def set_synth_filter_notch_frequency(self, value, channel):
-        """Set notch filter frequency."""
         self._current_filter_type = 'notch'
         self.set_parameter('filter_frequency', value, channel)
 
     def set_synth_filter_notch_resonance(self, value, channel):
-        """Set notch filter resonance."""
         self._current_filter_type = 'notch'
         self.set_parameter('filter_resonance', value, channel)
 
-    # Envelope handlers - dedicated methods for each parameter
     def set_envelope_attack_level(self, value, channel):
-        """Set envelope attack level."""
         self.envelope_handler.store_param('attack_level', value, channel)
 
     def set_envelope_attack_time(self, value, channel):
-        """Set envelope attack time."""
         self.envelope_handler.store_param('attack_time', value, channel)
 
     def set_envelope_decay_time(self, value, channel):
-        """Set envelope decay time."""
         self.envelope_handler.store_param('decay_time', value, channel)
 
     def set_envelope_sustain_level(self, value, channel):
-        """Set envelope sustain level."""
         self.envelope_handler.store_param('sustain_level', value, channel)
 
     def set_envelope_release_time(self, value, channel):
-        """Set envelope release time."""
         self.envelope_handler.store_param('release_time', value, channel)
 
     def press_voice(self, note_number, channel, note_values):
-        """Press note with given values."""
-        # Convert channel 0 to channel 1 for voice allocation
         if channel == 0:
             channel = 1
             
-        # Store note values before creating note
         for name, value in note_values.items():
             self.state.store(name, value, channel)
             
-        # Get voice first
         voice = self.voice_pool.press_note(note_number, channel)
         if not voice:
             return
             
-        # Build note parameters from stored values
         params = self._build_note_params(channel)
         
         try:
-            # Create and press note
             note = SynthioInterfaces.create_note(**params)
             self.synth.press(note)
             voice.active_note = note
-            # Add amplitude to scaler after note is created
             self.voice_pool.add_note_amplitude(voice)
             log(TAG_SYNTH, f"Created note {note_number} on channel {channel}")
             
@@ -384,8 +292,6 @@ class Synthesizer:
             self.voice_pool.release_note(note_number)
 
     def release_voice(self, note_number, channel):
-        """Release note."""
-        # Convert channel 0 to channel 1 for voice lookup
         if channel == 0:
             channel = 1
             
@@ -401,19 +307,12 @@ class Synthesizer:
             voice.active_note = None
 
     def _build_note_params(self, channel):
-        """Build note parameters from stored values."""
         if channel < 1 or channel > 15:
             log(TAG_SYNTH, f"Invalid channel {channel}", is_error=True)
             return {}
             
         params = {}
         
-        # Get frequency
-        frequency = self.state.get('frequency', channel)
-        if frequency is not None:
-            params['frequency'] = frequency
-            
-        # Get all note parameters
         note_params = [
             'amplitude', 'bend', 'panning',
             'waveform', 'waveform_loop_start', 'waveform_loop_end',
@@ -421,35 +320,34 @@ class Synthesizer:
             'ring_waveform_loop_start', 'ring_waveform_loop_end'
         ]
         
+        frequency = self.state.get('frequency', channel)
+        if frequency is not None:
+            params['frequency'] = frequency
+            
         for name in note_params:
             value = self.state.get(name, channel)
             if value is not None:
                 params[name] = value
                 
-        # Handle waveform loop ends
         if 'waveform' in params and 'waveform_loop_end' not in params:
             params['waveform_loop_end'] = len(params['waveform'])
         if 'ring_waveform' in params and 'ring_waveform_loop_end' not in params:
             params['ring_waveform_loop_end'] = len(params['ring_waveform'])
             
-        # Add filter if we have all parameters
         filter_freq = self.state.get('filter_frequency', channel)
         filter_res = self.state.get('filter_resonance', channel)
                 
         if filter_freq is not None and filter_res is not None and self._current_filter_type:
             try:
-                # Use SynthioInterfaces to create filter
                 filter = SynthioInterfaces.create_filter(
-                    self.synth,
                     self._current_filter_type,
                     filter_freq,
-                    filter_res
+                    resonance=filter_res
                 )
                 params['filter'] = filter
             except Exception as e:
                 log(TAG_SYNTH, f"Failed to create filter: {str(e)}", is_error=True)
                 
-        # Get note envelope if available
         envelope = self.envelope_handler.get_note_envelope(channel)
         if envelope is not None:
             params['envelope'] = envelope
@@ -457,11 +355,9 @@ class Synthesizer:
         return params
 
     def store_value(self, name, value, channel):
-        """Store a value in the state."""
         self.set_parameter(name, value, channel)
 
     def _emergency_cleanup(self):
-        """Perform emergency cleanup in case of critical errors."""
         log(TAG_SYNTH, "Performing emergency cleanup", is_error=True)
         try:
             if self.voice_pool:

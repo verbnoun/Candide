@@ -8,7 +8,7 @@ BASIC_PATHS = '''
 # Note handling
 channel/press_voice/note_on
 channel/release_voice/note_off
-channel/set_frequency/note_number/note
+channel/set_frequency/note_number/note_on
 
 # Basic waveform
 synth/set_waveform/saw
@@ -71,7 +71,7 @@ ENVELOPE_PATHS = '''
 # Note handling
 channel/press_voice/note_on
 channel/release_voice/note_off
-channel/set_frequency/note_number/note
+channel/set_frequency/note_number/note_on
 
 # Basic waveform
 synth/set_waveform/sine
@@ -96,7 +96,7 @@ FILTER_PATHS = '''
 # Note handling
 channel/press_voice/note_on
 channel/release_voice/note_off
-channel/set_frequency/note_number/note
+channel/set_frequency/note_number/note_on
 
 # Basic waveform
 synth/set_waveform/saw
@@ -121,7 +121,7 @@ NOTE_PATHS = '''
 # Note handling
 channel/press_voice/note_on
 channel/release_voice/note_off
-channel/set_frequency/note_number/note
+channel/set_frequency/note_number/note_on
 
 # Amplitude control
 channel/set_amplitude/0.001-1/pressure
@@ -141,7 +141,7 @@ AMPLIFIER_PATHS = '''
 # Note handling
 channel/press_voice/note_on
 channel/release_voice/note_off
-channel/set_frequency/note_number/note
+channel/set_frequency/note_number/note_on
 
 # Amplitude control
 channel/set_amplitude/0.001-1/velocity

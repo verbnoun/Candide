@@ -111,7 +111,18 @@ class MidiHandler:
         # Collect note values from message attributes
         note_values = {}
         
-        # Process message attributes
+        # First handle note-specific values from note_on mapping
+        actions = self.path_parser.midi_mappings.get('note_on', [])
+        for action in actions:
+            if 'route' in action:
+                try:
+                    converted = action['route'].convert(msg.note)
+                    note_values[action['handler']] = converted
+                    log(TAG_PATCH, f"note={msg.note} -> {action['handler']}={converted}")
+                except Exception as e:
+                    log(TAG_PATCH, f"Failed to handle note value: {str(e)}", is_error=True)
+        
+        # Then process other message attributes
         for attr_name in dir(msg):
             # Skip internal attributes
             if attr_name.startswith('_'):
