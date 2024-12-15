@@ -4,6 +4,25 @@ import sys
 from logging import log, TAG_INST
 from router import PathParser
 
+AMPLIFIER_PATHS = '''
+# Note handling
+channel/press_voice/note_on
+channel/release_voice/note_off
+channel/set_frequency/note_number/note_on
+
+# Amplitude control
+channel/set_amplitude/0.001-1/velocity
+
+# Basic waveform
+synth/set_waveform/saw
+'''
+"""
+# Additional amplitude controls
+channel/set_amplitude/0.001-1/velocity
+synth/set_amplitude/0.001-1/cc24
+synth/set_amplitude/0.3
+"""
+
 BASIC_PATHS = '''
 # Note handling
 channel/press_voice/note_on
@@ -166,6 +185,7 @@ class InstrumentManager:
         self.connection_manager = None
         self.synthesizer = None
         self.setup = None
+        self.current_cc_config = None  # Cache for current CC config
         self._discover_instruments()
         log(TAG_INST, "Instrument manager initialized")
 
@@ -180,10 +200,12 @@ class InstrumentManager:
             self.setup = synthesizer.setup  # Store setup reference
             log(TAG_INST, "Registered synthesizer and setup")
             
-        # Register connection manager's callback with synthesizer
-        if self.synthesizer and self.connection_manager:
-            self.synthesizer.register_ready_callback(self.connection_manager.on_synth_ready)
-            log(TAG_INST, "Connected synth ready callback")
+            # Register ready callback to send new CC config when instrument changes
+            if self.connection_manager:
+                self.synthesizer.register_ready_callback(
+                    lambda: self.connection_manager.send_config()
+                )
+                log(TAG_INST, "Connected synth ready callback for CC config updates")
 
     def _discover_instruments(self):
         """Discover available instruments from module constants."""
@@ -211,17 +233,16 @@ class InstrumentManager:
             
         log(TAG_INST, f"Discovered instruments in order: {', '.join(self.instrument_order)}")
 
+    def _update_cc_config(self):
+        """Update cached CC configuration from current synth state."""
+        if self.synthesizer and self.synthesizer.path_parser:
+            self.current_cc_config = self.synthesizer.path_parser.get_cc_configs()
+        else:
+            self.current_cc_config = []
+
     def get_current_cc_configs(self):
-        """Get all CC numbers and parameter names for the current instrument."""
-        config_name, paths = self.instruments.get(self.current_instrument, (None, None))
-        if not paths:
-            log(TAG_INST, "No paths found for current instrument", is_error=True)
-            return []
-            
-        # Create temporary PathParser to get CC configs
-        parser = PathParser()
-        parser.parse_paths(paths, config_name)
-        return parser.get_cc_configs()
+        """Get cached CC configurations for the current instrument."""
+        return self.current_cc_config if self.current_cc_config is not None else []
 
     def set_instrument(self, instrument_name):
         """Set current instrument and update components."""
@@ -233,11 +254,12 @@ class InstrumentManager:
         self.current_instrument = instrument_name
         config_name, paths = self.instruments[instrument_name]
 
-        # Update synthesizer configuration through setup
+        # Update synthesizer configuration through setup first
         if self.setup:
             log(TAG_INST, "Updating synthesizer configuration")
             self.setup.update_instrument(paths, config_name)  # Use setup directly
-            # Synthesizer will signal ready to connection manager
+            # After synth is updated, get CC config from its parsed paths
+            self._update_cc_config()
             return True
             
         return False
@@ -265,3 +287,4 @@ class InstrumentManager:
         self.connection_manager = None
         self.synthesizer = None
         self.setup = None
+        self.current_cc_config = None

@@ -3,7 +3,7 @@
 import sys
 import time
 from constants import SAMPLE_RATE, AUDIO_CHANNEL_COUNT
-from logging import log, TAG_SYNTH
+from logging import log, TAG_SYNTH, format_value
 from voices import VoicePool
 from router import PathParser
 from patcher import MidiHandler
@@ -26,7 +26,10 @@ class SynthStore:
         if value_name in self.per_channel_values[channel]:
             self.previous_channel[channel][value_name] = self.per_channel_values[channel][value_name]
         self.per_channel_values[channel][value_name] = value
-        log(TAG_SYNTH, f"Stored channel {channel} value {value_name}={value}")
+        if value_name.endswith('waveform'):
+            log(TAG_SYNTH, f"Stored channel {channel} value {value_name}")
+        else:
+            log(TAG_SYNTH, f"Stored channel {channel} value {value_name}={format_value(value)}")
         
     def get(self, name, channel, default=None):
         if channel < 1 or channel > 15:
@@ -192,7 +195,10 @@ class Synthesizer:
             if voice and voice.active_note:
                 try:
                     self._param_updates[param_name](voice.active_note, value)
-                    log(TAG_SYNTH, f"Updated {param_name}={value} for channel {channel}")
+                    if not param_name.endswith('waveform'):
+                        log(TAG_SYNTH, f"Updated {param_name}={format_value(value)} for channel {channel}")
+                    else:
+                        log(TAG_SYNTH, f"Updated {param_name} for channel {channel}")
                 except Exception as e:
                     log(TAG_SYNTH, f"Failed to update {param_name} on channel {channel}: {str(e)}", is_error=True)
 

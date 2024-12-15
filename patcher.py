@@ -2,7 +2,7 @@
 
 import sys
 import array
-from logging import log, TAG_PATCH
+from logging import log, TAG_PATCH, format_value
 
 class MidiHandler:
     """Handles MIDI message processing, routing, and setup."""
@@ -53,7 +53,10 @@ class MidiHandler:
                 value = config['value']
                 # Use channel 0 for synth scope (non-channel) values
                 channel = 1 if config['use_channel'] else 0
-                log(TAG_PATCH, f"Setting {handler} = {value} (channel {channel})")
+                if handler.endswith('waveform'):
+                    log(TAG_PATCH, f"Setting {handler} (channel {channel})")
+                else:
+                    log(TAG_PATCH, f"Setting {handler} = {format_value(value)} (channel {channel})")
                 method(value, channel)
             except Exception as e:
                 log(TAG_PATCH, f"Failed to send startup value: {str(e)}", is_error=True)
@@ -118,7 +121,7 @@ class MidiHandler:
                 try:
                     converted = action['route'].convert(msg.note)
                     note_values[action['handler']] = converted
-                    log(TAG_PATCH, f"note={msg.note} -> {action['handler']}={converted}")
+                    log(TAG_PATCH, f"note={msg.note} -> {action['handler']}={format_value(converted)}")
                 except Exception as e:
                     log(TAG_PATCH, f"Failed to handle note value: {str(e)}", is_error=True)
         
@@ -143,7 +146,7 @@ class MidiHandler:
                         converted = action['route'].convert(value)
                         # Store converted value in note_values
                         note_values[action['handler']] = converted
-                        log(TAG_PATCH, f"{attr_name}={value} -> {action['handler']}={converted}")
+                        log(TAG_PATCH, f"{attr_name}={value} -> {action['handler']}={format_value(converted)}")
                     except Exception as e:
                         log(TAG_PATCH, f"Failed to handle {attr_name}: {str(e)}", is_error=True)
         
@@ -178,7 +181,7 @@ class MidiHandler:
                     try:
                         converted = action['route'].convert(value)
                         handler = getattr(self.synthesizer, action['handler'])
-                        log(TAG_PATCH, f"{attr_name}={value} -> {action['handler']}={converted}")
+                        log(TAG_PATCH, f"{attr_name}={value} -> {action['handler']}={format_value(converted)}")
                         # Channel 0 or synth scope both mean write to all channels
                         channel = 0 if msg.channel == 0 or not action['use_channel'] else msg.channel
                         handler(converted, channel)
@@ -210,7 +213,7 @@ class MidiHandler:
                     else:
                         value = msg.value
                         
-                    log(TAG_PATCH, f"CC{msg.control} -> {action['handler']} = {value}")
+                    log(TAG_PATCH, f"CC{msg.control} -> {action['handler']} = {format_value(value)}")
                     
                     # Get handler method from synthesizer
                     handler = getattr(self.synthesizer, action['handler'])

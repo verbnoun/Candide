@@ -25,17 +25,8 @@ class ConnectionManager:
         self.state = ConnectionState.STANDALONE
         self.last_heartbeat_time = 0
         self.last_detection_time = 0
-        self.synth_ready = False
-        self.waiting_for_synth = False
         
         log(TAG_CONNECT, "Candide connection manager initialized")
-
-    def on_synth_ready(self):
-        """Called when synthesizer is ready for MIDI messages."""
-        log(TAG_CONNECT, "Synthesizer signaled ready state")
-        self.synth_ready = True
-        self.waiting_for_synth = False
-        self.send_config()
 
     def update_state(self):
         is_detected = self.hardware.is_base_station_detected()  # Checks GP22
@@ -65,12 +56,6 @@ class ConnectionManager:
 
     def send_config(self):
         """Send CC configuration to Bartleby."""
-        if not self.synth_ready:
-            if not self.waiting_for_synth:
-                log(TAG_CONNECT, "Waiting for synthesizer to be ready before sending config")
-                self.waiting_for_synth = True
-            return False
-
         try:
             # Get CC configurations from instrument manager
             cc_configs = self.instrument_manager.get_current_cc_configs()
@@ -109,10 +94,7 @@ class ConnectionManager:
 
     def _handle_initial_detection(self):
         log(TAG_CONNECT, "[STATE] STANDALONE -> DETECTED: Base station detected (GP22 HIGH) - initializing connection")
-        # Reset synth ready state on new detection
-        self.synth_ready = False
-        self.waiting_for_synth = False
-        # Send current instrument config without resetting instrument
+        # Send current instrument config immediately
         if self.instrument_manager:
             self.send_config()
         
@@ -120,8 +102,6 @@ class ConnectionManager:
         log(TAG_CONNECT, "Base station disconnected (GP22 LOW)")
         self.state = ConnectionState.STANDALONE
         self.last_heartbeat_time = 0
-        self.synth_ready = False
-        self.waiting_for_synth = False
             
     def _send_heartbeat(self):
         try:

@@ -2,7 +2,7 @@
 
 import array
 import math
-from logging import log, TAG_ROUTE
+from logging import log, TAG_ROUTE, format_value
 from interfaces import SynthioInterfaces, WaveformMorph
 from constants import STATIC_WAVEFORM_SAMPLES
 
@@ -53,7 +53,7 @@ class Route:
         else:
             self.lookup_table = None
             if fixed_value is not None:
-                log(TAG_ROUTE, f"Created route: {name} [fixed: {fixed_value}]")
+                log(TAG_ROUTE, f"Created route: {name} [fixed: {format_value(fixed_value)}]")
             else:
                 log(TAG_ROUTE, f"Created route: {name} [pass through]")
     
@@ -83,13 +83,13 @@ class Route:
                 self.lookup_table[i] = int(value) if self.is_integer else value
             
         log(TAG_ROUTE, "Lookup table for {} (sample values):".format(self.name))
-        log(TAG_ROUTE, "  0: {}".format(self.lookup_table[0]))
+        log(TAG_ROUTE, "  0: {}".format(format_value(self.lookup_table[0])))
         if self.is_14_bit:
-            log(TAG_ROUTE, "  8192 (center): {}".format(self.lookup_table[8192]))
-            log(TAG_ROUTE, "  16383: {}".format(self.lookup_table[16383]))
+            log(TAG_ROUTE, "  8192 (center): {}".format(format_value(self.lookup_table[8192])))
+            log(TAG_ROUTE, "  16383: {}".format(format_value(self.lookup_table[16383])))
         else:
-            log(TAG_ROUTE, "  64: {}".format(self.lookup_table[64]))
-            log(TAG_ROUTE, "  127: {}".format(self.lookup_table[127]))
+            log(TAG_ROUTE, "  64: {}".format(format_value(self.lookup_table[64])))
+            log(TAG_ROUTE, "  127: {}".format(format_value(self.lookup_table[127])))
     
     def convert(self, midi_value):
         max_val = 16383 if self.is_14_bit else 127
@@ -152,12 +152,15 @@ class PathParser:
             for midi_value, actions in self.midi_mappings.items():
                 log(TAG_ROUTE, f"{midi_value} -> [")
                 for action in actions:
-                    log(TAG_ROUTE, f"  {action}")
+                    log(TAG_ROUTE, f"  {format_value(action)}")
                 log(TAG_ROUTE, "]")
                 
             log(TAG_ROUTE, "Startup Values:")
             for handler, value in self.startup_values.items():
-                log(TAG_ROUTE, f"{handler} -> {value}")
+                if handler.endswith('waveform'):
+                    log(TAG_ROUTE, f"{handler} -> Waveform configured")
+                else:
+                    log(TAG_ROUTE, f"{handler} -> {format_value(value)}")
                 
             log(TAG_ROUTE, f"Enabled messages: {self.enabled_messages}")
             if 'cc' in self.enabled_messages:

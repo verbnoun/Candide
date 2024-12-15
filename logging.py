@@ -1,6 +1,7 @@
 """Centralized logging system for Candide synthesizer."""
 
 import sys
+import array
 
 # ANSI Colors - Using bright variants for dark mode visibility, avoiding reds
 COLOR_WHITE = '\033[97m'        # Bright White for code.py
@@ -61,7 +62,7 @@ LOG_ENABLE = {
     TAG_HARD: False,
     TAG_INST: True,
     TAG_IFACE: True,
-    TAG_MIDI: True,
+    TAG_MIDI: False,
     TAG_MODU: False,
     TAG_PATCH: True,
     TAG_ROUTE: True,
@@ -73,6 +74,22 @@ LOG_ENABLE = {
 
 # Special debug flags
 HEARTBEAT_DEBUG = False
+
+def format_value(value):
+    """Format values for logging, with special handling for arrays."""
+    try:
+        # Handle CircuitPython array.array objects
+        if isinstance(value, array.array):
+            return "array('{}', [...])".format(value.typecode)
+        # Handle list-like objects    
+        elif hasattr(value, '__len__') and hasattr(value, '__getitem__'):
+            return '[...]'
+        # Handle dictionaries
+        elif isinstance(value, dict):
+            return {k: format_value(v) for k, v in value.items()}
+        return str(value)
+    except Exception:
+        return str(value)
 
 def log(tag, message, is_error=False, is_heartbeat=False):
     """
@@ -93,16 +110,16 @@ def log(tag, message, is_error=False, is_heartbeat=False):
         return
         
     if len(tag) != 7:
-        raise ValueError(f"Tag must be exactly 7 characters (spaces ok), got '{tag}' ({len(tag)})")
+        raise ValueError("Tag must be exactly 7 characters (spaces ok)")
         
     # Get module's color or default to white
     color = TAG_COLORS.get(tag, COLOR_WHITE)
     
     # Format the message
     if is_error:
-        print(f"{COLOR_ERROR}[{tag}] [ERROR] {message}{COLOR_RESET}", file=sys.stderr)
+        print("{}[{}] [ERROR] {}{}".format(COLOR_ERROR, tag, message, COLOR_RESET), file=sys.stderr)
     else:
-        print(f"{color}[{tag}] {message}{COLOR_RESET}", file=sys.stderr)
+        print("{}[{}] {}{}".format(color, tag, message, COLOR_RESET), file=sys.stderr)
 
 # Example usage:
 # from logging import log, TAG_CANDIDE

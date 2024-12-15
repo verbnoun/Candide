@@ -69,9 +69,7 @@ class Candide:
         log(TAG_CANDIDE, "Setting initial instrument...")
         # Get first available instrument
         initial_instrument = self.instrument_manager.get_available_instruments()[0]
-        # Register connection callback before setting instrument
-        self.synthesizer.register_ready_callback(self.connection_manager.on_synth_ready)
-        # Set initial instrument to trigger ready flow
+        # Set initial instrument - ready callback already registered through instrument manager
         self.instrument_manager.set_instrument(initial_instrument)
 
         try:
@@ -86,7 +84,7 @@ class Candide:
             log(TAG_CANDIDE, "Checking for base station...")
             if self.hardware_manager.is_base_station_detected():
                 self.connection_manager._handle_initial_detection()
-                # Give time for synth to become ready and config to be sent
+                # Give time for config to be sent
                 time.sleep(0.1)
                 self.connection_manager.update_state()
 
