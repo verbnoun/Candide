@@ -88,21 +88,17 @@ class SynthesizerSetup:
                 log(TAG_SETUP, f"Using config: {config_name}")
             self.synthesizer.path_parser.parse_paths(paths, config_name)
             
-            log(TAG_SETUP, "Sending startup values...")
-            self.synthesizer.midi_handler.send_startup_values()
-            
             log(TAG_SETUP, "Creating new synthesizer instance...")
             self.synthesizer.synth = self.setup_synthio(self.synthesizer.state)
             
             log(TAG_SETUP, "Setting up MIDI handlers...")
             self.synthesizer.midi_handler.setup_handlers()
             
+            log(TAG_SETUP, "Sending startup values...")
+            self.synthesizer.midi_handler.send_startup_values()
+            
             log(TAG_SETUP, "----------------------------------------")
             log(TAG_SETUP, "Instrument update complete")
-            
-            if self.synthesizer.midi_handler.ready_callback:
-                log(TAG_SETUP, "Signaling synth ready")
-                self.synthesizer.midi_handler.ready_callback()
             
         except Exception as e:
             log(TAG_SETUP, f"Failed to update instrument: {str(e)}", is_error=True)
