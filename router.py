@@ -279,7 +279,12 @@ class PathParser:
             elif midi_value == 'note_on':
                 self.enabled_messages.add('note_on')
                 
-            if '-' in value_or_range:
+            # Check for waveform morphing before attempting to parse as range
+            if handler.endswith('waveform') and '-' in value_or_range:
+                waveform_sequence = value_or_range.split('-')
+                route = Route(handler, waveform_sequence=waveform_sequence)
+                log(TAG_ROUTE, f"Created waveform morph route: {handler} [{value_or_range}]")
+            elif '-' in value_or_range:
                 min_val, max_val = self._parse_range(value_or_range)
                 is_14_bit = midi_value == 'pitch_bend'
                 route = Route(handler, min_val=min_val, max_val=max_val, 
@@ -288,11 +293,7 @@ class PathParser:
             elif value_or_range == 'note_number':
                 route = Route(handler, is_note_to_freq=True)
             else:
-                if '-' in value_or_range and handler.endswith('waveform'):
-                    waveform_sequence = value_or_range.split('-')
-                    route = Route(handler, waveform_sequence=waveform_sequence)
-                else:
-                    route = Route(handler, fixed_value=value_or_range)
+                route = Route(handler, fixed_value=value_or_range)
                     
             if midi_value not in self.midi_mappings:
                 self.midi_mappings[midi_value] = []

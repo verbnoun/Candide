@@ -213,7 +213,11 @@ class MidiHandler:
                     else:
                         value = msg.value
                         
-                    log(TAG_PATCH, f"CC{msg.control} -> {action['handler']} = {format_value(value)}")
+                    # Log in a more concise way for waveforms
+                    if action['handler'].endswith('waveform'):
+                        log(TAG_PATCH, f"CC{msg.control} -> {action['handler']} = wave[{msg.value}]")
+                    else:
+                        log(TAG_PATCH, f"CC{msg.control} -> {action['handler']} = {format_value(value)}")
                     
                     # Get handler method from synthesizer
                     handler = getattr(self.synthesizer, action['handler'])

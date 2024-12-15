@@ -159,7 +159,7 @@ class MPEZone:
                 self.channel_states[channel]['active_notes'][msg.note] = msg.velocity
                 
         elif msg.type == 'note_off':
-            log(TAG_MIDI, f"MPE Note Off: zone={zone_name} ch={channel} note={msg.note}")
+            log(TAG_MIDI, f"MPE Note Off: zone={zone_name} ch={channel} note={msg.note} release_vel={msg.release_velocity}")
             if channel in self.channel_states:
                 if msg.note in self.channel_states[channel]['active_notes']:
                     del self.channel_states[channel]['active_notes'][msg.note]
@@ -207,6 +207,7 @@ class MidiMessage:
         self.type = 'unknown'
         self.note = 0
         self.velocity = 0
+        self.release_velocity = 0  # Added release_velocity attribute
         self.control = 0
         self.value = 0
         self.pressure = 0
@@ -219,13 +220,15 @@ class MidiMessage:
                 self.note = self.data[0]
                 self.velocity = self.data[1]
                 self.type = 'note_on' if self.velocity > 0 else 'note_off'
+                if self.velocity == 0:  # Note off via note-on with zero velocity
+                    self.release_velocity = 0
                 log(TAG_MIDI, f"Created Note {self.type}: ch={self.channel} note={self.note} vel={self.velocity}")
                 
             elif self.message_type == MIDI_NOTE_OFF:
                 self.type = 'note_off'
                 self.note = self.data[0]
-                self.velocity = self.data[1]
-                log(TAG_MIDI, f"Created Note Off: ch={self.channel} note={self.note}")
+                self.release_velocity = self.data[1]  # Use release_velocity instead of velocity for note-off
+                log(TAG_MIDI, f"Created Note Off: ch={self.channel} note={self.note} release_vel={self.release_velocity}")
                 
             elif self.message_type == MIDI_CONTROL_CHANGE:
                 self.type = 'cc'

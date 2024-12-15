@@ -259,7 +259,6 @@ class SynthioInterfaces:
                 value = int(waveform1[idx1] * (1-t) + waveform2[idx2] * t)
                 morphed.append(value)
             
-            log(TAG_IFACE, f"Created morphed waveform at position {morph_position}")
             return morphed
             
         except Exception as e:
@@ -290,6 +289,7 @@ class WaveformMorph:
         samples = MORPHED_WAVEFORM_SAMPLES
         num_transitions = len(self.waveform_sequence) - 1
         
+        # Build lookup table without logging each step
         self.lookup_table = []
         for midi_value in range(128):
             morph_position = midi_value / 127.0
@@ -301,7 +301,7 @@ class WaveformMorph:
             )
             
         SynthioInterfaces._morphed_waveform_cache[cache_key] = self.lookup_table
-        log(TAG_IFACE, f"Cached morph table for {cache_key}")
+        log(TAG_IFACE, f"Successfully created morph table for {cache_key}")
     
     def get_waveform(self, midi_value):
         if not 0 <= midi_value <= 127:

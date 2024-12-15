@@ -4,17 +4,42 @@ import sys
 from logging import log, TAG_INST
 from router import PathParser
 
+NOTE_PATHS = '''
+# Note handling
+channel/press_voice/note_on
+channel/release_voice/note_off
+channel/set_frequency/note_number/note_on
+
+# Amplitude control
+channel/set_amplitude/0.001-1/pressure
+
+
+
+'''
+"""
+# Additional amplitude controls
+channel/set_amplitude/0.001-1/velocity
+channel/set_ring_bend/n1-1/pitch_bend
+channel/set_bend/n1-1/pitch_bend
+
+# Pressure and CC control
+channel/set_amplitude/0.001-1/pressure
+synth/set_amplitude/0.001-1/cc24
+"""
+
 OSCILLATOR_PATHS = '''
 # Note handling
 channel/press_voice/note_on
 channel/release_voice/note_off
 
+channel/set_amplitude/0.01-1/release_velocity
 
 # Basic oscillator control
 channel/set_frequency/note_number/note_on
 synth/set_waveform/sine-triangle-square-saw/cc72
 
-
+synth/set_ring_frequency/0.001-10/cc23
+synth/set_ring_waveform/sine-triangle-square-saw/cc78
 '''
 """
 # Frequency control
@@ -160,25 +185,7 @@ synth/set_synth_filter_band_pass_frequency/20-20000/cc70
 synth/set_synth_filter_band_pass_resonance/0.1-2.0/cc71
 """
 
-NOTE_PATHS = '''
-# Note handling
-channel/press_voice/note_on
-channel/release_voice/note_off
-channel/set_frequency/note_number/note_on
 
-# Amplitude control
-channel/set_amplitude/0.001-1/pressure
-'''
-"""
-# Additional amplitude controls
-channel/set_amplitude/0.001-1/velocity
-channel/set_ring_bend/n1-1/pitch_bend
-channel/set_bend/n1-1/pitch_bend
-
-# Pressure and CC control
-channel/set_amplitude/0.001-1/pressure
-synth/set_amplitude/0.001-1/cc24
-"""
 
 AMPLIFIER_PATHS = '''
 # Note handling
