@@ -121,7 +121,7 @@ class PathParser:
         self.midi_mappings = {}
         self.startup_values = {}
         self.enabled_messages = set()
-        self.enabled_ccs = set()
+        self.enabled_ccs = []  # Changed to list to maintain order
         
     def parse_paths(self, paths, config_name=None):
         log(TAG_ROUTE, "Parsing instrument paths...")
@@ -176,7 +176,7 @@ class PathParser:
         self.midi_mappings.clear()
         self.startup_values.clear()
         self.enabled_messages.clear()
-        self.enabled_ccs.clear()
+        self.enabled_ccs = []  # Reset to empty list
 
     def _parse_range(self, range_str):
         try:
@@ -229,7 +229,8 @@ class PathParser:
             if midi_value.startswith('cc'):
                 cc_num = int(midi_value[2:])
                 self.enabled_messages.add('cc')
-                self.enabled_ccs.add(cc_num)
+                if cc_num not in self.enabled_ccs:  # Only add if not already present
+                    self.enabled_ccs.append(cc_num)  # Add to list to maintain order
                 midi_value = f"cc{cc_num}"
             elif midi_value == 'pitch_bend':
                 self.enabled_messages.add('pitch_bend')
@@ -290,27 +291,17 @@ class PathParser:
 
     def get_cc_configs(self):
         cc_configs = []
-        seen_ccs = set()
         
-        for midi_value, actions in self.midi_mappings.items():
-            if not midi_value.startswith('cc'):
-                continue
-                
-            try:
-                cc_num = int(midi_value[2:])
-                if cc_num in seen_ccs:
-                    continue
-                    
-                if actions:
-                    handler = actions[0]['handler']
-                    if handler.startswith('set_'):
-                        handler = handler[4:]
-                    cc_configs.append((cc_num, handler))
-                    seen_ccs.add(cc_num)
-                    log(TAG_ROUTE, f"Found CC mapping: cc{cc_num} -> {handler}")
-                
-            except (ValueError, IndexError) as e:
-                log(TAG_ROUTE, f"Error parsing CC config: {str(e)}", is_error=True)
-                continue
+        # Use the ordered list of CCs
+        for cc_num in self.enabled_ccs:
+            midi_value = f"cc{cc_num}"
+            actions = self.midi_mappings.get(midi_value, [])
+            
+            if actions:
+                handler = actions[0]['handler']
+                if handler.startswith('set_'):
+                    handler = handler[4:]
+                cc_configs.append((cc_num, handler))
+                log(TAG_ROUTE, f"Found CC mapping: cc{cc_num} -> {handler}")
                 
         return cc_configs

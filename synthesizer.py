@@ -14,6 +14,7 @@ class SynthStore:
     def __init__(self):
         self.per_channel_values = {i: {} for i in range(1, 16)}
         self.previous_channel = {i: {} for i in range(1, 16)}
+        self._batch_store = False
         
     def store(self, name, value, channel):
         if channel < 1 or channel > 15:
@@ -26,10 +27,20 @@ class SynthStore:
         if value_name in self.per_channel_values[channel]:
             self.previous_channel[channel][value_name] = self.per_channel_values[channel][value_name]
         self.per_channel_values[channel][value_name] = value
-        if value_name.endswith('waveform'):
-            log(TAG_SYNTH, f"Stored channel {channel} value {value_name}")
-        else:
-            log(TAG_SYNTH, f"Stored channel {channel} value {value_name}={format_value(value)}")
+        
+        # Only log if not in batch store mode
+        if not self._batch_store:
+            if value_name.endswith('waveform'):
+                log(TAG_SYNTH, f"Stored channel {channel} value {value_name}")
+            else:
+                log(TAG_SYNTH, f"Stored channel {channel} value {value_name}={format_value(value)}")
+    
+    def begin_batch_store(self):
+        self._batch_store = True
+        
+    def end_batch_store(self, value_name):
+        self._batch_store = False
+        log(TAG_SYNTH, f"Updated channels 1-15 with {value_name}")
         
     def get(self, name, channel, default=None):
         if channel < 1 or channel > 15:
@@ -81,8 +92,10 @@ class EnvelopeHandler:
             return
             
         if channel == 0:
+            self.state.begin_batch_store()
             for ch in range(1, 16):
                 self.state.store(param, value, ch)
+            self.state.end_batch_store(param)
         else:
             self.state.store(param, value, channel)
 
@@ -159,11 +172,14 @@ class Synthesizer:
     def set_parameter(self, param_name, value, channel):
         # Store using original name (store will strip set_ prefix)
         if channel == 0:
+            self.state.begin_batch_store()
             for ch in range(1, 16):
                 self.state.store(param_name, value, ch)
                 # Pass base name to _update_parameter
                 base_name = param_name[4:] if param_name.startswith('set_') else param_name
                 self._update_parameter(base_name, value, ch)
+            base_name = param_name[4:] if param_name.startswith('set_') else param_name
+            self.state.end_batch_store(base_name)
         else:
             self.state.store(param_name, value, channel)
             # Pass base name to _update_parameter
