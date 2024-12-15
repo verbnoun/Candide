@@ -6,11 +6,25 @@ from logging import log, TAG_ROUTE, format_value
 from interfaces import SynthioInterfaces, WaveformMorph
 from constants import STATIC_WAVEFORM_SAMPLES
 
-# Parameters that should stay as integers
-INTEGER_PARAMS = {
-    'note_number',      # MIDI note numbers are integers
-    'morph_position',   # Used as MIDI value (0-127) for waveform lookup
-    'ring_morph_position'  # Used as MIDI value (0-127) for waveform lookup
+# Complete type specification for parameters
+PARAM_TYPES = {
+    # Integer parameters
+    'note_number': 'int',
+    'morph_position': 'int', 
+    'ring_morph_position': 'int',
+    
+    # Float parameters requiring conversion
+    'frequency': 'float',
+    'amplitude': 'float',
+    'attack_time': 'float',
+    'decay_time': 'float',
+    'sustain_level': 'float',
+    'release_time': 'float',
+    'bend': 'float',
+    'ring_frequency': 'float',
+    'ring_bend': 'float',
+    'filter_frequency': 'float',
+    'filter_resonance': 'float'
 }
 
 # Parameters that synthio handles per-note
@@ -23,11 +37,27 @@ PER_NOTE_PARAMS = {
 }
 
 class Route:
-    def __init__(self, name, min_val=None, max_val=None, fixed_value=None, is_integer=False, 
-                 is_note_to_freq=False, waveform_sequence=None, is_14_bit=False):
+    def __init__(self, name, min_val=None, max_val=None, fixed_value=None, 
+                 param_type=None, is_note_to_freq=False, 
+                 waveform_sequence=None, is_14_bit=False):
         self.name = name
-        self.is_integer = is_integer
-        self.fixed_value = fixed_value
+        self.param_type = PARAM_TYPES.get(name, 'float')  # Default to float
+        
+        # Format fixed_value according to param_type during initialization
+        if fixed_value is not None:
+            try:
+                if self.param_type == 'int':
+                    self.fixed_value = int(fixed_value)
+                elif self.param_type == 'float':
+                    self.fixed_value = float(fixed_value)
+                else:
+                    self.fixed_value = fixed_value
+            except (TypeError, ValueError) as e:
+                self._log_conversion_error(fixed_value, self.param_type, e)
+                raise
+        else:
+            self.fixed_value = None
+            
         self.is_note_to_freq = is_note_to_freq
         self.is_waveform_sequence = waveform_sequence is not None
         self.is_14_bit = is_14_bit
@@ -49,7 +79,7 @@ class Route:
                 self.max_val = float(max_val)
                 self._build_lookup()
                 log(TAG_ROUTE, "Created route: {} [{} to {}] {}".format(
-                    name, min_val, max_val, '(integer)' if is_integer else ''))
+                    name, min_val, max_val, f"({self.param_type})"))
         else:
             self.lookup_table = None
             if fixed_value is not None:
@@ -75,12 +105,12 @@ class Route:
             for i in range(table_size):
                 normalized = (i - center) / center
                 value = self.min_val + normalized * (self.max_val - self.min_val)
-                self.lookup_table[i] = int(value) if self.is_integer else value
+                self.lookup_table[i] = value
         else:
             for i in range(table_size):
                 normalized = i / (table_size - 1)
                 value = self.min_val + normalized * (self.max_val - self.min_val)
-                self.lookup_table[i] = int(value) if self.is_integer else value
+                self.lookup_table[i] = value
             
         log(TAG_ROUTE, "Lookup table for {} (sample values):".format(self.name))
         log(TAG_ROUTE, "  0: {}".format(format_value(self.lookup_table[0])))
@@ -90,6 +120,12 @@ class Route:
         else:
             log(TAG_ROUTE, "  64: {}".format(format_value(self.lookup_table[64])))
             log(TAG_ROUTE, "  127: {}".format(format_value(self.lookup_table[127])))
+    
+    def _log_conversion_error(self, value, target_type, error):
+        log(TAG_ROUTE, f"Type conversion failed for {self.name}:")
+        log(TAG_ROUTE, f"  Value: {value}")
+        log(TAG_ROUTE, f"  Target type: {target_type}") 
+        log(TAG_ROUTE, f"  Error: {str(error)}")
     
     def convert(self, midi_value):
         max_val = 16383 if self.is_14_bit else 127
@@ -107,14 +143,17 @@ class Route:
             
         value = self.lookup_table[midi_value]
         
-        if self.name not in INTEGER_PARAMS:
-            try:
-                value = float(value)
-            except (TypeError, ValueError) as e:
-                log(TAG_ROUTE, f"Failed to convert parameter {self.name} to float: {str(e)}", is_error=True)
-                raise
-                
-        return value
+        # Type conversion based on parameter type
+        try:
+            if self.param_type == 'int':
+                return int(value)
+            elif self.param_type == 'float':
+                return float(value)
+            else:
+                return value  # For waveforms or other special types
+        except (TypeError, ValueError) as e:
+            self._log_conversion_error(value, self.param_type, e)
+            raise
 
 class PathParser:
     def __init__(self):
@@ -244,7 +283,7 @@ class PathParser:
                 min_val, max_val = self._parse_range(value_or_range)
                 is_14_bit = midi_value == 'pitch_bend'
                 route = Route(handler, min_val=min_val, max_val=max_val, 
-                            is_integer=handler in INTEGER_PARAMS,
+                            param_type=PARAM_TYPES.get(handler),
                             is_14_bit=is_14_bit)
             elif value_or_range == 'note_number':
                 route = Route(handler, is_note_to_freq=True)
@@ -278,8 +317,10 @@ class PathParser:
                     log(TAG_ROUTE, f"Failed to create waveform: {str(e)}", is_error=True)
                     raise
             else:
+                # Create a Route to handle type conversion for startup values
+                route = Route(handler, fixed_value=value_or_range)
                 self.startup_values[handler] = {
-                    'value': value_or_range,
+                    'value': route.convert(0),  # Convert using Route to ensure proper typing
                     'use_channel': scope == 'channel'
                 }
 

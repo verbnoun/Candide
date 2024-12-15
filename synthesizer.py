@@ -110,11 +110,8 @@ class EnvelopeHandler:
             if value is None:
                 return None
                 
-            try:
-                params[param] = float(value)
-            except (TypeError, ValueError) as e:
-                log(TAG_SYNTH, f"Invalid envelope parameter {param}: {value}", is_error=True)
-                return None
+            # No type conversion needed - router handles this
+            params[param] = value
                 
         try:
             return SynthioInterfaces.create_envelope(**params)
