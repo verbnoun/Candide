@@ -11,16 +11,21 @@ channel/press_voice/note_on
 channel/release_voice/note_off
 channel/set_frequency/note_number/note_on
 
-
-
-
 # Basic waveform
-synth/set_waveform/saw
+synth/set_waveform/sine
 
+channel/set_amplitude/0.001-1/pressure
+
+
+'''
+"""
+synth/set_ring_frequency/1
+synth/set_ring_waveform/sine
+channel/set_ring_bend/n12-12/pitch_bend
+channel/set_bend/n0.1-0.1/pitch_bend
 # Filter control
 synth/set_synth_filter_high_pass_frequency/20-20000/cc70
 synth/set_synth_filter_high_pass_resonance/0.1-2.0/cc71
-
 # Envelope control
 synth/set_envelope_attack_level/0.001-1/cc85
 synth/set_envelope_attack_time/0.001-0.5/cc73
@@ -28,9 +33,6 @@ synth/set_envelope_decay_time/0.001-0.25/cc75
 synth/set_envelope_sustain_level/0.001-1/cc66
 synth/set_envelope_release_time/0.001-1/cc72
 
-'''
-"""
-channel/set_amplitude/0.001-1/pressure
 """
 AMPLIFIER_PATHS = '''
 # Note handling
