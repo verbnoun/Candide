@@ -157,13 +157,18 @@ class Synthesizer:
         self.midi_handler.register_ready_callback(callback)
 
     def set_parameter(self, param_name, value, channel):
+        # Store using original name (store will strip set_ prefix)
         if channel == 0:
             for ch in range(1, 16):
                 self.state.store(param_name, value, ch)
-                self._update_parameter(param_name, value, ch)
+                # Pass base name to _update_parameter
+                base_name = param_name[4:] if param_name.startswith('set_') else param_name
+                self._update_parameter(base_name, value, ch)
         else:
             self.state.store(param_name, value, channel)
-            self._update_parameter(param_name, value, channel)
+            # Pass base name to _update_parameter
+            base_name = param_name[4:] if param_name.startswith('set_') else param_name
+            self._update_parameter(base_name, value, channel)
 
     def _update_parameter(self, param_name, value, channel):
         if param_name.startswith('filter_'):

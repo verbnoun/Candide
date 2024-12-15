@@ -94,8 +94,8 @@ class MidiHandler:
             log(TAG_PATCH, "Received MIDI pitch bend: ch={} val={}".format(
                 msg.channel, msg.bend))
         elif msg.type == 'channel_pressure':
-            log(TAG_PATCH, "Received MIDI pressure: ch={} val={}".format(
-                msg.channel, msg.value))
+            log(TAG_PATCH, "Received MIDI pressure: ch={} pressure={}".format(
+                msg.channel, msg.pressure))
 
         # Route message to appropriate handler
         if msg.type == 'note_on' and msg.velocity > 0:

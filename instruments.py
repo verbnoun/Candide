@@ -4,6 +4,32 @@ import sys
 from logging import log, TAG_INST
 from router import PathParser
 
+
+BASIC_PATHS = '''
+# Note handling
+channel/press_voice/note_on
+channel/release_voice/note_off
+channel/set_frequency/note_number/note_on
+
+# Basic waveform
+synth/set_waveform/saw
+
+
+
+channel/set_amplitude/0.001-1/pressure
+'''
+"""
+# Filter control
+synth/set_synth_filter_high_pass_frequency/20-20000/cc70
+synth/set_synth_filter_high_pass_resonance/0.1-2.0/cc71
+
+# Envelope control
+synth/set_envelope_attack_level/0.001-1/cc85
+synth/set_envelope_attack_time/0.001-0.5/cc73
+synth/set_envelope_decay_time/0.001-0.25/cc75
+synth/set_envelope_sustain_level/0.001-1/cc66
+synth/set_envelope_release_time/0.001-1/cc72
+"""
 AMPLIFIER_PATHS = '''
 # Note handling
 channel/press_voice/note_on
@@ -23,26 +49,6 @@ synth/set_amplitude/0.001-1/cc24
 synth/set_amplitude/0.3
 """
 
-BASIC_PATHS = '''
-# Note handling
-channel/press_voice/note_on
-channel/release_voice/note_off
-channel/set_frequency/note_number/note_on
-
-# Basic waveform
-synth/set_waveform/saw
-
-# Filter control
-synth/set_synth_filter_high_pass_frequency/20-20000/cc70
-synth/set_synth_filter_high_pass_resonance/0.1-2.0/cc71
-
-# Envelope control
-synth/set_envelope_attack_level/0.001-1/cc85
-synth/set_envelope_attack_time/0.001-0.5/cc73
-synth/set_envelope_decay_time/0.001-0.25/cc75
-synth/set_envelope_sustain_level/0.001-1/cc66
-synth/set_envelope_release_time/0.001-1/cc72
-'''
 
 OSCILLATOR_PATHS = '''
 # Note handling
