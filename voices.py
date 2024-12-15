@@ -4,6 +4,7 @@ import array
 import math
 import time
 from logging import log, TAG_VOICES
+from constants import MAX_VOICES
 
 class AmplitudeScaler:
     """Handles exponential amplitude scaling for polyphony protection.
@@ -72,7 +73,7 @@ class AmplitudeScaler:
             
     def clear(self):
         """Reset amplitude tracking."""
-        log(TAG_VOICES, "Cleared amplitude scaler:")
+        log(TAG_VOICES, f"Cleared amplitude scaler:")
         log(TAG_VOICES, f"  Previous total: {self.sum_amplitudes:.4f}")
         log(TAG_VOICES, f"  Previous count: {self.active_count}")
         
@@ -108,7 +109,7 @@ class AmplitudeScaler:
 
 class VoicePool:
     """Manages voices that can be targeted by MIDI address."""
-    def __init__(self, size=5):
+    def __init__(self, size=MAX_VOICES):
         self.size = size
         self.voices = [Voice() for _ in range(size)]
         self.next_timestamp = 0
@@ -248,7 +249,7 @@ class VoicePool:
         
         # Get a voice
         voice = self._get_voice()
-        if voice is None:  # Could be None if we just entered toddler mode
+        if not voice:  # Could be None if we just entered toddler mode
             return None
             
         # Set up voice
@@ -267,7 +268,7 @@ class VoicePool:
         if voice and voice.active_note:
             self.amplitude_scaler.add_amplitude(voice.active_note.amplitude)
         
-    def release_note(self, note_number):
+    def release_voice(self, note_number, channel):
         """Target a voice with note-off."""
         self._log_all_voices("before note-off")
         

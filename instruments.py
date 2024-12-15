@@ -4,6 +4,53 @@ import sys
 from logging import log, TAG_INST
 from router import PathParser
 
+RICH_SAW_PATHS = '''
+# Note handling
+channel/press_voice/note_on
+channel/release_voice/note_off
+channel/set_frequency/note_number/note_on
+
+# Base waveform
+synth/set_waveform/saw
+
+# Ring modulation for harmonic richness
+synth/set_ring_frequency/2-22/cc22
+synth/set_ring_waveform/triangle
+
+# Dynamic amplitude control
+channel/set_amplitude/0.001-1/velocity
+channel/set_amplitude/0.001-1/pressure
+
+# Envelope shaping
+synth/set_envelope_attack_time/0.05
+synth/set_envelope_attack_level/1
+synth/set_envelope_decay_time/0.2
+synth/set_envelope_sustain_level/1
+synth/set_envelope_release_time/0.5
+
+# Filter for tone shaping
+synth/set_synth_filter_low_pass_frequency/200-2000/cc23
+synth/set_synth_filter_low_pass_resonance/1.2-5/cc24
+'''
+
+WORKING_PATHS = '''
+# Note handling
+channel/press_voice/note_on
+channel/release_voice/note_off
+channel/set_frequency/note_number/note_on
+
+channel/set_amplitude/0.1-1/pressure
+
+
+# Envelope control
+synth/set_envelope_attack_level/0.3-1/velocity
+synth/set_envelope_attack_time/0.001-0.5/cc73
+synth/set_envelope_decay_time/0.001-0.25/cc75
+synth/set_envelope_sustain_level/0.001-1/cc66
+synth/set_envelope_release_time/0.001-2/cc72
+
+'''
+
 NOTE_PATHS = '''
 # Note handling
 channel/press_voice/note_on
@@ -11,6 +58,7 @@ channel/release_voice/note_off
 channel/set_frequency/note_number/note_on
 
 # Amplitude control
+channel/set_amplitude/0.001-1/velocity
 channel/set_amplitude/0.001-1/pressure
 
 
@@ -183,27 +231,6 @@ synth/set_synth_filter_high_pass_resonance/0.1-2.0/cc71
 
 synth/set_synth_filter_band_pass_frequency/20-20000/cc70
 synth/set_synth_filter_band_pass_resonance/0.1-2.0/cc71
-"""
-
-
-
-AMPLIFIER_PATHS = '''
-# Note handling
-channel/press_voice/note_on
-channel/release_voice/note_off
-channel/set_frequency/note_number/note_on
-
-# Amplitude control
-channel/set_amplitude/0.001-1/velocity
-
-# Basic waveform
-synth/set_waveform/saw
-'''
-"""
-# Additional amplitude controls
-channel/set_amplitude/0.001-1/velocity
-synth/set_amplitude/0.001-1/cc24
-synth/set_amplitude/0.3
 """
 
 

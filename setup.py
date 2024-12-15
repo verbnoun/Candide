@@ -1,6 +1,6 @@
 """Synthesizer setup and initialization module."""
 
-from constants import SAMPLE_RATE, AUDIO_CHANNEL_COUNT
+from constants import SAMPLE_RATE, AUDIO_CHANNEL_COUNT, MAX_VOICES
 from logging import log, TAG_SETUP
 from interfaces import SynthioInterfaces
 from voices import VoicePool
@@ -21,14 +21,14 @@ class SynthesizerSetup:
         
         synth_components = {
             'synth': None,
-            'voice_pool': VoicePool(5),
+            'voice_pool': VoicePool(MAX_VOICES),
             'path_parser': PathParser(),
             'state': SynthStore(),
             'monitor': SynthMonitor()
         }
         
         log(TAG_SETUP, "Created base components:")
-        log(TAG_SETUP, f"- Voice pool with 5 voices")
+        log(TAG_SETUP, f"- Voice pool with {MAX_VOICES} voices")
         log(TAG_SETUP, f"- Path parser")
         log(TAG_SETUP, f"- Synth state")
         log(TAG_SETUP, f"- Monitor")
