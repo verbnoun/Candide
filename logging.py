@@ -46,7 +46,7 @@ TAG_COLORS = {
     TAG_MIDI: COLOR_GREEN,        # midi.py
     TAG_PATCH: COLOR_CYAN,        # patcher.py
     TAG_ROUTE: COLOR_BLUE,        # router.py
-    TAG_SETUP: COLOR_ORANGE,      # setup.py
+    TAG_SETUP: COLOR_SPRING,      # setup.py
     TAG_SYNTH: COLOR_INDIGO,      # synthesizer.py
     TAG_UART: COLOR_VIOLET,       # uart.py
     TAG_VOICES: COLOR_MAGENTA,     # voice.py
@@ -63,7 +63,7 @@ LOG_ENABLE = {
     TAG_MIDI: True,
     TAG_PATCH: False,
     TAG_ROUTE: False,
-    TAG_SETUP: False,
+    TAG_SETUP: True,
     TAG_SYNTH: True,
     TAG_UART: False,
     TAG_VOICES: False,

@@ -15,6 +15,11 @@ class SynthStore:
         self.per_channel_values = {i: {} for i in range(1, 16)}
         self.previous_channel = {i: {} for i in range(1, 16)}
         self._batch_store = False
+        self._store_update_callback = None
+        
+    def set_store_update_callback(self, callback):
+        """Set callback to be notified of store updates during instrument changes."""
+        self._store_update_callback = callback
         
     def store(self, name, value, channel):
         if channel < 1 or channel > 15:
@@ -34,6 +39,10 @@ class SynthStore:
                 log(TAG_SYNTH, f"Stored channel {channel} value {value_name}")
             else:
                 log(TAG_SYNTH, f"Stored channel {channel} value {value_name}={format_value(value)}")
+                
+            # Notify setup of store update if callback is set
+            if self._store_update_callback:
+                self._store_update_callback(value_name)
     
     def begin_batch_store(self):
         self._batch_store = True
@@ -41,6 +50,9 @@ class SynthStore:
     def end_batch_store(self, value_name):
         self._batch_store = False
         log(TAG_SYNTH, f"Updated channels 1-15 with {value_name}")
+        # Notify setup of batch store update if callback is set
+        if self._store_update_callback:
+            self._store_update_callback(value_name)
         
     def get(self, name, channel, default=None):
         if channel < 1 or channel > 15:
@@ -60,6 +72,8 @@ class SynthStore:
         for channel in range(1, 16):
             self.per_channel_values[channel].clear()
             self.previous_channel[channel].clear()
+        # Reset callback when store is cleared
+        self._store_update_callback = None
 
 class SynthMonitor:
     def __init__(self, interval=5.0):
@@ -139,8 +153,10 @@ class Synthesizer:
         'lfo_parameter': lambda note, value: log(TAG_SYNTH, "LFO operations not yet implemented")
     }
     
-    def __init__(self, midi_interface, audio_system=None):
+    def __init__(self, midi_interface, audio_system=None, connection_manager=None):
         self.setup = SynthesizerSetup(midi_interface, audio_system)
+        if connection_manager:
+            self.setup.set_connection_manager(connection_manager)
         
         components = self.setup.initialize()
         self.synth = components['synth']

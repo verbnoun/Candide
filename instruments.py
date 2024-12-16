@@ -242,30 +242,24 @@ class InstrumentManager:
         self.instruments = {}
         self.instrument_order = []  # Maintain order of instruments
         self.current_instrument = None
-        self.connection_manager = None
-        self.synthesizer = None
-        self.setup = None
+        self._observers = []  # List of observers for instrument changes
         self.current_cc_config = None  # Cache for current CC config
         self._discover_instruments()
         log(TAG_INST, "Instrument manager initialized")
 
-    def register_components(self, connection_manager=None, synthesizer=None):
-        """Register ConnectionManager and Synthesizer components."""
-        if connection_manager:
-            self.connection_manager = connection_manager
-            log(TAG_INST, "Registered connection manager")
-            
-        if synthesizer:
-            self.synthesizer = synthesizer
-            self.setup = synthesizer.setup  # Store setup reference
-            log(TAG_INST, "Registered synthesizer and setup")
-            
-            # Register ready callback to send new CC config when instrument changes
-            if self.connection_manager:
-                self.synthesizer.register_ready_callback(
-                    lambda: self.connection_manager.send_config()
-                )
-                log(TAG_INST, "Connected synth ready callback for CC config updates")
+    def add_observer(self, observer):
+        """Add an observer to be notified of instrument changes."""
+        self._observers.append(observer)
+        
+    def remove_observer(self, observer):
+        """Remove an observer."""
+        if observer in self._observers:
+            self._observers.remove(observer)
+
+    def _notify_instrument_change(self, instrument_name, config_name, paths):
+        """Notify observers of instrument change."""
+        for observer in self._observers:
+            observer.on_instrument_change(instrument_name, config_name, paths)
 
     def _discover_instruments(self):
         """Discover available instruments from module constants."""
@@ -294,9 +288,12 @@ class InstrumentManager:
         log(TAG_INST, f"Discovered instruments in order: {', '.join(self.instrument_order)}")
 
     def _update_cc_config(self):
-        """Update cached CC configuration from current synth state."""
-        if self.synthesizer and self.synthesizer.path_parser:
-            self.current_cc_config = self.synthesizer.path_parser.get_cc_configs()
+        """Update cached CC configuration from current paths."""
+        if self.current_instrument:
+            config_name, paths = self.instruments[self.current_instrument]
+            parser = PathParser()
+            parser.parse_paths(paths, config_name)
+            self.current_cc_config = parser.get_cc_configs()
         else:
             self.current_cc_config = []
 
@@ -305,7 +302,7 @@ class InstrumentManager:
         return self.current_cc_config if self.current_cc_config is not None else []
 
     def set_instrument(self, instrument_name):
-        """Set current instrument and update components."""
+        """Set current instrument and notify observers."""
         if instrument_name not in self.instruments:
             log(TAG_INST, f"Invalid instrument name: {instrument_name}", is_error=True)
             return False
@@ -314,15 +311,12 @@ class InstrumentManager:
         self.current_instrument = instrument_name
         config_name, paths = self.instruments[instrument_name]
 
-        # Update synthesizer configuration through setup first
-        if self.setup:
-            log(TAG_INST, "Updating synthesizer configuration")
-            self.setup.update_instrument(paths, config_name)  # Use setup directly
-            # After synth is updated, get CC config from its parsed paths
-            self._update_cc_config()
-            return True
-            
-        return False
+        # Update CC config cache
+        self._update_cc_config()
+        
+        # Notify observers of change
+        self._notify_instrument_change(instrument_name, config_name, paths)
+        return True
 
     def get_current_config(self):
         """Get the current instrument's configuration paths."""
@@ -344,7 +338,5 @@ class InstrumentManager:
     def cleanup(self):
         """Clean up component references."""
         log(TAG_INST, "Cleaning up instrument manager")
-        self.connection_manager = None
-        self.synthesizer = None
-        self.setup = None
+        self._observers.clear()
         self.current_cc_config = None

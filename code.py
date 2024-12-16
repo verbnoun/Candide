@@ -34,42 +34,42 @@ class Candide:
     def __init__(self):
         _cycle_log("\nWakeup Candide!\n")
         
+        # 1. Initialize core hardware and interfaces
         log(TAG_CANDIDE, "Initializing hardware manager...")
         self.hardware_manager = HardwareManager()
 
         log(TAG_CANDIDE, "Initializing UART interfaces...")
-        # Initialize UART and MIDI in correct order
         self.transport, self.text_uart = UartManager.get_interfaces()
-        # Initialize MIDI interface
         self.midi_interface = initialize_midi()
 
         log(TAG_CANDIDE, "Initializing audio system...")
         self.audio_system = AudioSystem()
 
+        # 2. Initialize blank synth setup
         log(TAG_CANDIDE, "Initializing synthesizer...")
         self.synthesizer = Synthesizer(self.midi_interface, self.audio_system)
 
+        # 3. Initialize instrument manager
         log(TAG_CANDIDE, "Initializing instrument manager...")
         self.instrument_manager = InstrumentManager()
 
+        # 4. Initialize connection manager (passive)
         log(TAG_CANDIDE, "Initializing connection manager...")
         self.connection_manager = ConnectionManager(
             self.text_uart,
             self.midi_interface,
-            self.hardware_manager,
-            self.instrument_manager
+            self.hardware_manager
         )
 
-        log(TAG_CANDIDE, "Registering components with instrument manager...")
-        self.instrument_manager.register_components(
-            connection_manager=self.connection_manager,
-            synthesizer=self.synthesizer
-        )
-
+        # 5. Set up observers
+        log(TAG_CANDIDE, "Setting up component observers...")
+        # Setup observes both connection and instrument changes
+        self.connection_manager.add_observer(self.synthesizer.setup)
+        self.instrument_manager.add_observer(self.synthesizer.setup)
+        
+        # 6. Set initial instrument
         log(TAG_CANDIDE, "Setting initial instrument...")
-        # Get first available instrument
         initial_instrument = self.instrument_manager.get_available_instruments()[0]
-        # Set initial instrument - ready callback already registered through instrument manager
         self.instrument_manager.set_instrument(initial_instrument)
 
         try:
@@ -78,15 +78,14 @@ class Candide:
             log(TAG_CANDIDE, f"Initial volume: {initial_volume:.3f}")
             self.audio_system.set_volume(initial_volume)
             self.hardware_manager.last_volume = initial_volume
+            
             _cycle_log("\nCandide (v1.0) is awake!... ( ◔◡◔)♬\n")
 
-            # Check for base station after all initialization is complete
+            # 7. Start connection detection
             log(TAG_CANDIDE, "Checking for base station...")
+            # Just check state - connection manager will handle detection in update loop
             if self.hardware_manager.is_base_station_detected():
-                self.connection_manager._handle_initial_detection()
-                # Give time for config to be sent
-                time.sleep(0.1)
-                self.connection_manager.update_state()
+                log(TAG_CANDIDE, "Base station detected during boot")
 
         except Exception as e:
             log(TAG_CANDIDE, f"Initialization error: {str(e)}", is_error=True)
