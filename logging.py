@@ -56,17 +56,17 @@ TAG_COLORS = {
 LOG_ENABLE = {
     TAG_CANDIDE: True,
     TAG_CONNECT: True,
-    TAG_CONST: True,
-    TAG_HARD: True,
+    TAG_CONST: False,
+    TAG_HARD: False,
     TAG_INST: True,
     TAG_IFACE: True,
     TAG_MIDI: True,
     TAG_PATCH: True,
-    TAG_ROUTE: True,
+    TAG_ROUTE: False,
     TAG_SETUP: True,
     TAG_SYNTH: True,
     TAG_UART: True,
-    TAG_VOICES: True,
+    TAG_VOICES: False,
 }
 
 # Special debug flags
