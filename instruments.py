@@ -18,19 +18,18 @@ synth/set_ring_frequency/2-22/cc22
 synth/set_ring_waveform/triangle
 
 # Dynamic amplitude control
-channel/set_amplitude/0.001-1/velocity
-channel/set_amplitude/0.001-1/pressure
+channel/set_amplitude/0.1-1/pressure
 
 # Envelope shaping
 synth/set_envelope_attack_time/0.05
 synth/set_envelope_attack_level/1
-synth/set_envelope_decay_time/0.2
-synth/set_envelope_sustain_level/1
-synth/set_envelope_release_time/0.5
+synth/set_envelope_decay_time/0.5
+synth/set_envelope_sustain_level/0.5
+synth/set_envelope_release_time/2
 
 # Filter for tone shaping
-synth/set_synth_filter_low_pass_frequency/200-2000/cc23
-synth/set_synth_filter_low_pass_resonance/1.2-5/cc24
+synth/set_synth_filter_low_pass_frequency/200-2000/pressure
+synth/set_synth_filter_low_pass_resonance/0.1-2/cc22
 '''
 
 WORKING_PATHS = '''
