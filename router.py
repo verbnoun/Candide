@@ -36,10 +36,24 @@ PER_NOTE_PARAMS = {
     'ring_waveform_loop_end'
 }
 
+def format_instrument_name(name):
+    """Format instrument name by converting underscores to spaces and capitalizing words.
+    CircuitPython compatible version."""
+    # Split by underscore and convert to uppercase for first letter only
+    words = name.split('_')
+    formatted_words = []
+    for word in words:
+        if word:  # Check if word is not empty
+            # Manual capitalization: first letter upper, rest lower
+            formatted_word = word[0].upper() + word[1:].lower()
+            formatted_words.append(formatted_word)
+    return ' '.join(formatted_words)
+
+
 # Configuration dictionary defining string format structure
 config_format = {
     'structure': {
-        'order': ['cartridge_name', 'type', 'pot_mappings'],
+        'order': ['cartridge_name', 'instrument_name', 'type', 'pot_mappings'],
         'separators': {
             'main': '|',
             'pot': '=',
@@ -224,6 +238,7 @@ class PathParser:
         self.startup_values = {}
         self.enabled_messages = set()
         self.enabled_ccs = []  # Changed to list to maintain order
+        self.current_instrument_name = None  # Added to store current instrument name
         
     def parse_paths(self, paths, config_name=None):
         log(TAG_ROUTE, "Parsing instrument paths...")
@@ -231,6 +246,9 @@ class PathParser:
         
         if config_name:
             log(TAG_ROUTE, f"Using paths configuration: {config_name}")
+            # Extract instrument name from config name (remove _PATHS suffix)
+            if config_name.endswith('_PATHS'):
+                self.current_instrument_name = config_name[:-6].lower()
         
         try:
             self._reset()
@@ -422,6 +440,12 @@ class PathParser:
         for element in config_format['structure']['order']:
             if element == 'cartridge_name':
                 parts.append('Candide')
+            elif element == 'instrument_name':
+                # Format the instrument name if available
+                if self.current_instrument_name:
+                    parts.append(format_instrument_name(self.current_instrument_name))
+                else:
+                    parts.append('')  # Empty string if no instrument name
             elif element == 'type':
                 parts.append('cc')
             elif element == 'pot_mappings':
