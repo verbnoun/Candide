@@ -313,7 +313,7 @@ class Synthesizer:
             
         except Exception as e:
             log(TAG_SYNTH, f"Failed to create note: {str(e)}", is_error=True)
-            self.voice_pool.release_note(note_number)
+            self.voice_pool.release_voice(note_number, channel)  # Fixed: Changed release_note to release_voice
 
     def release_voice(self, note_number, channel):
         if channel == 0:
@@ -322,10 +322,10 @@ class Synthesizer:
         voice = self.voice_pool.get_voice_by_channel(channel)
         if voice and voice.note_number == note_number:
             self.synth.release(voice.active_note)
-            self.voice_pool.release_note(note_number)
+            self.voice_pool.release_voice(note_number, channel)  # Fixed: Changed release_note to release_voice
             return
             
-        voice = self.voice_pool.release_note(note_number)
+        voice = self.voice_pool.release_voice(note_number, channel)  # Fixed: Changed release_note to release_voice
         if voice and voice.active_note:
             self.synth.release(voice.active_note)
             voice.active_note = None

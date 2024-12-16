@@ -36,6 +36,69 @@ PER_NOTE_PARAMS = {
     'ring_waveform_loop_end'
 }
 
+# Configuration dictionary defining string format structure
+config_format = {
+    'structure': {
+        'order': ['cartridge_name', 'type', 'pot_mappings'],
+        'separators': {
+            'main': '|',
+            'pot': '=',
+            'controls': ':',
+            'multi_control': ','
+        }
+    },
+    'pot_mapping': {
+        'format': '{pot_number}={cc_number}:{controls}',
+        'controls_join': ','
+    }
+}
+
+# Map internal handler names to human-readable control labels
+control_label_map = {
+    # Envelope Controls
+    'envelope_attack_time': 'Attack Time',
+    'envelope_attack_level': 'Attack Level',
+    'envelope_decay_time': 'Decay Time',
+    'envelope_sustain_level': 'Sustain Level',
+    'envelope_release_time': 'Release Time',
+    
+    # Filter Controls
+    'synth_filter_low_pass_frequency': 'Low Pass Cutoff',
+    'synth_filter_low_pass_resonance': 'Low Pass Resonance',
+    'synth_filter_high_pass_frequency': 'High Pass Cutoff',
+    'synth_filter_high_pass_resonance': 'High Pass Resonance',
+    'synth_filter_band_pass_frequency': 'Band Pass Cutoff',
+    'synth_filter_band_pass_resonance': 'Band Pass Resonance',
+    'synth_filter_notch_frequency': 'Notch Cutoff',
+    'synth_filter_notch_resonance': 'Notch Resonance',
+    
+    # Oscillator Controls
+    'ring_frequency': 'Ring Frequency',
+    'ring_bend': 'Ring Bend',
+    'ring_waveform': 'Ring Waveform',
+    'ring_waveform_loop_start': 'Ring Loop Start',
+    'ring_waveform_loop_end': 'Ring Loop End',
+    'oscillator_frequency': 'Frequency',
+    
+    # Waveform Controls
+    'waveform': 'Waveform',
+    'waveform_loop_start': 'Wave Loop Start',
+    'waveform_loop_end': 'Wave Loop End',
+    
+    # Basic Controls
+    'amplitude': 'Key Amplitude',
+    'frequency': 'Frequency',
+    'bend': 'Pitch Bend',
+    'panning': 'Pan',
+    
+    # Additional Controls from synthesizer.py
+    'release_velocity': 'Release Velocity',
+    'velocity': 'Note Velocity',
+    'pressure': 'Key Pressure',
+    'morph_position': 'Wave Morph',
+    'ring_morph_position': 'Ring Morph'
+}
+
 class Route:
     def __init__(self, name, min_val=None, max_val=None, fixed_value=None, 
                  param_type=None, is_note_to_freq=False, 
@@ -332,10 +395,9 @@ class PathParser:
         return self.midi_mappings.copy()
 
     def get_cc_configs(self):
-        cc_configs = []
-        
-        # Use the ordered list of CCs
-        for cc_num in self.enabled_ccs:
+        """Generate CC configuration string using format configuration."""
+        pot_mappings = []
+        for pot_num, cc_num in enumerate(self.enabled_ccs):
             midi_value = f"cc{cc_num}"
             actions = self.midi_mappings.get(midi_value, [])
             
@@ -343,7 +405,26 @@ class PathParser:
                 handler = actions[0]['handler']
                 if handler.startswith('set_'):
                     handler = handler[4:]
-                cc_configs.append((cc_num, handler))
-                log(TAG_ROUTE, f"Found CC mapping: cc{cc_num} -> {handler}")
                 
-        return cc_configs
+                # Get human-readable control label or use handler name as fallback
+                control_label = control_label_map.get(handler, handler)
+                
+                # Format pot mapping using configuration
+                pot_str = config_format['pot_mapping']['format'].format(
+                    pot_number=pot_num,
+                    cc_number=cc_num,
+                    controls=control_label
+                )
+                pot_mappings.append(pot_str)
+        
+        # Build final string using structure configuration
+        parts = []
+        for element in config_format['structure']['order']:
+            if element == 'cartridge_name':
+                parts.append('Candide')
+            elif element == 'type':
+                parts.append('cc')
+            elif element == 'pot_mappings':
+                parts.extend(pot_mappings)
+        
+        return config_format['structure']['separators']['main'].join(parts)

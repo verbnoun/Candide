@@ -50,47 +50,45 @@ class ConnectionManager:
             if is_detected:
                 if current_time - self.last_heartbeat_time >= HEARTBEAT_INTERVAL:
                     self._send_heartbeat()
-                    self.last_heartbeat_time = current_time
             else:
                 self._handle_disconnection()
+
+    def _send_message(self, message):
+        """Helper method to send messages and update heartbeat timer."""
+        try:
+            self.uart.write(message)
+            self.last_heartbeat_time = time.monotonic()  # Any message counts as heartbeat
+            return True
+        except Exception as e:
+            log(TAG_CONNECT, f"Failed to send message: {str(e)}", is_error=True)
+            return False
 
     def send_config(self):
         """Send CC configuration to Bartleby."""
         try:
-            # Get CC configurations from instrument manager
-            cc_configs = self.instrument_manager.get_current_cc_configs()
+            # Get config string from instrument manager
+            config_string = self.instrument_manager.get_current_cc_configs()
             
-            # Send config string - either with CC mappings or blank
-            if cc_configs:
-                # Build config string: cc|pot=cc|pot=cc|...
-                config_parts = []
-                for pot_num, (cc_num, param_name) in enumerate(cc_configs):
-                    config_parts.append(f"{pot_num}={cc_num}")
-                
-                config_string = "cc|" + "|".join(config_parts)
-                log(TAG_CONNECT, f"Sending config string: {config_string}")
-            else:
+            if not config_string or config_string == "Candide|cc|":
                 # Send blank CC config when no mappings exist
                 config_string = "cc|"
                 log(TAG_CONNECT, "No CC configurations found - sending blank config")
+            else:
+                log(TAG_CONNECT, f"Sending config string: {config_string}")
             
             # Send config
-            self.uart.write(config_string)
-            log(TAG_CONNECT, "Config sent successfully")
-            
-            self._transition_to_connected()
-            return True
+            if self._send_message(config_string):
+                self._transition_to_connected()
+                return True
                 
         except Exception as e:
             log(TAG_CONNECT, f"Failed to send config: {str(e)}", is_error=True)
         return False
 
     def _transition_to_connected(self):
-        """Helper to transition to connected state and start heartbeat."""
+        """Helper to transition to connected state."""
         log(TAG_CONNECT, "[STATE] STANDALONE -> CONNECTED: Starting heartbeat")
         self.state = ConnectionState.CONNECTED
-        self._send_heartbeat()
-        self.last_heartbeat_time = time.monotonic()
 
     def _handle_initial_detection(self):
         log(TAG_CONNECT, "[STATE] STANDALONE -> DETECTED: Base station detected (GP22 HIGH) - initializing connection")
@@ -104,14 +102,10 @@ class ConnectionManager:
         self.last_heartbeat_time = 0
             
     def _send_heartbeat(self):
-        try:
-            # Only send heartbeat if still detected
-            if self.hardware.is_base_station_detected():
-                self.uart.write("♡")
-                # Use is_heartbeat=True for heartbeat logging
+        # Only send heartbeat if still detected
+        if self.hardware.is_base_station_detected():
+            if self._send_message("♡"):
                 log(TAG_CONNECT, "♡", is_heartbeat=True)
-        except Exception as e:
-            log(TAG_CONNECT, f"Failed to send heartbeat: {str(e)}", is_error=True)
 
     def is_connected(self):
         return self.state == ConnectionState.CONNECTED

@@ -60,7 +60,7 @@ LOG_ENABLE = {
     TAG_HARD: False,
     TAG_INST: False,
     TAG_IFACE: False,
-    TAG_MIDI: False,
+    TAG_MIDI: True,
     TAG_PATCH: False,
     TAG_ROUTE: False,
     TAG_SETUP: False,
