@@ -13,12 +13,14 @@ class MidiHandler:
         self.subscription = None
         self.synthesizer = None  # Set by Synthesizer class
         self.ready_callback = None
+        
+        # Set up initial handlers when paths are parsed
+        self.path_parser.on_paths_parsed = self.setup_handlers
 
     def setup_handlers(self):
-        """Set up MIDI message handlers."""
-        if self.subscription:
-            self.midi_interface.unsubscribe(self.subscription)
-            self.subscription = None
+        """Set up MIDI message handlers based on current paths."""
+        if not self.midi_interface:
+            return
             
         log(TAG_PATCH, "Setting up MIDI handlers...")
             
@@ -27,13 +29,21 @@ class MidiHandler:
                         if msg_type in self.path_parser.enabled_messages]
             
         if not message_types:
-            raise ValueError("No MIDI message types enabled in paths")
+            log(TAG_PATCH, "No MIDI message types enabled in paths")
+            return
             
+        # Clean up old subscription first
+        if self.subscription:
+            self.midi_interface.unsubscribe(self.subscription)
+            self.subscription = None
+            
+        # Create new subscription
         self.subscription = self.midi_interface.subscribe(
             self.handle_message,
             message_types=message_types,
             cc_numbers=self.path_parser.enabled_ccs if 'cc' in self.path_parser.enabled_messages else None
         )
+        
         log(TAG_PATCH, f"MIDI handlers configured for: {self.path_parser.enabled_messages}")
         
         if self.ready_callback:
@@ -77,6 +87,8 @@ class MidiHandler:
         """Set the MIDI interface to use."""
         self.midi_interface = midi_interface
         log(TAG_PATCH, "MIDI interface set")
+        # Set up initial handlers
+        self.setup_handlers()
 
     def handle_message(self, msg):
         """Log and route incoming MIDI messages."""

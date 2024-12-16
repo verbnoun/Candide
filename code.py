@@ -45,15 +45,7 @@ class Candide:
         log(TAG_CANDIDE, "Initializing audio system...")
         self.audio_system = AudioSystem()
 
-        # 2. Initialize blank synth setup
-        log(TAG_CANDIDE, "Initializing synthesizer...")
-        self.synthesizer = Synthesizer(self.midi_interface, self.audio_system)
-
-        # 3. Initialize instrument manager
-        log(TAG_CANDIDE, "Initializing instrument manager...")
-        self.instrument_manager = InstrumentManager()
-
-        # 4. Initialize connection manager (passive)
+        # 2. Initialize connection manager first (passive)
         log(TAG_CANDIDE, "Initializing connection manager...")
         self.connection_manager = ConnectionManager(
             self.text_uart,
@@ -61,15 +53,35 @@ class Candide:
             self.hardware_manager
         )
 
-        # 5. Set up observers
+        # 3. Initialize synth with connection manager
+        log(TAG_CANDIDE, "Initializing synthesizer...")
+        self.synthesizer = Synthesizer(
+            self.midi_interface, 
+            self.audio_system,
+            self.connection_manager  # Pass connection manager during init
+        )
+
+        # 4. Give connection manager access to router
+        self.connection_manager.set_path_parser(self.synthesizer.path_parser)
+
+        # 5. Initialize instrument manager
+        log(TAG_CANDIDE, "Initializing instrument manager...")
+        self.instrument_manager = InstrumentManager()
+
+        # 6. Set up observers in order
         log(TAG_CANDIDE, "Setting up component observers...")
-        # Setup observes both connection and instrument changes
-        self.connection_manager.add_observer(self.synthesizer.setup)
+        # Setup gets notified first (headstart for synth management)
         self.instrument_manager.add_observer(self.synthesizer.setup)
+        # Connection gets notified second (for config sending)
+        self.instrument_manager.add_observer(self.connection_manager)
+        # Connection state changes go to setup
+        self.connection_manager.add_state_observer(self.synthesizer.setup)
         
-        # 6. Set initial instrument
+        # 7. Set initial instrument (this will parse paths before connection can send config)
         log(TAG_CANDIDE, "Setting initial instrument...")
         initial_instrument = self.instrument_manager.get_available_instruments()[0]
+        # Small delay to ensure setup is ready
+        time.sleep(0.1)
         self.instrument_manager.set_instrument(initial_instrument)
 
         try:
@@ -81,7 +93,7 @@ class Candide:
             
             _cycle_log("\nCandide (v1.0) is awake!... ( ◔◡◔)♬\n")
 
-            # 7. Start connection detection
+            # 8. Start connection detection
             log(TAG_CANDIDE, "Checking for base station...")
             # Just check state - connection manager will handle detection in update loop
             if self.hardware_manager.is_base_station_detected():

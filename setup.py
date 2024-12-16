@@ -21,6 +21,11 @@ class SynthesizerSetup:
         self.CC_TIMEOUT = 2.0  # Timeout in seconds
         log(TAG_SETUP, "Setup initialized with midi_interface and audio_system")
         
+    def set_connection_manager(self, connection_manager):
+        """Set connection manager reference."""
+        self.connection_manager = connection_manager
+        log(TAG_SETUP, "Connection manager reference set")
+        
     def initialize(self):
         from synthesizer import SynthStore, SynthMonitor
         
@@ -116,8 +121,13 @@ class SynthesizerSetup:
 
     def on_connection_state_change(self, new_state):
         """Handle connection state changes."""
-        if new_state == ConnectionState.CONNECTED:
+        if new_state == ConnectionState.DETECTED:
+            log(TAG_SETUP, "Base station detected - preparing for MIDI updates")
+            # Just update state - wait for CONNECTED before proceeding
+            
+        elif new_state == ConnectionState.CONNECTED:
             log(TAG_SETUP, "Connection established - synth will wait for MIDI updates")
+            
         elif new_state == ConnectionState.STANDALONE:
             log(TAG_SETUP, "Connection lost - synth will use startup values only")
             
@@ -152,7 +162,7 @@ class SynthesizerSetup:
             self.synthesizer.path_parser.parse_paths(paths, config_name)
             
             # Check if connected to base station
-            if self.connection_manager and self.connection_manager.is_connected():
+            if self.connection_manager and self.connection_manager.get_state() == ConnectionState.CONNECTED:
                 log(TAG_SETUP, "Base station connected - waiting for MIDI updates")
                 
                 # Track expected CCs
@@ -163,18 +173,10 @@ class SynthesizerSetup:
                 # Set up store update callback
                 self.synthesizer.state.set_store_update_callback(self.handle_store_update)
                 
-                # Tell connection manager to send config
-                log(TAG_SETUP, "Requesting config string send...")
-                config_string = self.synthesizer.path_parser.get_cc_configs()
-                self.connection_manager.send_config(config_string)
-                
+                # Wait for CC updates
                 while True:
                     log(TAG_SETUP, f"Waiting for {len(self.expected_ccs)} CC updates - synthesizer not initialized...")
                     self.wait_start_time = time.monotonic()
-                    
-                    # Set up handlers which sends config string
-                    log(TAG_SETUP, "Setting up MIDI handlers...")
-                    self.synthesizer.midi_handler.setup_handlers()
                     
                     # Wait for CC updates or timeout
                     if self.wait_for_cc_updates():
@@ -191,7 +193,7 @@ class SynthesizerSetup:
                 self.synthesizer.midi_handler.send_startup_values()
                 
             else:
-                log(TAG_SETUP, "No base station - initializing with startup values only")
+                log(TAG_SETUP, "No base station connection - initializing with startup values only")
                 # Send startup values directly
                 self.synthesizer.midi_handler.send_startup_values()
             

@@ -238,7 +238,8 @@ class PathParser:
         self.startup_values = {}
         self.enabled_messages = set()
         self.enabled_ccs = []  # Changed to list to maintain order
-        self.current_instrument_name = None  # Added to store current instrument name
+        self.current_instrument_name = None
+        self.on_paths_parsed = None  # Callback for when paths are parsed
         
     def parse_paths(self, paths, config_name=None):
         log(TAG_ROUTE, "Parsing instrument paths...")
@@ -287,6 +288,10 @@ class PathParser:
                 log(TAG_ROUTE, f"Enabled CCs: {self.enabled_ccs}")
                 
             log(TAG_ROUTE, "----------------------------------------")
+            
+            # Notify patcher that paths have been parsed
+            if self.on_paths_parsed:
+                self.on_paths_parsed()
             
         except Exception as e:
             log(TAG_ROUTE, f"Failed to parse paths: {str(e)}", is_error=True)

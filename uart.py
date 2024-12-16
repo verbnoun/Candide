@@ -17,20 +17,16 @@ class UartTransport:
         self.rx_pin = rx_pin
         self.baudrate = baudrate
         self.timeout = timeout
+        self._tx_queue = []       # Simple list for CircuitPython
+        self._tx_busy = False     # Flag to track if currently sending
         self._initialize_uart()
 
     def _initialize_uart(self):
         """Initialize UART with specified parameters"""
         try:
-            self.uart = busio.UART(
-                tx=self.tx_pin,
-                rx=self.rx_pin,
-                baudrate=self.baudrate,
-                timeout=self.timeout,
-                bits=8,
-                parity=None,
-                stop=1
-            )
+            self.uart = busio.UART(self.tx_pin, self.rx_pin,
+                                 baudrate=self.baudrate,
+                                 timeout=self.timeout)
             log(TAG_UART, f"UART initialized: baudrate={self.baudrate}, timeout={self.timeout}")
         except Exception as e:
             log(TAG_UART, f"UART initialization failed: {str(e)}", is_error=True)
@@ -38,9 +34,38 @@ class UartTransport:
 
     def write(self, data):
         """Write data to UART"""
-        if data:
-            return self.uart.write(bytes(data) if isinstance(data, str) else data)
-        return 0
+        if not data:
+            return 0
+            
+        # Convert to bytes if string
+        data_bytes = bytes(data) if isinstance(data, str) else data
+        
+        # Add to queue
+        self._tx_queue.append(data_bytes)
+        
+        # Process queue if not busy
+        if not self._tx_busy:
+            return self._process_tx_queue()
+        return len(data_bytes)  # Return length of queued data
+
+    def _process_tx_queue(self):
+        """Process queued TX messages one at a time"""
+        if self._tx_busy or not self._tx_queue:
+            return 0
+
+        try:
+            self._tx_busy = True
+            data = self._tx_queue.pop(0)  # Use pop(0) instead of popleft()
+            bytes_written = self.uart.write(data)
+            return bytes_written
+        except Exception as e:
+            log(TAG_UART, f"TX error: {str(e)}", is_error=True)
+            return 0
+        finally:
+            self._tx_busy = False
+            # Process next message if queue not empty
+            if self._tx_queue:
+                self._process_tx_queue()
 
     def read(self, size=None):
         """Read from UART"""
@@ -68,6 +93,9 @@ class UartTransport:
             # Fallback for CircuitPython UART
             while self.in_waiting:
                 self.uart.read()
+        # Clear TX queue
+        self._tx_queue.clear()
+        self._tx_busy = False
         log(TAG_UART, "Buffers flushed")
 
     def cleanup(self):
@@ -82,10 +110,16 @@ class TextProtocol:
     def __init__(self, transport):
         self.transport = transport
         self.message_timeout = MESSAGE_TIMEOUT
+        self._message_counter = 0  # Counter for message numbering (0-9)
 
     def write(self, message):
         if not isinstance(message, str):
             message = str(message)
+        # Get current counter value and increment
+        n = self._message_counter
+        self._message_counter = (self._message_counter + 1) % 10  # Wrap 0-9
+        # Add numbered brackets to all messages
+        message = f"[{n}[{message.strip()}]{n}]"
         if not message.endswith('\n'):
             message += '\n'
         return self.transport.write(message.encode('utf-8'))
