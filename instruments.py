@@ -10,6 +10,11 @@ channel/press_voice/note_on
 channel/release_voice/note_off
 channel/set_frequency/note_number/note_on
 
+
+
+'''
+"""
+
 synth/set_synth_filter_low_pass_frequency/200-2000/cc71
 synth/set_synth_filter_low_pass_resonance/0.1-2/cc22
 
@@ -19,9 +24,6 @@ synth/set_envelope_attack_time/0.001-0.5/cc73
 synth/set_envelope_decay_time/0.001-0.25/cc75
 synth/set_envelope_sustain_level/0.001-1/cc66
 synth/set_envelope_release_time/0.001-2/cc72
-
-'''
-"""
 channel/set_amplitude/0.1-1/pressure
 """
 

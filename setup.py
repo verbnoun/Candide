@@ -14,11 +14,6 @@ class SynthesizerSetup:
         self.midi_interface = midi_interface
         self.synthesizer = None
         self.connection_manager = None
-        self.waiting_for_cc = False
-        self.expected_ccs = set()
-        self.received_ccs = set()
-        self.wait_start_time = None
-        self.CC_TIMEOUT = 2.0  # Timeout in seconds
         log(TAG_SETUP, "Setup initialized with midi_interface and audio_system")
         
     def set_connection_manager(self, connection_manager):
@@ -81,52 +76,13 @@ class SynthesizerSetup:
             log(TAG_SETUP, f"Failed to initialize synthio: {str(e)}", is_error=True)
             raise
 
-    def handle_store_update(self, param_name):
-        """Handle store updates during instrument changes."""
-        if not self.waiting_for_cc:
-            return
-            
-        # Extract CC number from param name if it's from a CC update
-        for cc in self.expected_ccs:
-            if str(cc) in param_name:
-                self.received_ccs.add(cc)
-                remaining = len(self.expected_ccs) - len(self.received_ccs)
-                log(TAG_SETUP, f"Received CC {cc}, waiting for {remaining} more...")
-                break
-
-    def check_cc_timeout(self):
-        """Check if we've timed out waiting for CC updates."""
-        if not self.waiting_for_cc or not self.wait_start_time:
-            return False
-            
-        if time.monotonic() - self.wait_start_time > self.CC_TIMEOUT:
-            missing = self.expected_ccs - self.received_ccs
-            log(TAG_SETUP, f"Timed out waiting for CCs: {sorted(list(missing))}")
-            return True
-        return False
-
-    def wait_for_cc_updates(self):
-        """Wait for all expected CC updates or timeout."""
-        while self.waiting_for_cc:
-            if len(self.received_ccs) == len(self.expected_ccs):
-                log(TAG_SETUP, "Received all expected CC updates")
-                self.waiting_for_cc = False
-                return True
-                
-            if self.check_cc_timeout():
-                return False
-                    
-            time.sleep(0.1)  # Small sleep to prevent tight loop
-        return True
-
     def on_connection_state_change(self, new_state):
         """Handle connection state changes."""
         if new_state == ConnectionState.DETECTED:
             log(TAG_SETUP, "Base station detected - preparing for MIDI updates")
-            # Just update state - wait for CONNECTED before proceeding
             
         elif new_state == ConnectionState.CONNECTED:
-            log(TAG_SETUP, "Connection established - synth will wait for MIDI updates")
+            log(TAG_SETUP, "Connection established - synth ready for MIDI updates")
             
         elif new_state == ConnectionState.STANDALONE:
             log(TAG_SETUP, "Connection lost - synth will use startup values only")
@@ -161,43 +117,18 @@ class SynthesizerSetup:
                 log(TAG_SETUP, f"Using config: {config_name}")
             self.synthesizer.path_parser.parse_paths(paths, config_name)
             
-            # Check if connected to base station
+            # 4. Send config if connected
             if self.connection_manager and self.connection_manager.get_state() == ConnectionState.CONNECTED:
-                log(TAG_SETUP, "Base station connected - waiting for MIDI updates")
-                
-                # Track expected CCs
-                self.expected_ccs = set(self.synthesizer.path_parser.enabled_ccs)
-                self.received_ccs.clear()
-                self.waiting_for_cc = True
-                
-                # Set up store update callback
-                self.synthesizer.state.set_store_update_callback(self.handle_store_update)
-                
-                # Wait for CC updates
-                while True:
-                    log(TAG_SETUP, f"Waiting for {len(self.expected_ccs)} CC updates - synthesizer not initialized...")
-                    self.wait_start_time = time.monotonic()
-                    
-                    # Wait for CC updates or timeout
-                    if self.wait_for_cc_updates():
-                        log(TAG_SETUP, "Store populated with MIDI values")
-                        break
-                    
-                    log(TAG_SETUP, "Retrying CC updates...")
-                
-                # Clear callback now that we're done waiting for updates
-                self.synthesizer.state.set_store_update_callback(None)
-                
-                # Now send startup values after MIDI updates
-                log(TAG_SETUP, "Sending startup values...")
-                self.synthesizer.midi_handler.send_startup_values()
-                
+                log(TAG_SETUP, "Base station connected - sending config")
+                self.connection_manager.send_config()
             else:
-                log(TAG_SETUP, "No base station connection - initializing with startup values only")
-                # Send startup values directly
-                self.synthesizer.midi_handler.send_startup_values()
+                log(TAG_SETUP, "No base station connection")
             
-            # Create new synth with populated store
+            # 5. Send startup values
+            log(TAG_SETUP, "Sending startup values...")
+            self.synthesizer.midi_handler.send_startup_values()
+            
+            # 6. Create new synth with populated store
             log(TAG_SETUP, "Creating new synthesizer instance...")
             self.synthesizer.synth = self.setup_synthio(self.synthesizer.state)
             

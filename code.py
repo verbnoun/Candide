@@ -72,8 +72,6 @@ class Candide:
         log(TAG_CANDIDE, "Setting up component observers...")
         # Setup gets notified first (headstart for synth management)
         self.instrument_manager.add_observer(self.synthesizer.setup)
-        # Connection gets notified second (for config sending)
-        self.instrument_manager.add_observer(self.connection_manager)
         # Connection state changes go to setup
         self.connection_manager.add_state_observer(self.synthesizer.setup)
         
@@ -161,3 +159,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

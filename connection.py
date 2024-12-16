@@ -82,16 +82,39 @@ class ConnectionManager:
                 
             # Send complete message
             self.uart.write(message)
-            self.last_heartbeat_time = time.monotonic()  # Any message counts as heartbeat
+            
+            # Only update heartbeat time for regular heartbeats
+            if is_heartbeat and message == "♡\n":
+                self.last_heartbeat_time = time.monotonic()
+                
             return True
             
         except Exception as e:
             log(TAG_CONNECT, f"Failed to send message: {str(e)}", is_error=True)
             return False
 
-    def send_config(self):
-        """Send CC configuration to Bartleby."""
+    def _send_rapid_hearts(self):
+        """Send 7 hearts as fast as possible."""
         try:
+            log(TAG_CONNECT, "Sending 7 rapid hearts")
+            for _ in range(7):
+                # Send heart without affecting heartbeat timing
+                if not self.uart.write("♡\n"):
+                    return False
+            return True
+        except Exception as e:
+            log(TAG_CONNECT, f"Failed to send rapid hearts: {str(e)}", is_error=True)
+            return False
+
+    def send_config(self):
+        """Send CC configuration to Bartleby. Can be called by:
+        1. Handshake (_handle_initial_detection)
+        2. Synth setup (during instrument changes)"""
+        try:
+            # Send 7 rapid hearts before config
+            # if not self._send_rapid_hearts():
+            #     return False
+            
             # Pull config string from router
             if not self.path_parser:
                 log(TAG_CONNECT, "No path parser available", is_error=True)
@@ -106,10 +129,8 @@ class ConnectionManager:
             else:
                 log(TAG_CONNECT, f"Preparing config string: {config_string}")
             
-            # Send config
-            if self._send_message(config_string):
-                self._transition_to_connected()
-                return True
+            # Just send config - no state transition
+            return self._send_message(config_string)
                 
         except Exception as e:
             log(TAG_CONNECT, f"Failed to send config: {str(e)}", is_error=True)
@@ -134,8 +155,9 @@ class ConnectionManager:
             self.state = ConnectionState.DETECTED
             self._notify_state_change(ConnectionState.DETECTED)
             
-            # Pull and send current config
-            self.send_config()
+            # For initial detection: send config and transition if successful
+            if self.send_config():
+                self._transition_to_connected()
         
     def _handle_disconnection(self):
         """Handle base station disconnection."""
@@ -160,12 +182,6 @@ class ConnectionManager:
     def get_state(self):
         """Get current connection state."""
         return self.state
-
-    def on_instrument_change(self, instrument_name, config_name, paths):
-        """Handle instrument changes by always sending new config if base station is detected."""
-        if self.hardware.is_base_station_detected():
-            log(TAG_CONNECT, f"Instrument changed to {instrument_name} - sending new config")
-            self.send_config()
 
     def cleanup(self):
         """Clean up resources when shutting down."""
