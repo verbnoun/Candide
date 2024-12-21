@@ -4,8 +4,10 @@ import array
 import math
 import synthio
 from logging import log, TAG_ROUTE, format_value
+import synthio
 from synth_wave import WaveManager
 from constants import STATIC_WAVEFORM_SAMPLES
+from path_parser import PathParser
 
 # Complete type specification for parameters
 PARAM_TYPES = {
@@ -54,6 +56,39 @@ PER_NOTE_PARAMS = {
     'filter', 'ring_frequency', 'ring_bend',
     'ring_waveform', 'ring_waveform_loop_start',
     'ring_waveform_loop_end'
+}
+
+# Message type definitions
+MESSAGE_TYPES = {
+    'note_on': {
+        'collect': ['frequency', 'velocity', 'pressure'],  # Values to collect
+        'attributes': ['note', 'velocity', 'pressure'],    # Where to get them
+        'convert': {
+            'note': 'frequency',      # Convert note number to frequency
+            'velocity': 'amplitude'    # Convert velocity to amplitude
+        },
+        'requires': ['frequency'],    # Required for note press
+        'action': 'press_note'        # Action to take
+    },
+    'note_off': {
+        'collect': ['release_velocity'],
+        'attributes': ['release_velocity'],
+        'action': 'release_note'
+    },
+    'cc': {
+        'collect': ['value'],
+        'attributes': ['value'],
+        'per_cc': True  # Each CC number has its own routes
+    },
+    'pitch_bend': {
+        'collect': ['bend'],
+        'attributes': ['bend'],
+        'is_14_bit': True  # Uses 14-bit value range
+    },
+    'channel_pressure': {
+        'collect': ['pressure'],
+        'attributes': ['pressure']
+    }
 }
 
 def format_instrument_name(name):
@@ -253,14 +288,20 @@ class Route:
             raise ValueError(f"Invalid range format {range_str}: {str(e)}")
     
     def _build_note_to_freq_lookup(self):
-        for i in range(128):
-            self.lookup_table[i] = self.wave_manager.midi_to_hz(i)
+        """Build lookup table for MIDI note number to Hz conversion."""
+        # Create 128-entry table (0-127 MIDI notes)
+        self.lookup_table = array.array('f', [0] * 128)
+        
+        # Fill table with Hz values using synthio's converter
+        for note in range(128):
+            self.lookup_table[note] = synthio.midi_to_hz(note)
             
-        log(TAG_ROUTE, "Note to Hz lookup table for {} (sample values):".format(self.name))
-        log(TAG_ROUTE, "  0: {:.2f} Hz".format(self.lookup_table[0]))
-        log(TAG_ROUTE, " 60 (middle C): {:.2f} Hz".format(self.lookup_table[60]))
-        log(TAG_ROUTE, " 69 (A440): {:.2f} Hz".format(self.lookup_table[69]))
-        log(TAG_ROUTE, "127: {:.2f} Hz".format(self.lookup_table[127]))
+        # Log some key notes
+        log(TAG_ROUTE, f"Created Hz lookup table for {self.name}:")
+        log(TAG_ROUTE, f"  Note   0: {self.lookup_table[0]:.1f} Hz")  # C-1
+        log(TAG_ROUTE, f"  Note  60: {self.lookup_table[60]:.1f} Hz") # Middle C
+        log(TAG_ROUTE, f"  Note  69: {self.lookup_table[69]:.1f} Hz") # A440
+        log(TAG_ROUTE, f"  Note 127: {self.lookup_table[127]:.1f} Hz")
         
     def _build_lookup(self):
         table_size = len(self.lookup_table)
@@ -286,421 +327,210 @@ class Route:
         log(TAG_ROUTE, f"  Target type: {target_type}") 
         log(TAG_ROUTE, f"  Error: {str(error)}")
     
-    def convert(self, midi_value):
-        max_val = 16383 if self.is_14_bit else 127
-        if not 0 <= midi_value <= max_val:
-            log(TAG_ROUTE, "Invalid MIDI value {} for {}".format(midi_value, self.name), is_error=True)
-            raise ValueError(f"MIDI value must be between 0 and {max_val}")
-            
+    def convert(self, value):
+        """Get value from lookup table or fixed value."""
         if self.fixed_value is not None:
             return self.fixed_value
             
         if self.lookup_table is None:
             if self.is_waveform_sequence:
-                morph_position = midi_value / 127.0
+                morph_position = value / 127.0
                 return self.wave_manager.create_morphed_waveform(self.waveform_sequence, morph_position)
-            return midi_value
+            return value
             
-        value = self.lookup_table[midi_value]
-        
-        # Type conversion based on parameter type
-        try:
-            if self.fixed_value is not None:
-                return self.fixed_value  # Return any fixed value (including booleans) directly
-            elif self.param_type == 'block':
-                # Create Math block to hold value
-                return synthio.Math(
-                    operation=synthio.MathOperation.SUM,
-                    a=float(value),
-                    b=0.0,
-                    c=0.0
-                )
-            elif self.param_type == 'int':
-                return int(value)
-            elif self.param_type == 'float':
-                return float(value)
-            else:
-                return value  # For special types (waveform, filter, envelope)
-        except (TypeError, ValueError) as e:
-            self._log_conversion_error(value, self.param_type, e)
-            raise
+        return self.lookup_table[value]
 
-# Global router service
-_parser = None
-
-def get_router():
-    """Get the global router service instance."""
-    global _parser
-    if _parser is None:
-        _parser = PathParser()
-    return _parser
-
-class PathParser:
-    """Path parsing service that provides parsed info to components."""
+class Router:
+    """Route management service that creates and manages routes based on parsed path data."""
     def __init__(self):
         self.wave_manager = WaveManager()
         self.midi_mappings = {}
         self.startup_values = {}
         self.enabled_messages = set()
-        self.enabled_ccs = []  # Changed to list to maintain order
+        self.enabled_ccs = []
         self.current_instrument_name = None
-        self.on_paths_parsed = None  # Callback for when paths are parsed
-        
-        # LFO tracking
-        self.lfo_params = {}  # lfo_name -> {param: value}
-        self.lfo_routes = {}  # param -> lfo_name
+        self.on_paths_parsed = None
+        self.path_parser = PathParser()
         
     def parse_paths(self, paths, config_name=None):
+        """Parse paths and create routes."""
         log(TAG_ROUTE, "Parsing instrument paths...")
         log(TAG_ROUTE, "----------------------------------------")
         
-        if config_name:
-            log(TAG_ROUTE, f"Using paths configuration: {config_name}")
-            # Extract instrument name from config name (remove _PATHS suffix)
-            if config_name.endswith('_PATHS'):
-                self.current_instrument_name = config_name[:-6].lower()
-        
         try:
-            self._reset()
+            # Reset state
+            self.midi_mappings.clear()
+            self.startup_values.clear()
+            self.enabled_messages.clear()
+            self.enabled_ccs = []
             
-            if not paths:
-                raise ValueError("No paths provided")
-                
-            for line in paths.strip().split('\n'):
-                if not line or line.startswith('#'):
-                    continue
-                    
-                try:
-                    parts = line.strip().split('/')
-                    self._parse_line(parts)
-                except Exception as e:
-                    log(TAG_ROUTE, f"Error parsing path: {line} - {str(e)}", is_error=True)
-                    raise
-                    
-            log(TAG_ROUTE, "Complete routing table:")
-            log(TAG_ROUTE, "MIDI Mappings:")
-            for midi_value, actions in self.midi_mappings.items():
-                log(TAG_ROUTE, f"{midi_value} -> [")
-                for action in actions:
-                    log(TAG_ROUTE, f"  {format_value(action)}")
-                log(TAG_ROUTE, "]")
-                
-            log(TAG_ROUTE, "Startup Values:")
-            for handler, value in self.startup_values.items():
-                if handler.endswith('waveform'):
-                    log(TAG_ROUTE, f"{handler} -> Waveform configured")
-                else:
-                    log(TAG_ROUTE, f"{handler} -> {format_value(value)}")
-                
-            log(TAG_ROUTE, f"Enabled messages: {self.enabled_messages}")
-            if 'cc' in self.enabled_messages:
-                log(TAG_ROUTE, f"Enabled CCs: {self.enabled_ccs}")
-                
-            log(TAG_ROUTE, "----------------------------------------")
+            # Parse paths
+            parse_result = self.path_parser.parse_paths(paths, config_name)
+            
+            # Create routes from parse result
+            self._create_routes(parse_result)
+            
+            # Store results
+            self.midi_mappings = parse_result.midi_mappings
+            self.startup_values = parse_result.startup_values
+            self.enabled_messages = parse_result.enabled_messages
+            self.enabled_ccs = parse_result.enabled_ccs
+            self.current_instrument_name = parse_result.current_instrument_name
             
             # Notify listeners that paths have been parsed
             if self.on_paths_parsed:
                 self.on_paths_parsed()
-            
+                
         except Exception as e:
             log(TAG_ROUTE, f"Failed to parse paths: {str(e)}", is_error=True)
             raise
+            
+    def _create_routes(self, parse_result):
+        """Create routes from parsed path data."""
+        # Create note-to-freq route first
+        freq_route = Route('frequency', is_note_to_freq=True, wave_manager=self.wave_manager)
+        
+        # Create routes for MIDI mappings
+        for midi_value, actions in parse_result.midi_mappings.items():
+            for action in actions:
+                # Special case for note-to-freq
+                if action['handler'] == 'frequency':
+                    action['route'] = freq_route
+                    continue
+                    
+                # Handle other routes
+                if action.get('needs_route'):
+                    route_info = action['route_info']
+                    
+                    if route_info['type'] == 'waveform_sequence':
+                        route = Route(
+                            action['handler'],
+                            waveform_sequence=route_info['sequence'],
+                            wave_manager=self.wave_manager
+                        )
+                    elif route_info['type'] == 'range':
+                        min_val, max_val = route_info['range']
+                        route = Route(
+                            action['handler'],
+                            min_val=min_val,
+                            max_val=max_val,
+                            is_14_bit=route_info.get('is_14_bit', False),
+                            wave_manager=self.wave_manager
+                        )
+                    elif route_info['type'] == 'fixed':
+                        route = Route(
+                            action['handler'],
+                            fixed_value=route_info['value'],
+                            wave_manager=self.wave_manager
+                        )
+                    
+                    action['route'] = route
+                    del action['needs_route']
+                    del action['route_info']
+        
+        # Create routes for startup values
+        for handler, config in parse_result.startup_values.items():
+            value = config['value']
+            if isinstance(value, dict):
+                if value['type'] == 'waveform':
+                    try:
+                        config['value'] = self.wave_manager.create_waveform(
+                            value['name'],
+                            STATIC_WAVEFORM_SAMPLES
+                        )
+                    except Exception as e:
+                        log(TAG_ROUTE, f"Failed to create waveform: {str(e)}", is_error=True)
+                        raise
+                elif value['type'] == 'range':
+                    route = Route(
+                        handler,
+                        min_val=value['range'][0],
+                        max_val=value['range'][1],
+                        wave_manager=self.wave_manager
+                    )
+                    config['value'] = route.convert(0)
+            else:
+                # Create route to handle type conversion
+                route = Route(
+                    handler,
+                    fixed_value=value,
+                    wave_manager=self.wave_manager
+                )
+                config['value'] = route.convert(0)
     
-    def _reset(self):
-        self.midi_mappings.clear()
-        self.startup_values.clear()
-        self.enabled_messages.clear()
-        self.enabled_ccs = []  # Reset to empty list
-        self.lfo_params.clear()
-        self.lfo_routes.clear()
-
-    def _parse_range(self, range_str):
-        """Parse a range string into min and max values.
+    def get_startup_values(self):
+        """Get startup values and LFO config.
+        
+        Returns:
+            Tuple of (startup_values, lfo_config)
+            Note: lfo_config is empty as LFOs are handled by synth
+        """
+        return (self.startup_values.copy(), {})
+    
+    def get_midi_mappings(self):
+        """Get MIDI mappings."""
+        return self.midi_mappings.copy()
+    
+    def get_message_type(self, msg):
+        """Get message type definition for a MIDI message.
         
         Args:
-            range_str: String in format "min-max" or "nmin-max" for negative min
+            msg: MIDI message to get type for
             
         Returns:
-            Tuple of (min_val, max_val) as floats
+            Message type definition from MESSAGE_TYPES
         """
-        try:
-            if '-' not in range_str:
-                raise ValueError(f"Invalid range format: {range_str}")
-                
-            min_str, max_str = range_str.split('-')
+        msg_type = msg.type
+        if msg_type == 'note_on' and msg.velocity == 0:
+            msg_type = 'note_off'
+        return MESSAGE_TYPES.get(msg_type)
+    
+    def get_message_values(self, msg, msg_type):
+        """Get values from a MIDI message based on type definition.
+        
+        Args:
+            msg: MIDI message to get values from
+            msg_type: Message type definition from MESSAGE_TYPES
             
-            if min_str.startswith('n'):
-                min_val = -float(min_str[1:])
-            else:
-                min_val = float(min_str)
-                
-            max_val = float(max_str)
-            
-            # Log the parsed range
-            log(TAG_ROUTE, f"Parsed range {range_str} -> {min_val} to {max_val}")
-            
-            return min_val, max_val
-            
-        except ValueError as e:
-            raise ValueError(f"Invalid range format {range_str}: {str(e)}")
-            
-    def _parse_line(self, parts):
-        if len(parts) < 3:
-            raise ValueError(f"Invalid path format: {'/'.join(parts)}")
-            
-        scope = parts[0]
-        handler = parts[1]
-        value_or_range = parts[2]
-
-        # Note handling
-        if handler in ('press_note', 'release_note'):
-            if scope != 'channel':
-                raise ValueError(f"Invalid scope for note handling: {scope}")
-            if value_or_range not in ('note_on', 'note_off'):
-                raise ValueError(f"Invalid trigger for note handling: {value_or_range}")
-                
-            midi_value = value_or_range
-            if midi_value not in self.midi_mappings:
-                self.midi_mappings[midi_value] = []
-            
-            action = {
-                'handler': handler,
-                'scope': 'channel',
-                'use_channel': True
-            }
-            self.midi_mappings[midi_value].append(action)
-            self.enabled_messages.add(midi_value)
-            return
-
-        # Map paths to store parameters
-        if ':' in handler:
-            if handler.startswith('envelope:'):
-                # Format: scope/envelope:param/value/trigger
-                _, param = handler.split(':')
-                # Store as envelope parameter
-                handler = f"envelope_{param}"
-                
-            elif handler.startswith('filter_frequency:'):
-                # Format: scope/filter_frequency:type/value/trigger
-                _, filter_type = handler.split(':')
-                # Store filter type and frequency
-                self.startup_values['filter_type'] = {
-                    'value': filter_type,
-                    'use_channel': scope == 'channel'
-                }
-                handler = 'filter_frequency'
-                
-            elif handler.startswith('filter_resonance:'):
-                # Format: scope/filter_resonance:type/value/trigger
-                _, filter_type = handler.split(':')
-                # Store filter type and Q
-                self.startup_values['filter_type'] = {
-                    'value': filter_type,
-                    'use_channel': scope == 'channel'
-                }
-                handler = 'filter_q'
-
-        # LFO parameter definition
-        if handler == 'lfo':
-            # Format: scope/lfo/param/name:value/[trigger]
-            if len(parts) < 4:
-                raise ValueError("Invalid LFO parameter path")
-            param = value_or_range
-            name_value = parts[3]
-            if ':' not in name_value:
-                raise ValueError("Invalid LFO name:value format")
-            name_parts = name_value.split(':')
-            if len(name_parts) != 2:
-                raise ValueError("Invalid LFO name:value format")
-                
-            lfo_name = name_parts[0]  # Get LFO name first
-            value = name_parts[1]
-            handler = f"lfo_{param}_{lfo_name}"
-            value_or_range = value
-            
-            # Add handler to PARAM_TYPES if not already there
-            if handler not in PARAM_TYPES:
-                base_type = f"lfo_{param}"  # e.g. lfo_rate, lfo_scale
-                PARAM_TYPES[handler] = PARAM_TYPES.get(base_type, 'block')
-                
-            log(TAG_ROUTE, f"Processing LFO parameter: {lfo_name}.{param} = {value}")
-            
-            # If MIDI trigger present, enable it and create route
-            if len(parts) > 4:
-                midi_value = parts[4]
-                # Handle all MIDI triggers for LFO parameters
-                if midi_value.startswith('cc'):
-                    cc_num = int(midi_value[2:])
-                    self.enabled_messages.add('cc')
-                    if cc_num not in self.enabled_ccs:
-                        self.enabled_ccs.append(cc_num)
-                    midi_value = f"cc{cc_num}"
-                elif midi_value == 'pitch_bend':
-                    self.enabled_messages.add('pitch_bend')
-                elif midi_value == 'pressure':
-                    self.enabled_messages.add('channel_pressure')
-                    midi_value = 'channel_pressure'
-                elif midi_value == 'velocity':
-                    self.enabled_messages.add('note_on')
-                    midi_value = 'velocity'
-                
-                # Create route for MIDI control
-                if '-' in value:
-                    min_val, max_val = self._parse_range(value)
-                    is_14_bit = midi_value == 'pitch_bend'
-                    route = Route(handler, min_val=min_val, max_val=max_val, 
-                                is_14_bit=is_14_bit, wave_manager=self.wave_manager)
-                    
-                    # Add MIDI mapping
-                    if midi_value not in self.midi_mappings:
-                        self.midi_mappings[midi_value] = []
-                    self.midi_mappings[midi_value].append({
-                        'handler': handler,
-                        'scope': scope,
-                        'route': route,
-                        'use_channel': scope == 'channel'
-                    })
-            
-            # Store LFO parameter
-            if len(parts) == 4:
-                # Track LFO parameters
-                if lfo_name not in self.lfo_params:
-                    self.lfo_params[lfo_name] = {}
-                
-                # Check if value is a range
-                if '-' in value:
-                    min_val, max_val = self._parse_range(value)
-                    route = Route(handler, min_val=min_val, max_val=max_val, wave_manager=self.wave_manager)
-                    value = route.convert(0)  # Convert to BlockInput
-                else:
-                    # Try to convert value to float if possible
+        Returns:
+            Dict of collected values
+        """
+        values = {}
+        
+        # Handle note messages specially
+        if msg_type['action'] in ('press_note', 'release_note'):
+            # First get note-specific values
+            actions = self.midi_mappings.get('note_on', [])
+            for action in actions:
+                if 'route' in action:
                     try:
-                        value = float(value)
-                    except ValueError:
-                        pass  # Keep as string if not a valid float
-                
-                # Store parameter value
-                # Create route to handle type conversion
-                route = Route(handler, fixed_value=value, wave_manager=self.wave_manager)
-                block = route.convert(0)  # Convert to proper type (Math block for numeric)
-                self.lfo_params[lfo_name][param] = block
-                self.startup_values[handler] = {
-                    'value': block,
-                    'use_channel': scope == 'channel'
-                }
-                return
-
-        # Handle filter type in handler
-        if ':' in handler and (handler.startswith('filter_frequency:') or handler.startswith('filter_resonance:')):
-            # Format: scope/filter_param:type/value/trigger
-            param, filter_type = handler.split(':')
-            handler = f"{param}_{filter_type}"
-            
-            # Add handler to PARAM_TYPES if not already there
-            if handler not in PARAM_TYPES:
-                PARAM_TYPES[handler] = PARAM_TYPES.get(param, 'float')
-
-        # LFO routing
-        if value_or_range.startswith('lfo:'):
-            # Format: scope/target/lfo:name
-            lfo_name = value_or_range.split(':')[1].strip()
-            
-            # Track LFO routing
-            self.lfo_routes[handler] = lfo_name
-            
-            # Create route to handle LFO routing
-            route = Route(handler, fixed_value=value_or_range, wave_manager=self.wave_manager)
-            self.startup_values[handler] = {
-                'value': route.fixed_value,  # Store LFO routing string
-                'use_channel': scope == 'channel'
-            }
-            return
-
-        # Envelope parameters
-        elif ':' in handler and handler.startswith('envelope:'):
-            # Format: scope/envelope:param/value/trigger
-            _, param = handler.split(':')
-            handler = f"envelope_{param}"
+                        # Convert note number to frequency
+                        converted = action['route'].convert(msg.note)
+                        values[action['handler']] = converted
+                    except Exception as e:
+                        log(TAG_ROUTE, f"Failed to convert note value: {str(e)}", is_error=True)
         
-        if len(parts) == 4:
-            midi_value = parts[3]
-            
-            if midi_value.startswith('cc'):
-                cc_num = int(midi_value[2:])
-                self.enabled_messages.add('cc')
-                if cc_num not in self.enabled_ccs:  # Only add if not already present
-                    self.enabled_ccs.append(cc_num)  # Add to list to maintain order
-                midi_value = f"cc{cc_num}"
-            elif midi_value == 'pitch_bend':
-                self.enabled_messages.add('pitch_bend')
-            elif midi_value == 'pressure':
-                self.enabled_messages.add('channel_pressure')
-                midi_value = 'channel_pressure'
-            elif midi_value == 'velocity':
-                self.enabled_messages.add('note_on')
-                midi_value = 'velocity'
-            elif midi_value == 'note_on':
-                self.enabled_messages.add('note_on')
+        # Get standard attributes
+        for attr in msg_type['attributes']:
+            if hasattr(msg, attr):
+                values[attr] = getattr(msg, attr)
                 
-            # Check for waveform morphing before attempting to parse as range
-            if handler.endswith('waveform') and '-' in value_or_range:
-                waveform_sequence = value_or_range.split('-')
-                route = Route(handler, waveform_sequence=waveform_sequence, wave_manager=self.wave_manager)
-                log(TAG_ROUTE, f"Created waveform morph route: {handler} [{value_or_range}]")
-            elif '-' in value_or_range:
-                min_val, max_val = self._parse_range(value_or_range)
-                is_14_bit = midi_value == 'pitch_bend'
-                route = Route(handler, min_val=min_val, max_val=max_val, 
-                            param_type=PARAM_TYPES.get(handler),
-                            is_14_bit=is_14_bit, wave_manager=self.wave_manager)
-            elif value_or_range == 'note_number':
-                route = Route(handler, is_note_to_freq=True, wave_manager=self.wave_manager)
-            else:
-                route = Route(handler, fixed_value=value_or_range, wave_manager=self.wave_manager)
-                    
-            if midi_value not in self.midi_mappings:
-                self.midi_mappings[midi_value] = []
-                
-            action = {
-                'handler': handler,
-                'scope': scope,
-                'route': route,
-                'use_channel': scope == 'channel'
-            }
-            self.midi_mappings[midi_value].append(action)
-            
-        else:
-            if handler.endswith('waveform'):
-                try:
-                    value = self.wave_manager.create_waveform(value_or_range, STATIC_WAVEFORM_SAMPLES)
-                    self.startup_values[handler] = {
-                        'value': value,
-                        'use_channel': scope == 'channel'
-                    }
-                except Exception as e:
-                    log(TAG_ROUTE, f"Failed to create waveform: {str(e)}", is_error=True)
-                    raise
-            else:
-                # Create a Route to handle type conversion for startup values
-                route = Route(handler, fixed_value=value_or_range, wave_manager=self.wave_manager)
-                self.startup_values[handler] = {
-                    'value': route.convert(0),  # Convert using Route to ensure proper typing
-                    'use_channel': scope == 'channel'
-                }
-
-    def get_startup_values(self):
-        """Get startup values and LFO params.
+        return values
+    
+    def get_channel_scope(self, msg, action):
+        """Get channel scope for an action.
         
+        Args:
+            msg: MIDI message
+            action: Action from route table
+            
         Returns:
-            Tuple of (startup_values, lfo_params)
+            Channel number to use (0 for global)
         """
-        return (self.startup_values.copy(), self.lfo_params.copy())
-
-    def get_midi_mappings(self):
-        return self.midi_mappings.copy()
-
+        return 0 if msg.channel == 0 or not action['use_channel'] else msg.channel
+    
     def get_cc_configs(self):
-        """Generate CC configuration string using format configuration."""
+        """Generate CC configuration string."""
         pot_mappings = []
         for pot_num, cc_num in enumerate(self.enabled_ccs):
             midi_value = f"cc{cc_num}"
@@ -711,10 +541,10 @@ class PathParser:
                 if handler.startswith('set_'):
                     handler = handler[4:]
                 
-                # Get human-readable control label or use handler name as fallback
+                # Get human-readable control label
                 control_label = control_label_map.get(handler, handler)
                 
-                # Format pot mapping using configuration
+                # Format pot mapping
                 pot_str = config_format['pot_mapping']['format'].format(
                     pot_number=pot_num,
                     cc_number=cc_num,
@@ -722,20 +552,29 @@ class PathParser:
                 )
                 pot_mappings.append(pot_str)
         
-        # Build final string using structure configuration
+        # Build final string
         parts = []
         for element in config_format['structure']['order']:
             if element == 'cartridge_name':
                 parts.append('Candide')
             elif element == 'instrument_name':
-                # Format the instrument name if available
                 if self.current_instrument_name:
                     parts.append(format_instrument_name(self.current_instrument_name))
                 else:
-                    parts.append('')  # Empty string if no instrument name
+                    parts.append('')
             elif element == 'type':
                 parts.append('cc')
             elif element == 'pot_mappings':
                 parts.extend(pot_mappings)
         
         return config_format['structure']['separators']['main'].join(parts)
+
+# Global router service
+_router = None
+
+def get_router():
+    """Get the global router service instance."""
+    global _router
+    if _router is None:
+        _router = Router()
+    return _router

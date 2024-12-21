@@ -28,6 +28,7 @@ TAG_HARD = 'HARD   '     # hardware.py
 TAG_INST = 'INST   '     # instruments.py
 TAG_IFACE = 'IFACE  '    # interfaces.py
 TAG_MIDI = 'MIDI   '     # midi.py
+TAG_PARSER = 'PARSER '   # path_parser.py
 TAG_PATCH = 'PATCH  '    # patcher.py
 TAG_ROUTE = 'ROUTE  '    # router.py
 TAG_SYNTH = 'SYNTH  '    # synthesizer.py
@@ -39,9 +40,10 @@ TAG_COLORS = {
     TAG_CONNECT: COLOR_ORANGE,    # connection.py
     TAG_CONST: COLOR_YELLOW,      # constants.py
     TAG_HARD: COLOR_CHARTREUSE,   # hardware.py
-    TAG_INST: COLOR_VIOLET,         # instruments.py
+    TAG_INST: COLOR_VIOLET,       # instruments.py
     TAG_IFACE: COLOR_AZURE,       # interfaces.py
     TAG_MIDI: COLOR_GREEN,        # midi.py
+    TAG_PARSER: COLOR_MAGENTA,    # path_parser.py
     TAG_PATCH: COLOR_CYAN,        # patcher.py
     TAG_ROUTE: COLOR_BLUE,        # router.py
     TAG_SYNTH: COLOR_INDIGO,      # synthesizer.py
@@ -57,6 +59,7 @@ LOG_ENABLE = {
     TAG_INST: True,
     TAG_IFACE: False,
     TAG_MIDI: False,
+    TAG_PARSER: True,
     TAG_PATCH: True,
     TAG_ROUTE: True,
     TAG_SYNTH: True,
