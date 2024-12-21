@@ -39,6 +39,7 @@ PARAM_TYPES = {
     
     # Special Objects (handled separately)
     'filter': 'filter',
+    'filter_type': 'str',  # String value for synthio.FilterMode enum
     'waveform': 'waveform',
     'ring_waveform': 'waveform',
     'envelope': 'envelope',

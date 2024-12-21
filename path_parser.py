@@ -172,27 +172,22 @@ class PathParser:
                 handler = f"envelope_{param}"
                 log(TAG_PARSER, f"  Mapped envelope parameter: {param}")
                 
-            elif handler.startswith('filter_frequency:'):
-                # Format: scope/filter_frequency:type/value/trigger
+            elif handler.startswith('filter_frequency:') or handler.startswith('filter_resonance:'):
+                # Format: scope/filter_(frequency|resonance):type/value/trigger
                 _, filter_type = handler.split(':')
-                # Store filter type and frequency
-                result.startup_values['filter_type'] = {
-                    'value': filter_type,
-                    'use_channel': scope == 'channel'
-                }
-                handler = 'filter_frequency'
-                log(TAG_PARSER, f"  Mapped filter frequency: {filter_type}")
-                
-            elif handler.startswith('filter_resonance:'):
-                # Format: scope/filter_resonance:type/value/trigger
-                _, filter_type = handler.split(':')
-                # Store filter type and Q
-                result.startup_values['filter_type'] = {
-                    'value': filter_type,
-                    'use_channel': scope == 'channel'
-                }
-                handler = 'filter_q'
-                log(TAG_PARSER, f"  Mapped filter resonance: {filter_type}")
+                # Store filter type
+                if 'filter_type' not in result.startup_values:
+                    result.startup_values['filter_type'] = {
+                        'value': filter_type,
+                        'use_channel': scope == 'channel'
+                    }
+                # Map handler to appropriate parameter
+                if handler.startswith('filter_frequency:'):
+                    handler = 'filter_frequency'
+                    log(TAG_PARSER, f"  Mapped filter frequency: {filter_type}")
+                else:
+                    handler = 'filter_q'
+                    log(TAG_PARSER, f"  Mapped filter resonance: {filter_type}")
 
         # LFO parameter definition
         if handler == 'lfo':
