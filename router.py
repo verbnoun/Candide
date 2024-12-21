@@ -29,7 +29,7 @@ PARAM_TYPES = {
     'filter_frequency': 'block',
     'filter_q': 'block',
     
-    # LFO parameters (all must be block)
+    # LFO parameters
     'lfo_rate': 'block',      # Base type for all LFO rates
     'lfo_scale': 'block',     # Base type for all LFO scales
     'lfo_offset': 'block',    # Base type for all LFO offsets
@@ -54,14 +54,6 @@ PER_NOTE_PARAMS = {
     'filter', 'ring_frequency', 'ring_bend',
     'ring_waveform', 'ring_waveform_loop_start',
     'ring_waveform_loop_end'
-}
-
-# Filter mode mapping
-FILTER_MODES = {
-    'low_pass': synthio.FilterMode.LOW_PASS,
-    'high_pass': synthio.FilterMode.HIGH_PASS,
-    'band_pass': synthio.FilterMode.BAND_PASS,
-    'notch': synthio.FilterMode.NOTCH
 }
 
 def format_instrument_name(name):
@@ -313,7 +305,9 @@ class Route:
         
         # Type conversion based on parameter type
         try:
-            if self.param_type == 'block':
+            if self.fixed_value is not None:
+                return self.fixed_value  # Return any fixed value (including booleans) directly
+            elif self.param_type == 'block':
                 # Create Math block to hold value
                 return synthio.Math(
                     operation=synthio.MathOperation.SUM,
@@ -356,20 +350,6 @@ class PathParser:
         self.lfo_params = {}  # lfo_name -> {param: value}
         self.lfo_routes = {}  # param -> lfo_name
         
-        # Path tracking for block scope
-        self.paths = {}  # name -> [path_info]
-        
-    def get_paths_for_block(self, name):
-        """Get all paths that reference a block.
-        
-        Args:
-            name: Block identifier
-            
-        Returns:
-            List of path info dicts with scope and handler
-        """
-        return self.paths.get(name, [])
-        
     def parse_paths(self, paths, config_name=None):
         log(TAG_ROUTE, "Parsing instrument paths...")
         log(TAG_ROUTE, "----------------------------------------")
@@ -402,7 +382,7 @@ class PathParser:
             for midi_value, actions in self.midi_mappings.items():
                 log(TAG_ROUTE, f"{midi_value} -> [")
                 for action in actions:
-                    log(TAG_ROUTE, str(action))
+                    log(TAG_ROUTE, f"  {format_value(action)}")
                 log(TAG_ROUTE, "]")
                 
             log(TAG_ROUTE, "Startup Values:")
@@ -433,22 +413,6 @@ class PathParser:
         self.enabled_ccs = []  # Reset to empty list
         self.lfo_params.clear()
         self.lfo_routes.clear()
-        self.paths.clear()
-        
-    def _add_path(self, name, scope, handler):
-        """Add path info for block tracking.
-        
-        Args:
-            name: Block identifier
-            scope: Path scope ('synth' or 'channel')
-            handler: Parameter handler name
-        """
-        if name not in self.paths:
-            self.paths[name] = []
-        self.paths[name].append({
-            'scope': scope,
-            'handler': handler
-        })
 
     def _parse_range(self, range_str):
         """Parse a range string into min and max values.
@@ -487,11 +451,6 @@ class PathParser:
         scope = parts[0]
         handler = parts[1]
         value_or_range = parts[2]
-        
-        # Track path for block scope determination
-        if handler.startswith(('lfo_', 'filter_', 'ring_')):
-            name = handler.split('_', 1)[1]  # Get block name
-            self._add_path(name, scope, handler)
 
         # Note handling
         if handler in ('press_note', 'release_note'):
@@ -614,17 +573,11 @@ class PathParser:
                     route = Route(handler, min_val=min_val, max_val=max_val, wave_manager=self.wave_manager)
                     value = route.convert(0)  # Convert to BlockInput
                 else:
-                    # Handle boolean values for LFO params
-                    if value == 'true':
-                        value = True
-                    elif value == 'false':
-                        value = False
-                    else:
-                        # Try to convert value to float first
-                        try:
-                            value = float(value)
-                        except ValueError:
-                            pass  # Keep as string if not a valid float
+                    # Try to convert value to float if possible
+                    try:
+                        value = float(value)
+                    except ValueError:
+                        pass  # Keep as string if not a valid float
                 
                 # Store parameter value
                 # Create route to handle type conversion
