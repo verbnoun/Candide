@@ -89,6 +89,9 @@ MESSAGE_TYPES = {
     },
     'pitch_bend': {
         'is_14_bit': True  # Uses 14-bit value range
+    },
+    'channel_pressure': {
+        'collect': ['pressure']  # msg.pressure value
     }
 }
 
@@ -464,35 +467,64 @@ class Router:
                     del action['needs_route']
                     del action['route_info']
         
-        # Create routes for startup values
-        for handler, config in parse_result.startup_values.items():
-            value = config['value']
-            if isinstance(value, dict):
-                if value['type'] == 'waveform':
-                    try:
-                        config['value'] = self.wave_manager.create_waveform(
-                            value['name'],
-                            STATIC_WAVEFORM_SAMPLES
+            # Create routes for startup values and LFOs
+            for handler, config in parse_result.startup_values.items():
+                value = config['value']
+                if isinstance(value, dict):
+                    if value['type'] == 'waveform':
+                        try:
+                            config['value'] = self.wave_manager.create_waveform(
+                                value['name'],
+                                STATIC_WAVEFORM_SAMPLES
+                            )
+                        except Exception as e:
+                            log(TAG_ROUTE, f"Failed to create waveform: {str(e)}", is_error=True)
+                            raise
+                    elif value['type'] == 'range':
+                        route = Route(
+                            handler,
+                            min_val=value['range'][0],
+                            max_val=value['range'][1],
+                            wave_manager=self.wave_manager
                         )
-                    except Exception as e:
-                        log(TAG_ROUTE, f"Failed to create waveform: {str(e)}", is_error=True)
-                        raise
-                elif value['type'] == 'range':
+                        config['value'] = route.convert(0)
+                else:
+                    # Create route to handle type conversion
                     route = Route(
                         handler,
-                        min_val=value['range'][0],
-                        max_val=value['range'][1],
+                        fixed_value=value,
                         wave_manager=self.wave_manager
                     )
                     config['value'] = route.convert(0)
-            else:
-                # Create route to handle type conversion
-                route = Route(
-                    handler,
-                    fixed_value=value,
-                    wave_manager=self.wave_manager
-                )
-                config['value'] = route.convert(0)
+                    
+            # Handle LFO configuration
+            for lfo_name, lfo_config in parse_result.lfo_config.items():
+                # Extract initial values from param configs
+                lfo_params = {}
+                for param_name, param_config in lfo_config['params'].items():
+                    if isinstance(param_config['value'], dict):
+                        if param_config['value']['type'] == 'range':
+                            # Use middle of range as initial value
+                            min_val, max_val = param_config['value']['range']
+                            lfo_params[param_name] = (min_val + max_val) / 2
+                    else:
+                        lfo_params[param_name] = float(param_config['value'])
+                
+                # Tell synth to create LFO
+                self.startup_values[f"lfo_create_{lfo_name}"] = {
+                    'value': lfo_params,
+                    'use_channel': False  # LFO creation is always global
+                }
+                
+                # Tell synth about targets
+                for target in lfo_config['targets']:
+                    target_value = f"{target['param']}"
+                    if target['filter_type']:
+                        target_value = f"{target_value}:{target['filter_type']}"
+                    self.startup_values[f"lfo_target_{lfo_name}"] = {
+                        'value': target_value,
+                        'use_channel': False  # LFO routing is always global
+                    }
     
     def get_startup_values(self):
         """Get startup values and LFO config.
@@ -533,11 +565,13 @@ class Router:
         if trigger.startswith('cc'):
             return MIDI_ATTRIBUTES['cc']
         elif trigger == 'velocity':
-            return MIDI_ATTRIBUTES['note_on']['velocity']
+            return MIDI_ATTRIBUTES['note_on']['velocity']  # msg.velocity
         elif trigger == 'note_on':
-            return MIDI_ATTRIBUTES['note_on']['note']
+            return MIDI_ATTRIBUTES['note_on']['note']  # msg.note
+        elif trigger == 'channel_pressure':
+            return 'pressure'  # msg.pressure
         else:
-            return MIDI_ATTRIBUTES.get(trigger)
+            return MIDI_ATTRIBUTES.get(trigger)  # Other message types
             
     def get_message_values(self, msg, msg_type):
         """Get values from a MIDI message based on type definition.

@@ -15,30 +15,26 @@ channel/frequency/note_number/note_on
 # Base waveform
 synth/waveform/triangle
 
-synth/filter_frequency:band_pass/220-2000/cc21
-synth/filter_resonance:band_pass/0.01-1/cc33
-
-'''
-
-"""
-
-
-channel/amplitude/0.001-1/pressure
-
 # Basic Value Modulator LFO (Tremolo)
 synth/lfo/rate/tremolo:0.1-10/cc77
 synth/lfo/scale/tremolo:0-1/cc75
 synth/lfo/offset/tremolo:0.5
 synth/amplitude/lfo:tremolo
 
-# synth/ring_waveform/sine|triangle|square|saw/cc78
+'''
+
+"""
 
 
-channel/bend/n0.01-0.01/pitch_bend
-channel/amplitude/0.1-1/pressure
+
+
+
+
 
 ## working
 channel/amplitude/0.001-1/velocity
+channel/bend/n0.1-0.1/pitch_bend
+channel/amplitude/0.001-1/pressure
 
 # Filter
 synth/filter_frequency:band_pass/220-2000/cc21
@@ -48,6 +44,12 @@ synth/filter_resonance:band_pass/0.01-1/cc33
 synth/ring_frequency/2-22/cc22
 synth/ring_waveform/sine-triangle-square-saw/cc78
 synth/ring_bend/n1-1/cc86
+
+synth/envelope:attack_level/0.001-1/cc22
+synth/envelope:attack_time/0.001-0.5/cc73
+synth/envelope:decay_time/0.001-0.25/cc75
+synth/envelope:sustain_level/0.001-1/cc66
+synth/envelope:release_time/0.001-3/velocity
 
 """
 

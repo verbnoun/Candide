@@ -28,11 +28,15 @@ TAG_HARD = 'HARD   '     # hardware.py
 TAG_INST = 'INST   '     # instruments.py
 TAG_IFACE = 'IFACE  '    # interfaces.py
 TAG_MIDI = 'MIDI   '     # midi.py
+TAG_MOD = 'MOD    '     # modulation.py
+TAG_NOTE = 'NOTE   '     # synth_note.py
 TAG_PARSER = 'PARSER '   # path_parser.py
 TAG_PATCH = 'PATCH  '    # patcher.py
 TAG_ROUTE = 'ROUTE  '    # router.py
+TAG_STORE = 'STORE  '    # synth_store.py
 TAG_SYNTH = 'SYNTH  '    # synthesizer.py
 TAG_UART = 'UART   '     # uart.py
+TAG_WAVE = 'WAVE   '     # synth_wave.py
 
 # Map tags to colors - Alphabetically ordered by file name tag
 TAG_COLORS = {
@@ -43,11 +47,15 @@ TAG_COLORS = {
     TAG_INST: COLOR_VIOLET,       # instruments.py
     TAG_IFACE: COLOR_AZURE,       # interfaces.py
     TAG_MIDI: COLOR_GREEN,        # midi.py
+    TAG_MOD: COLOR_LIME,         # modulation.py
+    TAG_NOTE: COLOR_SPRING,      # synth_note.py
     TAG_PARSER: COLOR_MAGENTA,    # path_parser.py
     TAG_PATCH: COLOR_CYAN,        # patcher.py
     TAG_ROUTE: COLOR_BLUE,        # router.py
+    TAG_STORE: COLOR_CHARTREUSE,  # synth_store.py
     TAG_SYNTH: COLOR_INDIGO,      # synthesizer.py
     TAG_UART: COLOR_VIOLET,       # uart.py
+    TAG_WAVE: COLOR_AZURE,        # synth_wave.py
 }
 
 # Enable flags for each module's logging - Alphabetically ordered
@@ -59,11 +67,15 @@ LOG_ENABLE = {
     TAG_INST: True,
     TAG_IFACE: False,
     TAG_MIDI: False,
+    TAG_MOD: True,
+    TAG_NOTE: True,
     TAG_PARSER: True,
     TAG_PATCH: True,
     TAG_ROUTE: True,
+    TAG_STORE: True,
     TAG_SYNTH: True,
     TAG_UART: False,
+    TAG_WAVE: True,
 }
 
 # Special debug flags

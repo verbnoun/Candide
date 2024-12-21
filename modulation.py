@@ -1,7 +1,7 @@
 """Block modulation management for synthesizer."""
 
 import synthio
-from logging import log, TAG_SYNTH, format_value
+from logging import log, TAG_MOD, format_value
 
 class ModulationManager:
     """Manages all synthio block creation, routing and lifecycle."""
@@ -39,7 +39,7 @@ class ModulationManager:
         try:
             # Check if block already exists
             if name in self.blocks:
-                log(TAG_SYNTH, f"Block {name} already exists", is_error=True)
+                log(TAG_MOD, f"Block {name} already exists", is_error=True)
                 return None
                 
             # Store prototype for per-note instances
@@ -62,17 +62,25 @@ class ModulationManager:
                         self.wave_manager = WaveManager()
                     params['waveform'] = self.wave_manager.create_waveform(params['waveform'])
                 
+                # Create LFO
                 lfo = synthio.LFO(**params)
                 self.blocks[name] = lfo
-                log(TAG_SYNTH, f"Created LFO {name} with params: {params}")
+                log(TAG_MOD, f"Created LFO {name}:")
+                log(TAG_MOD, f"  rate: {params.get('rate', 1.0)} Hz")
+                log(TAG_MOD, f"  scale: {params.get('scale', 1.0)}")
+                log(TAG_MOD, f"  offset: {params.get('offset', 0.0)}")
+                if 'waveform' in params:
+                    log(TAG_MOD, f"  waveform: {len(params['waveform'])} samples")
+                log(TAG_MOD, f"  once: {params.get('once', False)}")
+                log(TAG_MOD, f"  interpolate: {params.get('interpolate', True)}")
                 return lfo
                 
             except Exception as e:
-                log(TAG_SYNTH, f"Error creating LFO {name}: {str(e)}", is_error=True)
+                log(TAG_MOD, f"Error creating LFO {name}: {str(e)}", is_error=True)
                 raise
             
         except Exception as e:
-            log(TAG_SYNTH, f"Error creating LFO {name}: {str(e)}", is_error=True)
+            log(TAG_MOD, f"Error creating LFO {name}: {str(e)}", is_error=True)
             raise
             
     def create_math_block(self, name, operation, a, b=0.0, c=1.0):
@@ -88,7 +96,7 @@ class ModulationManager:
         try:
             # Check if block already exists
             if name in self.blocks:
-                log(TAG_SYNTH, f"Block {name} already exists", is_error=True)
+                log(TAG_MOD, f"Block {name} already exists", is_error=True)
                 return None
                 
             # Store prototype for per-note instances
@@ -111,11 +119,11 @@ class ModulationManager:
             )
             
             self.blocks[name] = math
-            log(TAG_SYNTH, f"Created Math block {name}")
+            log(TAG_MOD, f"Created Math block {name}")
             return math
             
         except Exception as e:
-            log(TAG_SYNTH, f"Error creating Math block: {str(e)}", is_error=True)
+            log(TAG_MOD, f"Error creating Math block: {str(e)}", is_error=True)
             raise
             
     def create_filter(self, name, mode, frequency, Q=0.707):
@@ -130,7 +138,7 @@ class ModulationManager:
         try:
             # Check if block already exists
             if name in self.blocks:
-                log(TAG_SYNTH, f"Block {name} already exists", is_error=True)
+                log(TAG_MOD, f"Block {name} already exists", is_error=True)
                 return None
                 
             # Store prototype for per-note instances
@@ -146,11 +154,11 @@ class ModulationManager:
             # Create filter
             filter = synthio.BlockBiquad(mode=mode, frequency=frequency, Q=Q)
             self.blocks[name] = filter
-            log(TAG_SYNTH, f"Created {mode} filter block {name}")
+            log(TAG_MOD, f"Created {mode} filter block {name}")
             return filter
             
         except Exception as e:
-            log(TAG_SYNTH, f"Error creating filter block: {str(e)}", is_error=True)
+            log(TAG_MOD, f"Error creating filter block: {str(e)}", is_error=True)
             raise
             
     def get_block(self, name, note_num=None, channel=None):
@@ -164,9 +172,27 @@ class ModulationManager:
         Returns:
             Block instance
         """
+        # Check if parameter is routed to a block
+        if name in self.chains:
+            source_name = self.chains[name]
+            block = self.blocks.get(source_name)
+            if block:
+                log(TAG_MOD, f"Found routed block for {name}:")
+                log(TAG_MOD, f"  Source: {source_name}")
+                log(TAG_MOD, f"  Type: {type(block).__name__}")
+                if isinstance(block, synthio.LFO):
+                    log(TAG_MOD, f"  LFO rate: {block.rate} Hz")
+                    log(TAG_MOD, f"  LFO scale: {block.scale}")
+                    log(TAG_MOD, f"  LFO offset: {block.offset}")
+                    log(TAG_MOD, f"  Current value: {block.value}")
+                return block
+                
         # Return global block if it exists and is global scope
         if name in self.blocks and self.active_scopes.get(name, True):
-            return self.blocks[name]
+            block = self.blocks[name]
+            log(TAG_MOD, f"Found global block for {name}:")
+            log(TAG_MOD, f"  Type: {type(block).__name__}")
+            return block
             
         # Handle per-note blocks
         if note_num is not None and channel is not None:
@@ -210,8 +236,12 @@ class ModulationManager:
         block = self.blocks.get(name)
         if block and hasattr(block, param):
             try:
+                old_value = getattr(block, param)
                 setattr(block, param, value)
-                log(TAG_SYNTH, f"Updated block {name} {param}={format_value(value)}")
+                log(TAG_MOD, f"Updated block {name}:")
+                log(TAG_MOD, f"  {param}: {format_value(old_value)} -> {format_value(value)}")
+                if isinstance(block, synthio.LFO):
+                    log(TAG_MOD, f"  Current value: {block.value}")
                 
                 # Update prototype
                 if name in self.prototypes:
@@ -223,7 +253,7 @@ class ModulationManager:
                         setattr(blocks[name], param, value)
                         
             except Exception as e:
-                log(TAG_SYNTH, f"Error updating block parameter: {str(e)}", is_error=True)
+                log(TAG_MOD, f"Error updating block parameter: {str(e)}", is_error=True)
                 
     def route_block(self, source_name, target_param):
         """Route block output to parameter.
@@ -233,8 +263,14 @@ class ModulationManager:
             target_param: Parameter to route block to
         """
         if source_name in self.blocks:
+            block = self.blocks[source_name]
             self.chains[target_param] = source_name
-            log(TAG_SYNTH, f"Routed block {source_name} to {target_param}")
+            log(TAG_MOD, f"Routed block {source_name} to {target_param}:")
+            if isinstance(block, synthio.LFO):
+                log(TAG_MOD, f"  LFO rate: {block.rate} Hz")
+                log(TAG_MOD, f"  LFO scale: {block.scale}")
+                log(TAG_MOD, f"  LFO offset: {block.offset}")
+                log(TAG_MOD, f"  Current value: {block.value}")
             return True
         return False
         
@@ -243,7 +279,7 @@ class ModulationManager:
         if target_param in self.chains:
             source = self.chains[target_param]
             del self.chains[target_param]
-            log(TAG_SYNTH, f"Unrouted block {source} from {target_param}")
+            log(TAG_MOD, f"Unrouted block {source} from {target_param}")
             
     def cleanup_note(self, note_num, channel):
         """Clean up per-note blocks when note is released."""

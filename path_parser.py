@@ -220,65 +220,99 @@ class PathParser:
                     'targets': []
                 }
             
-            # Store parameter value and any MIDI control
+            # Parse LFO parameter value
             param_config = {}
-            if '-' in value:
-                min_val, max_val = self._parse_range(value)
-                param_config['value'] = {'type': 'range', 'range': (min_val, max_val)}
-                if len(parts) > 4:  # Has MIDI control
-                    midi_value = parts[4]
-                    param_config['midi'] = midi_value
-                    log(TAG_PARSER, f"    MIDI Control: {midi_value}")
-                    
-                    # Enable MIDI message type
-                    if midi_value.startswith('cc'):
-                        cc_num = int(midi_value[2:])
-                        result.enabled_messages.add('cc')
-                        if cc_num not in result.enabled_ccs:
-                            result.enabled_ccs.append(cc_num)
-                        midi_value = f"cc{cc_num}"
-                        log(TAG_PARSER, f"    Enabled CC: {cc_num}")
-                    elif midi_value == 'pitch_bend':
-                        result.enabled_messages.add('pitch_bend')
-                    elif midi_value == 'pressure':
-                        result.enabled_messages.add('channel_pressure')
-                        midi_value = 'channel_pressure'
-                    elif midi_value == 'velocity':
-                        result.enabled_messages.add('note_on')
-                        midi_value = 'velocity'
-                        
-                    # Add MIDI mapping
-                    if midi_value not in result.midi_mappings:
-                        result.midi_mappings[midi_value] = []
-                    result.midi_mappings[midi_value].append({
-                        'handler': handler,
-                        'scope': scope,
-                        'use_channel': scope == 'channel',
-                        'needs_route': True,
-                        'route_info': {
-                            'type': 'range',
-                            'range': (min_val, max_val)
-                        }
-                    })
-                    log(TAG_PARSER, f"    Added MIDI mapping: {midi_value}")
-            else:
-                # Try to convert value to float if possible
-                try:
-                    param_config['value'] = float(value)
-                except ValueError:
-                    param_config['value'] = value  # Keep as string if not a float
             
+            # Handle boolean parameters
+            if param in ('once', 'interpolate'):
+                param_config['value'] = value.lower() == 'true'
+                log(TAG_PARSER, f"    Boolean parameter {param}: {param_config['value']}")
+                
+            # Handle waveform parameter
+            elif param == 'waveform':
+                param_config['value'] = {'type': 'waveform', 'name': value}
+                log(TAG_PARSER, f"    Waveform parameter: {value}")
+                
+            # Handle numeric range or value
+            else:
+                if '-' in value:
+                    min_val, max_val = self._parse_range(value)
+                    param_config['value'] = {'type': 'range', 'range': (min_val, max_val)}
+                    log(TAG_PARSER, f"    Range parameter {param}: {min_val} to {max_val}")
+                else:
+                    try:
+                        param_config['value'] = float(value)
+                        log(TAG_PARSER, f"    Numeric parameter {param}: {value}")
+                    except ValueError:
+                        param_config['value'] = value
+                        log(TAG_PARSER, f"    String parameter {param}: {value}")
+                
+            # Handle MIDI control if present
+            if len(parts) > 4:
+                midi_value = parts[4]
+                param_config['midi'] = midi_value
+                log(TAG_PARSER, f"    MIDI Control: {midi_value}")
+                
+                # Enable MIDI message type
+                if midi_value.startswith('cc'):
+                    cc_num = int(midi_value[2:])
+                    result.enabled_messages.add('cc')
+                    if cc_num not in result.enabled_ccs:
+                        result.enabled_ccs.append(cc_num)
+                    midi_value = f"cc{cc_num}"
+                    log(TAG_PARSER, f"    Enabled CC: {cc_num}")
+                elif midi_value == 'pitch_bend':
+                    result.enabled_messages.add('pitch_bend')
+                elif midi_value == 'pressure':
+                    result.enabled_messages.add('channel_pressure')
+                    midi_value = 'channel_pressure'
+                elif midi_value == 'velocity':
+                    result.enabled_messages.add('note_on')
+                    midi_value = 'velocity'
+                    
+                # Add MIDI mapping
+                if midi_value not in result.midi_mappings:
+                    result.midi_mappings[midi_value] = []
+                result.midi_mappings[midi_value].append({
+                    'handler': f"lfo_{param}_{lfo_name}",  # Unique handler per LFO param
+                    'scope': scope,
+                    'use_channel': scope == 'channel',
+                    'needs_route': True,
+                    'route_info': {
+                        'type': 'range',
+                        'range': param_config['value']['range'] if 'range' in param_config['value'] else (0, 1)
+                    }
+                })
+                log(TAG_PARSER, f"    Added MIDI mapping: {midi_value}")
+            
+            # Store parameter config
             result.lfo_config[lfo_name]['params'][param] = param_config
             log(TAG_PARSER, f"    Stored parameter config: {format_value(param_config)}")
             return
 
-        # LFO routing
+        # LFO routing (including filter targets)
         if value_or_range.startswith('lfo:'):
-            # Format: scope/target/lfo:name
+            # Format: scope/target[:type]/lfo:name
             lfo_name = value_or_range.split(':')[1].strip()
+            
+            # Handle filter target with type
+            if ':' in handler:
+                base_handler, filter_type = handler.split(':')
+                if filter_type not in result.startup_values:
+                    result.startup_values['filter_type'] = {
+                        'value': filter_type,
+                        'use_channel': scope == 'channel'
+                    }
+                handler = base_handler
+                
+            # Add target to LFO config
             if lfo_name in result.lfo_config:
-                result.lfo_config[lfo_name]['targets'].append(handler)
-                log(TAG_PARSER, f"  Added LFO target: {lfo_name} -> {handler}")
+                target_info = {
+                    'param': handler,
+                    'filter_type': filter_type if ':' in handler else None
+                }
+                result.lfo_config[lfo_name]['targets'].append(target_info)
+                log(TAG_PARSER, f"  Added LFO target: {lfo_name} -> {target_info}")
             return
 
         if len(parts) == 4:
@@ -295,8 +329,10 @@ class PathParser:
             elif midi_value == 'pitch_bend':
                 result.enabled_messages.add('pitch_bend')
             elif midi_value == 'pressure':
+                # Translate human-friendly 'pressure' to MIDI message type
                 result.enabled_messages.add('channel_pressure')
-                midi_value = 'channel_pressure'
+                midi_value = 'channel_pressure'  # Use actual MIDI message type
+                log(TAG_PARSER, f"  Mapped pressure to channel_pressure")
             elif midi_value == 'velocity':
                 result.enabled_messages.add('note_on')
                 midi_value = 'velocity'

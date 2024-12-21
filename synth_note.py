@@ -48,6 +48,15 @@ class NoteManager:
                     block = self.modulation.get_block(param, note_number, channel)
                     if block:
                         value = block
+                        if isinstance(block, synthio.LFO):
+                            log(TAG_SYNTH, f"  {param} controlled by LFO:")
+                            log(TAG_SYNTH, f"    rate: {block.rate} Hz")
+                            log(TAG_SYNTH, f"    scale: {block.scale}")
+                            log(TAG_SYNTH, f"    offset: {block.offset}")
+                            log(TAG_SYNTH, f"    current value: {block.value}")
+                        log(TAG_SYNTH, f"  Using block for {param}: {type(block).__name__}")
+                    else:
+                        log(TAG_SYNTH, f"  Using value for {param}: {format_value(value)}")
                     note_params[param] = value
                 
         # Add envelope if stored

@@ -188,8 +188,48 @@ class Synthesizer:
             self.store.store(name, value, channel)
             
             # Handle block-related operations
-            if name.startswith('lfo_'):
-                # Extract LFO name and parameter
+            if name.startswith('lfo_create_'):
+                # Create new LFO from params
+                lfo_name = name[11:]  # Remove 'lfo_create_'
+                params = value.copy()  # Copy to avoid modifying stored value
+                
+                # Handle waveform param
+                if 'waveform' in params:
+                    waveform_info = params['waveform']['value']
+                    if isinstance(waveform_info, dict) and waveform_info['type'] == 'waveform':
+                        waveform_type = waveform_info['name']
+                    else:
+                        waveform_type = 'sine'  # Default
+                    del params['waveform']
+                else:
+                    waveform_type = 'sine'  # Default
+                    
+                # Create LFO with params (already converted to values by router)
+                lfo = self.modulation.create_lfo(lfo_name, waveform_type=waveform_type, **params)
+                if lfo:
+                    # Add to free-running blocks since LFOs should always run
+                    self.add_free_block(lfo_name)
+                    log(TAG_SYNTH, f"Created and started LFO {lfo_name}")
+                    
+            elif name.startswith('lfo_target_'):
+                # Connect LFO to target
+                lfo_name = name[11:]  # Remove 'lfo_target_'
+                target = value
+                if ':' in target:  # Handle filter targets
+                    param, filter_type = target.split(':')
+                    # Create filter if needed
+                    filter_name = f"filter_{lfo_name}"
+                    if filter_name not in self.modulation.blocks:
+                        self.modulation.create_filter(filter_name, filter_type, 0)
+                    # Route LFO to filter frequency
+                    self.modulation.route_block(lfo_name, param)
+                else:
+                    # Direct parameter routing
+                    self.modulation.route_block(lfo_name, target)
+                log(TAG_SYNTH, f"Routed LFO {lfo_name} to {target}")
+                
+            elif name.startswith('lfo_'):
+                # Update existing LFO parameter
                 parts = name.split('_', 2)  # ['lfo', 'param', 'name']
                 if len(parts) == 3:
                     lfo_name = parts[2]
