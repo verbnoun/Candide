@@ -1,6 +1,6 @@
 """State management for synth parameters."""
 
-from logging import log, TAG_SYNTH, format_value
+from logging import log, TAG_STORE, format_value
 
 class SynthStore:
     """State management for synth parameters."""
@@ -22,7 +22,7 @@ class SynthStore:
         """Start batch parameter storage."""
         self._batch_store = True
         self._batch_channels.clear()
-        log(TAG_SYNTH, "Beginning batch parameter store")
+        log(TAG_STORE, "Beginning batch parameter store")
         
     def end_batch(self, param_name=None):
         """End batch parameter storage."""
@@ -30,7 +30,7 @@ class SynthStore:
         if self._batch_channels:
             min_ch = min(self._batch_channels)
             max_ch = max(self._batch_channels)
-            log(TAG_SYNTH, f"Stored {param_name} for channels {min_ch}-{max_ch}")
+            log(TAG_STORE, f"Stored {param_name} for channels {min_ch}-{max_ch}")
         self._batch_channels.clear()
         
         # Notify if callback registered
@@ -50,7 +50,7 @@ class SynthStore:
             channel: MIDI channel (1-15)
         """
         if not 0 <= channel <= 15:
-            log(TAG_SYNTH, f"Invalid channel {channel}", is_error=True)
+            log(TAG_STORE, f"Invalid channel {channel}", is_error=True)
             return
             
         # Channel 0 means write to all channels
@@ -72,13 +72,13 @@ class SynthStore:
         else:
             # Log all envelope parameter storage
             if name.startswith('attack_') or name.startswith('decay_') or name.startswith('release_') or name.startswith('sustain_'):
-                log(TAG_SYNTH, f"Stored envelope param {name}={format_value(value)} for channel {channel}")
+                log(TAG_STORE, f"Stored envelope param {name}={format_value(value)} for channel {channel}")
             # Log other storage (only for channel 1 to avoid spam)
             elif channel == 1:
                 if isinstance(value, (list, bytearray, memoryview)):
-                    log(TAG_SYNTH, f"Stored {name} (waveform data)")
+                    log(TAG_STORE, f"Stored {name} (waveform data)")
                 else:
-                    log(TAG_SYNTH, f"Stored {name}={format_value(value)}")
+                    log(TAG_STORE, f"Stored {name}={format_value(value)}")
                 
             # Notify if callback registered
             if self._store_update_callback:
@@ -96,7 +96,7 @@ class SynthStore:
             Parameter value
         """
         if not 0 <= channel <= 15:
-            log(TAG_SYNTH, f"Invalid channel {channel}", is_error=True)
+            log(TAG_STORE, f"Invalid channel {channel}", is_error=True)
             return default
             
         # Channel 0 means read from channel 1 (global scope)
@@ -106,7 +106,7 @@ class SynthStore:
         value = self.values[channel].get(name, default)
         # Log envelope parameter retrieval
         if name.startswith('attack_') or name.startswith('decay_') or name.startswith('release_') or name.startswith('sustain_'):
-            log(TAG_SYNTH, f"Retrieved envelope param {name}={format_value(value)} for channel {channel}")
+            log(TAG_STORE, f"Retrieved envelope param {name}={format_value(value)} for channel {channel}")
         return value
         
     def get_previous(self, name, channel, default=None):
@@ -121,7 +121,7 @@ class SynthStore:
             Previous parameter value if it exists
         """
         if not 0 <= channel <= 15:
-            log(TAG_SYNTH, f"Invalid channel {channel}", is_error=True)
+            log(TAG_STORE, f"Invalid channel {channel}", is_error=True)
             return default
             
         # Channel 0 means read from channel 1 (global scope)
@@ -136,4 +136,4 @@ class SynthStore:
             self.values[channel].clear()
             self.previous_values[channel].clear()
         self._store_update_callback = None
-        log(TAG_SYNTH, "Cleared all stored values")
+        log(TAG_STORE, "Cleared all stored values")

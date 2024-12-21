@@ -3,7 +3,7 @@
 import synthio
 import array
 import math
-from logging import log, TAG_SYNTH, format_value
+from logging import log, TAG_WAVE, format_value
 
 # Shared waveform cache
 _WAVEFORM_CACHE = {}
@@ -31,6 +31,7 @@ class WaveManager:
         """
         cache_key = f"{waveform_type}_{samples}"
         if cache_key in _WAVEFORM_CACHE:
+            log(TAG_WAVE, f"Using cached {waveform_type} waveform ({samples} samples)")
             return _WAVEFORM_CACHE[cache_key]
             
         buffer = array.array('h')
@@ -66,10 +67,11 @@ class WaveManager:
                 raise ValueError(f"Unknown waveform type: {waveform_type}")
                 
             _WAVEFORM_CACHE[cache_key] = buffer
+            log(TAG_WAVE, f"Created {waveform_type} waveform ({samples} samples)")
             return buffer
             
         except Exception as e:
-            log(TAG_SYNTH, f"Error creating waveform: {str(e)}", is_error=True)
+            log(TAG_WAVE, f"Error creating waveform: {str(e)}", is_error=True)
             raise
             
     def create_morphed_waveform(self, waveform_sequence, morph_position, samples=64):
@@ -107,8 +109,12 @@ class WaveManager:
                 value = int(waveform1[i] * (1-t) + waveform2[i] * t)
                 morphed.append(value)
             
+            log(TAG_WAVE, f"Created morphed waveform ({samples} samples):")
+            log(TAG_WAVE, f"  From: {waveform_sequence[transition_index]}")
+            log(TAG_WAVE, f"  To: {waveform_sequence[transition_index + 1]}")
+            log(TAG_WAVE, f"  Position: {morph_position:.2f}")
             return morphed
             
         except Exception as e:
-            log(TAG_SYNTH, f"Error creating morphed waveform: {str(e)}", is_error=True)
+            log(TAG_WAVE, f"Error creating morphed waveform: {str(e)}", is_error=True)
             raise

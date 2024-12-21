@@ -1,7 +1,7 @@
 """Note management and parameter handling for synthesizer."""
 
 import synthio
-from logging import log, TAG_SYNTH, format_value
+from logging import log, TAG_NOTE, format_value
 
 class NoteManager:
     """Manages active notes and their parameters."""
@@ -49,33 +49,33 @@ class NoteManager:
                     if block:
                         value = block
                         if isinstance(block, synthio.LFO):
-                            log(TAG_SYNTH, f"  {param} controlled by LFO:")
-                            log(TAG_SYNTH, f"    rate: {block.rate} Hz")
-                            log(TAG_SYNTH, f"    scale: {block.scale}")
-                            log(TAG_SYNTH, f"    offset: {block.offset}")
-                            log(TAG_SYNTH, f"    current value: {block.value}")
-                        log(TAG_SYNTH, f"  Using block for {param}: {type(block).__name__}")
+                            log(TAG_NOTE, f"  {param} controlled by LFO:")
+                            log(TAG_NOTE, f"    rate: {block.rate} Hz")
+                            log(TAG_NOTE, f"    scale: {block.scale}")
+                            log(TAG_NOTE, f"    offset: {block.offset}")
+                            log(TAG_NOTE, f"    current value: {block.value}")
+                        log(TAG_NOTE, f"  Using block for {param}: {type(block).__name__}")
                     else:
-                        log(TAG_SYNTH, f"  Using value for {param}: {format_value(value)}")
+                        log(TAG_NOTE, f"  Using value for {param}: {format_value(value)}")
                     note_params[param] = value
                 
         # Add envelope if stored
         envelope_params = {}
-        log(TAG_SYNTH, f"Building envelope parameters for channel {channel}:")
+        log(TAG_NOTE, f"Building envelope parameters for channel {channel}:")
         for param in ['attack_time', 'decay_time', 'release_time', 
                      'attack_level', 'sustain_level']:
             value = self.store.get(param, channel)
-            log(TAG_SYNTH, f"  {param}: {value} (from store)")
+            log(TAG_NOTE, f"  {param}: {value} (from store)")
             if value is not None:
                 envelope_params[param] = value
                 
         if envelope_params:
             try:
-                log(TAG_SYNTH, f"Creating envelope with params: {envelope_params}")
+                log(TAG_NOTE, f"Creating envelope with params: {envelope_params}")
                 note_params['envelope'] = synthio.Envelope(**envelope_params)
-                log(TAG_SYNTH, f"Created envelope for channel {channel}")
+                log(TAG_NOTE, f"Created envelope for channel {channel}")
             except Exception as e:
-                log(TAG_SYNTH, f"Error creating envelope: {str(e)}", is_error=True)
+                log(TAG_NOTE, f"Error creating envelope: {str(e)}", is_error=True)
                 
         # Get filter if stored
         filter_type = self.store.get('filter_type', channel)
@@ -97,11 +97,11 @@ class NoteManager:
                     frequency=freq_block if freq_block else filter_freq,
                     Q=q_block if q_block else filter_q
                 )
-                log(TAG_SYNTH, f"Created {filter_type} filter at {filter_freq}Hz")
+                log(TAG_NOTE, f"Created {filter_type} filter at {filter_freq}Hz")
             except AttributeError:
-                log(TAG_SYNTH, f"Unknown filter type: {filter_type}, skipping filter")
+                log(TAG_NOTE, f"Unknown filter type: {filter_type}, skipping filter")
             except Exception as e:
-                log(TAG_SYNTH, f"Error creating filter: {str(e)}", is_error=True)
+                log(TAG_NOTE, f"Error creating filter: {str(e)}", is_error=True)
                 
         # Override with provided params
         note_params.update(params)
@@ -124,21 +124,21 @@ class NoteManager:
                 old_number = self.channel_map[channel]
                 old_address = f"{old_number}.{channel}"
                 old_note = self.notes.get(old_address)
-                log(TAG_SYNTH, f"Channel {channel} has existing note {old_number}")
+                log(TAG_NOTE, f"Channel {channel} has existing note {old_number}")
                 
             # Build note parameters
             note_params = self._build_note_params(note_number, frequency, channel, **params)
             
             # Log note creation
-            log(TAG_SYNTH, f"Creating note with frequency={format_value(frequency)}Hz")
+            log(TAG_NOTE, f"Creating note with frequency={format_value(frequency)}Hz")
             if 'filter' in note_params:
                 filt = note_params['filter']
-                log(TAG_SYNTH, f"  filter: {filt.mode} freq={format_value(filt.frequency)} Q={format_value(filt.Q)}")
+                log(TAG_NOTE, f"  filter: {filt.mode} freq={format_value(filt.frequency)} Q={format_value(filt.Q)}")
             if 'envelope' in note_params:
                 env = note_params['envelope']
-                log(TAG_SYNTH, f"  envelope: attack={env.attack_time}s decay={env.decay_time}s release={env.release_time}s")
+                log(TAG_NOTE, f"  envelope: attack={env.attack_time}s decay={env.decay_time}s release={env.release_time}s")
             if 'waveform' in note_params:
-                log(TAG_SYNTH, f"  waveform: {len(note_params['waveform'])} samples")
+                log(TAG_NOTE, f"  waveform: {len(note_params['waveform'])} samples")
             
             # Create new note
             new_note = synthio.Note(**note_params)
@@ -161,11 +161,11 @@ class NoteManager:
             self.notes[address] = new_note
             self.channel_map[channel] = note_number
             
-            log(TAG_SYNTH, f"Pressed note {note_number} at {format_value(frequency)}Hz on channel {channel}")
+            log(TAG_NOTE, f"Pressed note {note_number} at {format_value(frequency)}Hz on channel {channel}")
             return True
             
         except Exception as e:
-            log(TAG_SYNTH, f"Error pressing note {note_number}: {str(e)}", is_error=True)
+            log(TAG_NOTE, f"Error pressing note {note_number}: {str(e)}", is_error=True)
             return False
             
     def release_note(self, note_number, channel):
@@ -191,11 +191,11 @@ class NoteManager:
                 # Clean up note's blocks
                 self.modulation.cleanup_note(note_number, channel)
                 
-                log(TAG_SYNTH, f"Released note {note_number} on channel {channel}")
+                log(TAG_NOTE, f"Released note {note_number} on channel {channel}")
                 return True
                 
             except Exception as e:
-                log(TAG_SYNTH, f"Error releasing note {note_number}: {str(e)}", is_error=True)
+                log(TAG_NOTE, f"Error releasing note {note_number}: {str(e)}", is_error=True)
                 return False
         return False
         
@@ -210,11 +210,11 @@ class NoteManager:
         """
         address = f"{note_number}.{channel}"
         if address not in self.notes:
-            log(TAG_SYNTH, f"Note {note_number} not found on channel {channel}", is_error=True)
+            log(TAG_NOTE, f"Note {note_number} not found on channel {channel}", is_error=True)
             return False
             
         if param_name not in self.UPDATABLE_PARAMS and param_name not in self.FILTER_PARAMS:
-            log(TAG_SYNTH, f"Parameter {param_name} cannot be updated", is_error=True)
+            log(TAG_NOTE, f"Parameter {param_name} cannot be updated", is_error=True)
             return False
             
         try:
@@ -223,7 +223,7 @@ class NoteManager:
             # Handle filter parameter updates
             if param_name in self.FILTER_PARAMS:
                 if not note.filter:
-                    log(TAG_SYNTH, f"No filter exists on note {note_number}, skipping update")
+                    log(TAG_NOTE, f"No filter exists on note {note_number}, skipping update")
                     return False
                     
                 try:
@@ -235,12 +235,12 @@ class NoteManager:
                     # Update the specific filter parameter
                     if param_name == 'filter_frequency':
                         note.filter.frequency = value
-                        log(TAG_SYNTH, f"Updated filter frequency to {format_value(value)} for note {note_number}")
+                        log(TAG_NOTE, f"Updated filter frequency to {format_value(value)} for note {note_number}")
                     elif param_name == 'filter_q':
                         note.filter.Q = value
-                        log(TAG_SYNTH, f"Updated filter Q to {format_value(value)} for note {note_number}")
+                        log(TAG_NOTE, f"Updated filter Q to {format_value(value)} for note {note_number}")
                 except Exception as e:
-                    log(TAG_SYNTH, f"Error updating filter parameter: {str(e)}", is_error=True)
+                    log(TAG_NOTE, f"Error updating filter parameter: {str(e)}", is_error=True)
                     return False
                         
             # Handle direct filter object assignment
@@ -262,13 +262,13 @@ class NoteManager:
             
             # Log update (skip waveform array details)
             if isinstance(value, (list, bytearray, memoryview)):
-                log(TAG_SYNTH, f"Updated {param_name} ({len(value)} samples) for note {note_number}")
+                log(TAG_NOTE, f"Updated {param_name} ({len(value)} samples) for note {note_number}")
             else:
-                log(TAG_SYNTH, f"Updated {param_name}={format_value(value)} for note {note_number}")
+                log(TAG_NOTE, f"Updated {param_name}={format_value(value)} for note {note_number}")
             return True
             
         except Exception as e:
-            log(TAG_SYNTH, f"Error updating note {note_number}: {str(e)}", is_error=True)
+            log(TAG_NOTE, f"Error updating note {note_number}: {str(e)}", is_error=True)
             return False
             
     def release_all(self):
