@@ -6,16 +6,23 @@ from logging import log, TAG_PATCH, format_value
 
 class MidiHandler:
     """Handles MIDI message processing, routing, and setup."""
-    def __init__(self, synth_state, path_parser):
-        self.synth_state = synth_state
-        self.path_parser = path_parser
+    def __init__(self, synthesizer):
+        from router import get_router
+        self.synthesizer = synthesizer
+        self.router = get_router()
         self.midi_interface = None
         self.subscription = None
-        self.synthesizer = None  # Set by Synthesizer class
         self.ready_callback = None
-        
-        # Set up initial handlers when paths are parsed
-        self.path_parser.on_paths_parsed = self.setup_handlers
+
+    def on_instrument_change(self, instrument_name, config_name, paths):
+        """Handle instrument change as observer."""
+        log(TAG_PATCH, f"Instrument changed to: {instrument_name}")
+        # Parse paths to set up MIDI routing
+        self.router.parse_paths(paths, config_name)
+        # Set up MIDI handlers for new paths
+        self.setup_handlers()
+        # Send startup values to synth
+        self.send_startup_values()
 
     def setup_handlers(self):
         """Set up MIDI message handlers based on current paths."""
@@ -23,28 +30,32 @@ class MidiHandler:
             return
             
         log(TAG_PATCH, "Setting up MIDI handlers...")
+        log(TAG_PATCH, f"Enabled messages: {self.router.enabled_messages}")
             
         message_types = [msg_type for msg_type in 
                         ('note_on', 'note_off', 'cc', 'pitch_bend', 'channel_pressure')
-                        if msg_type in self.path_parser.enabled_messages]
+                        if msg_type in self.router.enabled_messages]
+            
+        log(TAG_PATCH, f"Message types to subscribe: {message_types}")
             
         if not message_types:
             log(TAG_PATCH, "No MIDI message types enabled in paths")
             return
             
-        # Clean up old subscription first
-        if self.subscription:
-            self.midi_interface.unsubscribe(self.subscription)
-            self.subscription = None
-            
-        # Create new subscription
-        self.subscription = self.midi_interface.subscribe(
+        # Create new subscription (don't remove old one)
+        new_subscription = self.midi_interface.subscribe(
             self.handle_message,
             message_types=message_types,
-            cc_numbers=self.path_parser.enabled_ccs if 'cc' in self.path_parser.enabled_messages else None
+            cc_numbers=self.router.enabled_ccs if 'cc' in self.router.enabled_messages else None
         )
         
-        log(TAG_PATCH, f"MIDI handlers configured for: {self.path_parser.enabled_messages}")
+        # Clean up old subscription after new one is created
+        if self.subscription:
+            self.midi_interface.unsubscribe(self.subscription)
+            
+        self.subscription = new_subscription
+        
+        log(TAG_PATCH, f"MIDI handlers configured for: {self.router.enabled_messages}")
         
         if self.ready_callback:
             log(TAG_PATCH, "Configuration complete - signaling ready")
@@ -52,24 +63,39 @@ class MidiHandler:
 
     def send_startup_values(self):
         """Send startup values to synthesizer."""
-        startup_values = self.path_parser.get_startup_values()
+        startup_values, lfo_params = self.router.get_startup_values()
         if not startup_values:
             return
             
         log(TAG_PATCH, "Sending startup values...")
+        
+        # Pass LFO params to synth store
+        self.synthesizer.store.lfo_params = lfo_params
+        
+        # First pass: Set all LFO parameters
         for handler, config in startup_values.items():
-            try:
-                method = getattr(self.synthesizer, handler)
-                value = config['value']
-                # Use channel 0 for synth scope (non-channel) values
-                channel = 1 if config['use_channel'] else 0
-                if handler.endswith('waveform'):
-                    log(TAG_PATCH, f"Setting {handler} (channel {channel})")
-                else:
-                    log(TAG_PATCH, f"Setting {handler} = {format_value(value)} (channel {channel})")
-                method(value, channel)
-            except Exception as e:
-                log(TAG_PATCH, f"Failed to send startup value: {str(e)}", is_error=True)
+            if handler.startswith('lfo_'):
+                try:
+                    value = config['value']
+                    channel = 1 if config['use_channel'] else 0
+                    log(TAG_PATCH, f"Setting LFO param {handler} = {format_value(value)} (channel {channel})")
+                    self.synthesizer.handle_value(handler, value, channel)
+                except Exception as e:
+                    log(TAG_PATCH, f"Failed to set LFO param: {str(e)}", is_error=True)
+        
+        # Second pass: Set all other values (including LFO routing)
+        for handler, config in startup_values.items():
+            if not handler.startswith('lfo_'):
+                try:
+                    value = config['value']
+                    channel = 1 if config['use_channel'] else 0
+                    if handler.endswith('waveform'):
+                        log(TAG_PATCH, f"Setting {handler} (channel {channel})")
+                    else:
+                        log(TAG_PATCH, f"Setting {handler} = {format_value(value)} (channel {channel})")
+                    self.synthesizer.handle_value(handler, value, channel)
+                except Exception as e:
+                    log(TAG_PATCH, f"Failed to send startup value: {str(e)}", is_error=True)
 
     def cleanup(self):
         """Clean up MIDI subscription."""
@@ -127,7 +153,7 @@ class MidiHandler:
         note_values = {}
         
         # First handle note-specific values from note_on mapping
-        actions = self.path_parser.midi_mappings.get('note_on', [])
+        actions = self.router.midi_mappings.get('note_on', [])
         for action in actions:
             if 'route' in action:
                 try:
@@ -151,7 +177,7 @@ class MidiHandler:
                 continue
                 
             # Check if this value has any routes
-            actions = self.path_parser.midi_mappings.get(attr_name, [])
+            actions = self.router.midi_mappings.get(attr_name, [])
             for action in actions:
                 if 'route' in action:
                     try:
@@ -162,13 +188,19 @@ class MidiHandler:
                     except Exception as e:
                         log(TAG_PATCH, f"Failed to handle {attr_name}: {str(e)}", is_error=True)
         
-        # Handle note_on trigger (press_voice) with collected values
-        actions = self.path_parser.midi_mappings.get('note_on', [])
+        # Handle note_on trigger (press_note) with collected values
+        actions = self.router.midi_mappings.get('note_on', [])
         for action in actions:
-            if action['handler'] == 'press_voice':
+            if action['handler'] == 'press_note':
+                # Get frequency from note_values (precomputed by router)
+                frequency = note_values.get('frequency')
+                if frequency is None:
+                    log(TAG_PATCH, "No frequency mapping for note", is_error=True)
+                    return
+                    
                 # Channel 0 means write to all channels
                 channel = msg.channel  # Already 0 if global channel
-                self.synthesizer.press_voice(msg.note, channel, note_values)
+                self.synthesizer.press_note(msg.note, frequency, channel)
                 break
 
     def handle_note_off(self, msg):
@@ -187,34 +219,34 @@ class MidiHandler:
                 continue
                 
             # Check if this value has any routes
-            actions = self.path_parser.midi_mappings.get(attr_name, [])
+            actions = self.router.midi_mappings.get(attr_name, [])
             for action in actions:
                 if 'route' in action:
                     try:
                         converted = action['route'].convert(value)
-                        handler = getattr(self.synthesizer, action['handler'])
                         log(TAG_PATCH, f"{attr_name}={value} -> {action['handler']}={format_value(converted)}")
                         # Channel 0 or synth scope both mean write to all channels
                         channel = 0 if msg.channel == 0 or not action['use_channel'] else msg.channel
-                        handler(converted, channel)
+                        # Store value in synth
+                        self.synthesizer.handle_value(action['handler'], value, channel)
                     except Exception as e:
                         log(TAG_PATCH, f"Failed to handle {attr_name}: {str(e)}", is_error=True)
         
-        # Then handle note_off trigger (release_voice)
-        actions = self.path_parser.midi_mappings.get('note_off', [])
+        # Then handle note_off trigger (release_note)
+        actions = self.router.midi_mappings.get('note_off', [])
         for action in actions:
-            if action['handler'] == 'release_voice':
+            if action['handler'] == 'release_note':
                 # Channel 0 means write to all channels
                 channel = msg.channel  # Already 0 if global channel
-                self.synthesizer.release_voice(msg.note, channel)
+                self.synthesizer.release_note(msg.note, channel)
                 break
 
     def handle_cc(self, msg):
         """Handle CC message using routing table."""
         cc_trigger = f"cc{msg.control}"
-        if msg.control in self.path_parser.enabled_ccs:
+        if msg.control in self.router.enabled_ccs:
             # Get all actions for this CC
-            actions = self.path_parser.midi_mappings.get(cc_trigger, [])
+            actions = self.router.midi_mappings.get(cc_trigger, [])
             
             # Execute each action
             for action in actions:
@@ -231,24 +263,22 @@ class MidiHandler:
                     else:
                         log(TAG_PATCH, f"CC{msg.control} -> {action['handler']} = {format_value(value)}")
                     
-                    # Get handler method from synthesizer
-                    handler = getattr(self.synthesizer, action['handler'])
-                    
                     # Channel 0 or synth scope both mean write to all channels
                     channel = 0 if msg.channel == 0 or not action['use_channel'] else msg.channel
-                    handler(value, channel)
+                    # Store value in synth
+                    self.synthesizer.handle_value(action['handler'], value, channel)
                     
                 except Exception as e:
                     log(TAG_PATCH, f"Failed to handle CC: {str(e)}", is_error=True)
 
     def handle_pitch_bend(self, msg):
         """Handle pitch bend message using routing table."""
-        if 'pitch_bend' in self.path_parser.enabled_messages:
+        if 'pitch_bend' in self.router.enabled_messages:
             # Use full 14-bit pitch bend value
             midi_value = msg.bend
             
             # Get all actions for pitch_bend
-            actions = self.path_parser.midi_mappings.get('pitch_bend', [])
+            actions = self.router.midi_mappings.get('pitch_bend', [])
             
             # Execute each action
             for action in actions:
@@ -259,21 +289,19 @@ class MidiHandler:
                     else:
                         value = midi_value
                     
-                    # Get handler method from synthesizer
-                    handler = getattr(self.synthesizer, action['handler'])
-                    
                     # Channel 0 or synth scope both mean write to all channels
                     channel = 0 if msg.channel == 0 or not action['use_channel'] else msg.channel
-                    handler(value, channel)
+                    # Store value in synth
+                    self.synthesizer.handle_value(action['handler'], value, channel)
                     
                 except Exception as e:
                     log(TAG_PATCH, f"Failed to handle pitch bend: {str(e)}", is_error=True)
 
     def handle_pressure(self, msg):
         """Handle pressure message using routing table."""
-        if 'channel_pressure' in self.path_parser.enabled_messages:
+        if 'channel_pressure' in self.router.enabled_messages:
             # Get all actions for channel_pressure
-            actions = self.path_parser.midi_mappings.get('channel_pressure', [])
+            actions = self.router.midi_mappings.get('channel_pressure', [])
             
             # Execute each action
             for action in actions:
@@ -284,12 +312,10 @@ class MidiHandler:
                     else:
                         value = msg.pressure
                     
-                    # Get handler method from synthesizer
-                    handler = getattr(self.synthesizer, action['handler'])
-                    
                     # Channel 0 or synth scope both mean write to all channels
                     channel = 0 if msg.channel == 0 or not action['use_channel'] else msg.channel
-                    handler(value, channel)
+                    # Store value in synth
+                    self.synthesizer.handle_value(action['handler'], value, channel)
                     
                 except Exception as e:
                     log(TAG_PATCH, f"Failed to handle pressure: {str(e)}", is_error=True)

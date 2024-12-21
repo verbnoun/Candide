@@ -2,7 +2,7 @@
 
 import supervisor
 from constants import MidiMessageType
-from logging import log, TAG_MIDI
+from logging import log, TAG_MIDI, LOG_ENABLE
 
 # MIDI Message Types
 MIDI_NOTE_OFF = 0x80          # Note Off
@@ -381,6 +381,11 @@ class MidiInterface:
         # Initialize MPE zones
         self.lower_zone = MPEZone(is_lower_zone=True)
         self.upper_zone = None  # Initialize upper zone only if needed
+        
+        # Initialize note tracking if logging is enabled
+        if LOG_ENABLE[TAG_MIDI]:
+            self.active_notes = {}  # {channel: {note: velocity}}
+        
         log(TAG_MIDI, "MIDI Interface initialized with MPE support")
         
     def process_midi_messages(self):
@@ -400,6 +405,22 @@ class MidiInterface:
 
     def _process_message(self, msg):
         """Process a message that has passed filtering"""
+        # Track active notes if logging is enabled
+        if LOG_ENABLE[TAG_MIDI]:
+            if msg.type == 'note_on':
+                if msg.channel not in self.active_notes:
+                    self.active_notes[msg.channel] = {}
+                self.active_notes[msg.channel][msg.note] = msg.velocity
+                total_notes = sum(len(notes) for notes in self.active_notes.values())
+                log(TAG_MIDI, f"{total_notes} active notes")
+            elif msg.type == 'note_off':
+                if msg.channel in self.active_notes and msg.note in self.active_notes[msg.channel]:
+                    del self.active_notes[msg.channel][msg.note]
+                    if not self.active_notes[msg.channel]:
+                        del self.active_notes[msg.channel]
+                total_notes = sum(len(notes) for notes in self.active_notes.values())
+                log(TAG_MIDI, f"{total_notes} active notes")
+        
         # Determine which zone the message belongs to
         zone = self.lower_zone
         if self.upper_zone and msg.channel >= MPE_UPPER_ZONE_MASTER - 14:
@@ -420,7 +441,9 @@ class MidiInterface:
 
     def subscribe(self, callback, message_types=None, channels=None, cc_numbers=None):
         """Add a filtered subscription"""
+        log(TAG_MIDI, f"Creating subscription with types={message_types}")
         subscription = MidiSubscription(callback, message_types, channels, cc_numbers)
+        log(TAG_MIDI, f"Created subscription with types={subscription.message_types}")
         self.subscribers.append(subscription)
         log(TAG_MIDI, f"Added subscription for types={message_types} channels={channels} cc={cc_numbers}")
         return subscription

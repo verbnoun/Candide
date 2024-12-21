@@ -9,6 +9,7 @@ from constants import (
     DETECTION_RETRY_INTERVAL
 )
 from logging import log, TAG_CONNECT
+from router import get_router
 
 class ConnectionManager:
     def __init__(self, text_uart, midi_interface, hardware_manager):
@@ -24,14 +25,21 @@ class ConnectionManager:
         self.state = ConnectionState.STANDALONE
         self.last_heartbeat_time = 0
         self.last_detection_time = 0
+        self.last_config_time = 0  # Track when we last sent config
+        self.config_retry_sent = False  # Track if we've done our one retry
         self._state_observers = []  # Observers for connection state
-        self.path_parser = None  # Reference to router for config string
+        self.instrument_manager = None  # Reference to instrument manager
         
         log(TAG_CONNECT, "Candide connection manager initialized")
 
-    def set_path_parser(self, path_parser):
-        """Set reference to router for config string generation."""
-        self.path_parser = path_parser
+    def set_instrument_manager(self, instrument_manager):
+        """Set reference to instrument manager."""
+        self.instrument_manager = instrument_manager
+        if self.instrument_manager:
+            self.instrument_manager.set_connection_manager(self)
+            # Register for instrument state changes
+            if self.instrument_manager.state_machine:
+                self.instrument_manager.state_machine.set_connection_callback(self._on_instrument_state_change)
 
     def add_state_observer(self, observer):
         """Add an observer to be notified of connection state changes."""
@@ -61,8 +69,15 @@ class ConnectionManager:
                 self.last_detection_time = current_time
                 
         elif self.state == ConnectionState.DETECTED:
-            # Already detected, waiting for connection completion
-            pass
+            # Check if we need to retry config
+            if (not self.config_retry_sent and 
+                current_time - self.last_config_time >= 1.0 and
+                self.instrument_manager and 
+                self.instrument_manager.state_machine and
+                not self.instrument_manager.state_machine.has_received_midi()):
+                log(TAG_CONNECT, "No MIDI received after 1s, retrying config...")
+                self.send_config()
+                self.config_retry_sent = True
                 
         elif self.state == ConnectionState.CONNECTED:
             # Send heartbeat if needed
@@ -93,34 +108,13 @@ class ConnectionManager:
             log(TAG_CONNECT, f"Failed to send message: {str(e)}", is_error=True)
             return False
 
-    def _send_rapid_hearts(self):
-        """Send 7 hearts as fast as possible."""
-        try:
-            log(TAG_CONNECT, "Sending 7 rapid hearts")
-            for _ in range(7):
-                # Send heart without affecting heartbeat timing
-                if not self.uart.write("♡\n"):
-                    return False
-            return True
-        except Exception as e:
-            log(TAG_CONNECT, f"Failed to send rapid hearts: {str(e)}", is_error=True)
-            return False
-
     def send_config(self):
         """Send CC configuration to Bartleby. Can be called by:
-        1. Handshake (_handle_initial_detection)
-        2. Synth setup (during instrument changes)"""
+        1. Initial detection (_handle_initial_detection)
+        2. Instrument changes"""
         try:
-            # Send 7 rapid hearts before config
-            # if not self._send_rapid_hearts():
-            #     return False
-            
-            # Pull config string from router
-            if not self.path_parser:
-                log(TAG_CONNECT, "No path parser available", is_error=True)
-                return False
-                
-            config_string = self.path_parser.get_cc_configs()
+            # Get config from router service
+            config_string = get_router().get_cc_configs()
             
             if not config_string or config_string == "Candide|cc|":
                 # Send blank CC config when no mappings exist
@@ -129,8 +123,15 @@ class ConnectionManager:
             else:
                 log(TAG_CONNECT, f"Preparing config string: {config_string}")
             
-            # Just send config - no state transition
-            return self._send_message(config_string)
+            # Send config
+            if self._send_message(config_string):
+                # Update timing for retry logic
+                self.last_config_time = time.monotonic()
+                
+                # Notify instrument state machine
+                if self.instrument_manager and self.instrument_manager.state_machine:
+                    self.instrument_manager.state_machine.on_config_sent(config_string, self.midi)
+                return True
                 
         except Exception as e:
             log(TAG_CONNECT, f"Failed to send config: {str(e)}", is_error=True)
@@ -155,9 +156,11 @@ class ConnectionManager:
             self.state = ConnectionState.DETECTED
             self._notify_state_change(ConnectionState.DETECTED)
             
-            # For initial detection: send config and transition if successful
-            if self.send_config():
-                self._transition_to_connected()
+            # Reset retry flag for new connection
+            self.config_retry_sent = False
+            
+            # Send config but don't transition yet - wait for instrument state
+            self.send_config()
         
     def _handle_disconnection(self):
         """Handle base station disconnection."""
@@ -165,6 +168,12 @@ class ConnectionManager:
         old_state = self.state
         self.state = ConnectionState.STANDALONE
         self.last_heartbeat_time = 0
+        self.config_retry_sent = False  # Reset retry flag
+        
+        # Reset instrument state machine
+        if self.instrument_manager and self.instrument_manager.state_machine:
+            self.instrument_manager.state_machine.reset()
+            
         if old_state != ConnectionState.STANDALONE:
             self._notify_state_change(ConnectionState.STANDALONE)
             
@@ -174,6 +183,13 @@ class ConnectionManager:
         if self.hardware.is_base_station_detected():
             if self._send_message("♡", is_heartbeat=True):
                 log(TAG_CONNECT, "♡", is_heartbeat=True)
+
+    def _on_instrument_state_change(self, new_state):
+        """Handle instrument state changes."""
+        if new_state == 'set':
+            # If we're in DETECTED, transition to CONNECTED
+            if self.state == ConnectionState.DETECTED:
+                self._transition_to_connected()
 
     def is_connected(self):
         """Check if currently connected to base station."""
@@ -193,5 +209,6 @@ class ConnectionManager:
             self.midi = None
             self.hardware = None
             self.path_parser = None
+            self.instrument_manager = None
         except Exception as e:
             log(TAG_CONNECT, f"Connection manager cleanup error: {str(e)}", is_error=True)

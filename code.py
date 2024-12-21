@@ -10,7 +10,7 @@ from uart import UartManager
 from midi import initialize_midi
 from connection import ConnectionManager
 from instruments import InstrumentManager
-from synthesizer import Synthesizer
+from synth import Synthesizer
 from logging import log, TAG_CANDIDE, COLOR_CYAN, COLOR_BLUE, COLOR_MAGENTA, COLOR_GREEN, COLOR_YELLOW, COLOR_RESET
 
 def _cycle_log(message):
@@ -40,46 +40,45 @@ class Candide:
 
         log(TAG_CANDIDE, "Initializing UART interfaces...")
         self.transport, self.text_uart = UartManager.get_interfaces()
-        self.midi_interface = initialize_midi()
+        # Initialize MIDI system (handles own UART setup)
+        initialize_midi()
 
         log(TAG_CANDIDE, "Initializing audio system...")
         self.audio_system = AudioSystem()
 
-        # 2. Initialize connection manager first (passive)
+        # Get MIDI interface and initialize connection manager
         log(TAG_CANDIDE, "Initializing connection manager...")
+        self.midi_interface = UartManager.get_midi_interface()
         self.connection_manager = ConnectionManager(
             self.text_uart,
             self.midi_interface,
             self.hardware_manager
         )
 
-        # 3. Initialize synth with connection manager
-        log(TAG_CANDIDE, "Initializing synthesizer...")
-        self.synthesizer = Synthesizer(
-            self.midi_interface, 
-            self.audio_system,
-            self.connection_manager  # Pass connection manager during init
-        )
-
-        # 4. Give connection manager access to router
-        self.connection_manager.set_path_parser(self.synthesizer.path_parser)
-
-        # 5. Initialize instrument manager
+        # Initialize instrument manager
         log(TAG_CANDIDE, "Initializing instrument manager...")
         self.instrument_manager = InstrumentManager()
 
-        # 6. Set up observers in order
-        log(TAG_CANDIDE, "Setting up component observers...")
-        # Setup gets notified first (headstart for synth management)
-        self.instrument_manager.add_observer(self.synthesizer.setup)
-        # Connection state changes go to setup
-        self.connection_manager.add_state_observer(self.synthesizer.setup)
-        
-        # 7. Set initial instrument (this will parse paths before connection can send config)
+        # Initialize synthesizer with audio
+        log(TAG_CANDIDE, "Initializing synthesizer...")
+        self.synthesizer = Synthesizer(self.audio_system)
+
+        # Initialize patcher to handle MIDI routing
+        log(TAG_CANDIDE, "Initializing patcher...")
+        from patcher import MidiHandler
+        self.patcher = MidiHandler(self.synthesizer)
+        self.patcher.set_midi_interface(self.midi_interface)
+        # Add patcher as instrument observer
+        self.instrument_manager.add_observer(self.patcher)
+
+        # Connect managers
+        log(TAG_CANDIDE, "Connecting managers...")
+        self.instrument_manager.set_connection_manager(self.connection_manager)
+        self.connection_manager.set_instrument_manager(self.instrument_manager)
+
+        # Set initial instrument
         log(TAG_CANDIDE, "Setting initial instrument...")
         initial_instrument = self.instrument_manager.get_available_instruments()[0]
-        # Small delay to ensure setup is ready
-        time.sleep(0.1)
         self.instrument_manager.set_instrument(initial_instrument)
 
         try:
@@ -91,7 +90,7 @@ class Candide:
             
             _cycle_log("\nCandide (v1.0) is awake!... ( ◔◡◔)♬\n")
 
-            # 8. Start connection detection
+            # Start connection detection
             log(TAG_CANDIDE, "Checking for base station...")
             # Just check state - connection manager will handle detection in update loop
             if self.hardware_manager.is_base_station_detected():
@@ -103,8 +102,11 @@ class Candide:
 
     def update(self):
         try:
-            if self.transport.in_waiting:
+            # Process any pending MIDI messages first
+            if self.midi_interface:
                 self.midi_interface.process_midi_messages()
+            
+            # Then handle other updates
             self.connection_manager.update_state()
             self.hardware_manager.check_encoder(self.instrument_manager)
             self.hardware_manager.check_volume(self.audio_system)
@@ -130,6 +132,8 @@ class Candide:
             self.cleanup()
 
     def cleanup(self):
+        if hasattr(self, 'midi_interface'):
+            self.midi_interface = None
         if hasattr(self, 'transport'):
             log(TAG_CANDIDE, "Cleaning up transport...")
             UartManager.cleanup()
@@ -159,4 +163,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

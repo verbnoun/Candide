@@ -30,10 +30,8 @@ TAG_IFACE = 'IFACE  '    # interfaces.py
 TAG_MIDI = 'MIDI   '     # midi.py
 TAG_PATCH = 'PATCH  '    # patcher.py
 TAG_ROUTE = 'ROUTE  '    # router.py
-TAG_SETUP = 'SETUP  '    # setup.py
 TAG_SYNTH = 'SYNTH  '    # synthesizer.py
 TAG_UART = 'UART   '     # uart.py
-TAG_VOICES = 'VOICES '    # voices.py
 
 # Map tags to colors - Alphabetically ordered by file name tag
 TAG_COLORS = {
@@ -41,15 +39,13 @@ TAG_COLORS = {
     TAG_CONNECT: COLOR_ORANGE,    # connection.py
     TAG_CONST: COLOR_YELLOW,      # constants.py
     TAG_HARD: COLOR_CHARTREUSE,   # hardware.py
-    TAG_INST: COLOR_LIME,         # instruments.py
+    TAG_INST: COLOR_VIOLET,         # instruments.py
     TAG_IFACE: COLOR_AZURE,       # interfaces.py
     TAG_MIDI: COLOR_GREEN,        # midi.py
     TAG_PATCH: COLOR_CYAN,        # patcher.py
     TAG_ROUTE: COLOR_BLUE,        # router.py
-    TAG_SETUP: COLOR_SPRING,      # setup.py
     TAG_SYNTH: COLOR_INDIGO,      # synthesizer.py
     TAG_UART: COLOR_VIOLET,       # uart.py
-    TAG_VOICES: COLOR_MAGENTA,     # voice.py
 }
 
 # Enable flags for each module's logging - Alphabetically ordered
@@ -59,14 +55,12 @@ LOG_ENABLE = {
     TAG_CONST: False,
     TAG_HARD: False,
     TAG_INST: True,
-    TAG_IFACE: True,
-    TAG_MIDI: True,
+    TAG_IFACE: False,
+    TAG_MIDI: False,
     TAG_PATCH: True,
-    TAG_ROUTE: False,
-    TAG_SETUP: True,
+    TAG_ROUTE: True,
     TAG_SYNTH: True,
-    TAG_UART: True,
-    TAG_VOICES: False,
+    TAG_UART: False,
 }
 
 # Special debug flags
