@@ -387,44 +387,57 @@ class Router:
             
     def _create_routes(self, parse_result):
         """Create routes from parsed path data."""
-        # Create note-to-freq route first
-        freq_route = Route('frequency', is_note_to_freq=True, wave_manager=self.wave_manager)
+        # Create routes first
+        routes = {}
         
-        # Create routes for MIDI mappings
-        for midi_value, actions in parse_result.midi_mappings.items():
+        # Find all route types needed
+        for actions in parse_result.midi_mappings.values():
             for action in actions:
-                # Special case for note-to-freq
-                if action['handler'] == 'frequency':
-                    action['route'] = freq_route
+                if not action.get('needs_route'):
                     continue
                     
-                # Handle other routes
+                handler = action['handler']
+                route_info = action['route_info']
+                
+                # Skip if route already created
+                if handler in routes:
+                    continue
+                    
+                # Create route based on type
+                if route_info['type'] == 'note_to_freq':
+                    routes[handler] = Route(
+                        handler,
+                        is_note_to_freq=True,
+                        wave_manager=self.wave_manager
+                    )
+                elif route_info['type'] == 'waveform_sequence':
+                    routes[handler] = Route(
+                        handler,
+                        waveform_sequence=route_info['sequence'],
+                        wave_manager=self.wave_manager
+                    )
+                elif route_info['type'] == 'range':
+                    min_val, max_val = route_info['range']
+                    routes[handler] = Route(
+                        handler,
+                        min_val=min_val,
+                        max_val=max_val,
+                        is_14_bit=route_info.get('is_14_bit', False),
+                        wave_manager=self.wave_manager
+                    )
+                elif route_info['type'] == 'fixed':
+                    routes[handler] = Route(
+                        handler,
+                        fixed_value=route_info['value'],
+                        wave_manager=self.wave_manager
+                    )
+        
+        # Attach routes to actions
+        for actions in parse_result.midi_mappings.values():
+            for action in actions:
                 if action.get('needs_route'):
-                    route_info = action['route_info']
-                    
-                    if route_info['type'] == 'waveform_sequence':
-                        route = Route(
-                            action['handler'],
-                            waveform_sequence=route_info['sequence'],
-                            wave_manager=self.wave_manager
-                        )
-                    elif route_info['type'] == 'range':
-                        min_val, max_val = route_info['range']
-                        route = Route(
-                            action['handler'],
-                            min_val=min_val,
-                            max_val=max_val,
-                            is_14_bit=route_info.get('is_14_bit', False),
-                            wave_manager=self.wave_manager
-                        )
-                    elif route_info['type'] == 'fixed':
-                        route = Route(
-                            action['handler'],
-                            fixed_value=route_info['value'],
-                            wave_manager=self.wave_manager
-                        )
-                    
-                    action['route'] = route
+                    handler = action['handler']
+                    action['route'] = routes[handler]
                     del action['needs_route']
                     del action['route_info']
         
@@ -497,23 +510,31 @@ class Router:
         """
         values = {}
         
-        # Handle note messages specially
-        if msg_type['action'] in ('press_note', 'release_note'):
-            # First get note-specific values
-            actions = self.midi_mappings.get('note_on', [])
-            for action in actions:
-                if 'route' in action:
+        # Get trigger key (cc# for CC messages, otherwise message type)
+        trigger = f"cc{msg.control}" if msg.type == 'cc' else msg.type
+        
+        # Get actions for this trigger
+        actions = self.midi_mappings.get(trigger, [])
+        
+        # Look up values from routes
+        for action in actions:
+            if 'route' in action:
+                try:
+                    # Get MIDI value based on message type
+                    midi_value = msg.note if msg.type in ('note_on', 'note_off') else msg.value
+                    values[action['handler']] = action['route'].convert(midi_value)
+                except Exception as e:
+                    log(TAG_ROUTE, f"Failed to convert value: {str(e)}", is_error=True)
+                    
+        # For note messages, also get note-specific values
+        if msg.type in ('note_on', 'note_off'):
+            note_actions = self.midi_mappings.get('note_on', [])
+            for action in note_actions:
+                if action['handler'] == 'frequency' and 'route' in action:
                     try:
-                        # Convert note number to frequency
-                        converted = action['route'].convert(msg.note)
-                        values[action['handler']] = converted
+                        values[action['handler']] = action['route'].convert(msg.note)
                     except Exception as e:
                         log(TAG_ROUTE, f"Failed to convert note value: {str(e)}", is_error=True)
-        
-        # Get standard attributes
-        for attr in msg_type['attributes']:
-            if hasattr(msg, attr):
-                values[attr] = getattr(msg, attr)
                 
         return values
     

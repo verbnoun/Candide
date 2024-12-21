@@ -134,11 +134,14 @@ class MidiHandler:
         # Look up values
         values = {}
         for action in actions:
+            if action['handler'] in ('press_note', 'release_note'):
+                continue  # Skip conversion for note handlers
+                
             try:
                 # Look up value from route
                 values[action['handler']] = action['route'].convert(midi_value)
             except Exception as e:
-                log(TAG_PATCH, f"Failed to lookup value: {str(e)}", is_error=True)
+                log(TAG_PATCH, f"Failed to convert {midi_value} for {action['handler']} ({msg.type}): {str(e)}", is_error=True)
                 
         # Send values to synth
         for handler, value in values.items():
