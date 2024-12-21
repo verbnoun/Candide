@@ -5,7 +5,7 @@ import time
 from logging import log, TAG_INST
 from router import get_router
 
-WORKING_PATHS = '''
+TEST_PATHS = '''
 # Note handling
 channel/press_note/note_on
 channel/release_note/note_off
@@ -15,70 +15,40 @@ channel/frequency/note_number/note_on
 # Base waveform
 synth/waveform/triangle
 
-
-# Envelope control
-synth/envelope:attack_level/0.3-1/cc85
-synth/envelope:attack_time/0.001-0.5/cc73
-synth/envelope:decay_time/0.001-0.25/cc75
-synth/envelope:sustain_level/0.001-1/cc66
-channel/envelope:release_time/0.001-3/velocity
-
-
-
+synth/filter_frequency:band_pass/220-2000/cc21
+synth/filter_resonance:band_pass/0.01-1/cc33
 
 '''
 
 """
-# Envelope control
-synth/envelope:attack_level/0.3-1/cc85
-synth/envelope:attack_time/0.001-0.5/cc73
-synth/envelope:decay_time/0.001-0.25/cc75
-synth/envelope:sustain_level/0.001-1/cc66
-synth/envelope:release_time/0.001-2/cc72
+
+
+channel/amplitude/0.001-1/pressure
+
+# Basic Value Modulator LFO (Tremolo)
+synth/lfo/rate/tremolo:0.1-10/cc77
+synth/lfo/scale/tremolo:0-1/cc75
+synth/lfo/offset/tremolo:0.5
+synth/amplitude/lfo:tremolo
+
+# synth/ring_waveform/sine|triangle|square|saw/cc78
+
+
+channel/bend/n0.01-0.01/pitch_bend
+channel/amplitude/0.1-1/pressure
+
+## working
+channel/amplitude/0.001-1/velocity
+
+# Filter
+synth/filter_frequency:band_pass/220-2000/cc21
+synth/filter_resonance:band_pass/0.01-1/cc33
 
 # Ring modulation
 synth/ring_frequency/2-22/cc22
 synth/ring_waveform/sine-triangle-square-saw/cc78
 synth/ring_bend/n1-1/cc86
 
-# Filter
-synth/filter_frequency:band_pass/220-2000/cc21
-synth/filter_resonance:band_pass/0.01-1/cc33
-
-
-
-# Basic Value Modulator LFO (Tremolo)
-synth/lfo/rate/tremolo:0.1-10/pressure
-synth/lfo/scale/tremolo:0-1/cc75
-synth/lfo/offset/tremolo:0.5
-synth/amplitude/lfo:tremolo
-
-# Ring modulation
-synth/ring_frequency/2-22/cc22
-synth/ring_waveform/triangle
-synth/ring_waveform/sine-triangle-square-saw/cc78
-# synth/ring_waveform/sine|triangle|square|saw/cc78
-
-
-channel/amplitude/0.1-1/pressure
-synth/ring_frequency/0.001-10/cc23
-synth/ring_waveform/sine-triangle-square-saw/cc78
-synth/ring_frequency/2-22/pitch_bend
-
-
-# Filter
-synth/filter_frequency:high_pass/220-2000/cc21
-synth/filter_resonance:high_pass/0.01-1/cc22
-
-# Envelope control
-synth/envelope:attack_level/0.3-1/cc85
-synth/envelope:attack_time/0.001-0.5/cc73
-synth/envelope:decay_time/0.001-0.25/cc75
-synth/envelope:sustain_level/0.001-1/cc66
-synth/envelope:release_time/0.001-2/cc72
-
-channel/bend/n0.01-0.01/pitch_bend
-channel/amplitude/0.1-1/pressure
 """
 
 LFO_PATHS = '''

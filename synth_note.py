@@ -52,14 +52,17 @@ class NoteManager:
                 
         # Add envelope if stored
         envelope_params = {}
+        log(TAG_SYNTH, f"Building envelope parameters for channel {channel}:")
         for param in ['attack_time', 'decay_time', 'release_time', 
                      'attack_level', 'sustain_level']:
             value = self.store.get(param, channel)
+            log(TAG_SYNTH, f"  {param}: {value} (from store)")
             if value is not None:
                 envelope_params[param] = value
                 
         if envelope_params:
             try:
+                log(TAG_SYNTH, f"Creating envelope with params: {envelope_params}")
                 note_params['envelope'] = synthio.Envelope(**envelope_params)
                 log(TAG_SYNTH, f"Created envelope for channel {channel}")
             except Exception as e:

@@ -70,8 +70,11 @@ class SynthStore:
         if self._batch_store:
             self._batch_channels.add(channel)
         else:
-            # Log storage (only for channel 1 to avoid spam)
-            if channel == 1:
+            # Log all envelope parameter storage
+            if name.startswith('attack_') or name.startswith('decay_') or name.startswith('release_') or name.startswith('sustain_'):
+                log(TAG_SYNTH, f"Stored envelope param {name}={format_value(value)} for channel {channel}")
+            # Log other storage (only for channel 1 to avoid spam)
+            elif channel == 1:
                 if isinstance(value, (list, bytearray, memoryview)):
                     log(TAG_SYNTH, f"Stored {name} (waveform data)")
                 else:
@@ -100,7 +103,11 @@ class SynthStore:
         if channel == 0:
             channel = 1
             
-        return self.values[channel].get(name, default)
+        value = self.values[channel].get(name, default)
+        # Log envelope parameter retrieval
+        if name.startswith('attack_') or name.startswith('decay_') or name.startswith('release_') or name.startswith('sustain_'):
+            log(TAG_SYNTH, f"Retrieved envelope param {name}={format_value(value)} for channel {channel}")
+        return value
         
     def get_previous(self, name, channel, default=None):
         """Get previous parameter value.

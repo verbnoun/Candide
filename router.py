@@ -62,36 +62,33 @@ PER_NOTE_PARAMS = {
     'ring_waveform_loop_end'
 }
 
+# MIDI message attribute mapping
+MIDI_ATTRIBUTES = {
+    'note_on': {
+        'note': 'note',          # msg.note for frequency
+        'velocity': 'velocity'    # msg.velocity for amplitude
+    },
+    'cc': 'value',              # msg.value
+    'pitch_bend': 'bend',       # msg.bend
+    'channel_pressure': 'pressure',  # msg.pressure
+    'note_off': 'note'          # msg.note
+}
+
 # Message type definitions
 MESSAGE_TYPES = {
     'note_on': {
-        'collect': ['frequency', 'velocity', 'pressure'],  # Values to collect
-        'attributes': ['note', 'velocity', 'pressure'],    # Where to get them
-        'convert': {
-            'note': 'frequency',      # Convert note number to frequency
-            'velocity': 'amplitude'    # Convert velocity to amplitude
-        },
-        'requires': ['frequency'],    # Required for note press
-        'action': 'press_note'        # Action to take
+        'collect': ['frequency', 'velocity', 'pressure'],
+        'requires': ['frequency'],
+        'action': 'press_note'
     },
     'note_off': {
-        'collect': ['release_velocity'],
-        'attributes': ['release_velocity'],
         'action': 'release_note'
     },
     'cc': {
-        'collect': ['value'],
-        'attributes': ['value'],
         'per_cc': True  # Each CC number has its own routes
     },
     'pitch_bend': {
-        'collect': ['bend'],
-        'attributes': ['bend'],
         'is_14_bit': True  # Uses 14-bit value range
-    },
-    'channel_pressure': {
-        'collect': ['pressure'],
-        'attributes': ['pressure']
     }
 }
 
@@ -393,9 +390,10 @@ class Router:
         """Create routes from parsed path data."""
         # Create routes first
         routes = {}
+        note_on_routes = {}  # Special table for note-on values
         
         # Find all route types needed
-        for actions in parse_result.midi_mappings.values():
+        for trigger, actions in parse_result.midi_mappings.items():
             for action in actions:
                 if not action.get('needs_route'):
                     continue
@@ -409,11 +407,17 @@ class Router:
                     
                 # Create route based on type
                 if route_info['type'] == 'note_to_freq':
-                    routes[handler] = Route(
+                    route = Route(
                         handler,
                         is_note_to_freq=True,
                         wave_manager=self.wave_manager
                     )
+                    routes[handler] = route
+                    # Add to note-on table
+                    note_on_routes['note'] = {
+                        'handler': handler,
+                        'route': route
+                    }
                 elif route_info['type'] == 'waveform_sequence':
                     routes[handler] = Route(
                         handler,
@@ -422,19 +426,34 @@ class Router:
                     )
                 elif route_info['type'] == 'range':
                     min_val, max_val = route_info['range']
-                    routes[handler] = Route(
+                    route = Route(
                         handler,
                         min_val=min_val,
                         max_val=max_val,
                         is_14_bit=route_info.get('is_14_bit', False),
                         wave_manager=self.wave_manager
                     )
+                    routes[handler] = route
+                    routes[handler] = route
+                    
+                    # If this is a velocity route, also add it to note_on since velocity is part of note_on
+                    if trigger == 'velocity':
+                        # Create note_on list if needed
+                        if 'note_on' not in self.midi_mappings:
+                            self.midi_mappings['note_on'] = []
+                        # Add velocity action to note_on mappings
+                        velocity_action = action.copy()  # Copy to avoid modifying original
+                        velocity_action['route'] = route
+                        self.midi_mappings['note_on'].append(velocity_action)
                 elif route_info['type'] == 'fixed':
                     routes[handler] = Route(
                         handler,
                         fixed_value=route_info['value'],
                         wave_manager=self.wave_manager
                     )
+        
+        # Store note-on routes table
+        self.note_on_routes = note_on_routes
         
         # Attach routes to actions
         for actions in parse_result.midi_mappings.values():
@@ -502,6 +521,24 @@ class Router:
             msg_type = 'note_off'
         return MESSAGE_TYPES.get(msg_type)
     
+    def get_midi_attribute(self, trigger):
+        """Get MIDI message attribute name for a trigger.
+        
+        Args:
+            trigger: Trigger type (note_on, velocity, cc73, etc.)
+            
+        Returns:
+            Attribute name to get from MIDI message
+        """
+        if trigger.startswith('cc'):
+            return MIDI_ATTRIBUTES['cc']
+        elif trigger == 'velocity':
+            return MIDI_ATTRIBUTES['note_on']['velocity']
+        elif trigger == 'note_on':
+            return MIDI_ATTRIBUTES['note_on']['note']
+        else:
+            return MIDI_ATTRIBUTES.get(trigger)
+            
     def get_message_values(self, msg, msg_type):
         """Get values from a MIDI message based on type definition.
         
@@ -514,31 +551,26 @@ class Router:
         """
         values = {}
         
-        # Get trigger key (cc# for CC messages, otherwise message type)
-        trigger = f"cc{msg.control}" if msg.type == 'cc' else msg.type
-        
-        # Get actions for this trigger
-        actions = self.midi_mappings.get(trigger, [])
-        
-        # Look up values from routes
-        for action in actions:
-            if 'route' in action:
-                try:
-                    # Get MIDI value based on message type
-                    midi_value = msg.note if msg.type in ('note_on', 'note_off') else msg.value
-                    values[action['handler']] = action['route'].convert(midi_value)
-                except Exception as e:
-                    log(TAG_ROUTE, f"Failed to convert value: {str(e)}", is_error=True)
-                    
-        # For note messages, also get note-specific values
-        if msg.type in ('note_on', 'note_off'):
-            note_actions = self.midi_mappings.get('note_on', [])
-            for action in note_actions:
-                if action['handler'] == 'frequency' and 'route' in action:
+        # Get triggers for this message type
+        triggers = []
+        if msg.type == 'cc':
+            triggers.append(f"cc{msg.control}")
+        elif msg.type == 'note_on':
+            triggers.extend(['note_on', 'velocity'])
+        else:
+            triggers.append(msg.type)
+            
+        # Process each trigger
+        for trigger in triggers:
+            actions = self.midi_mappings.get(trigger, [])
+            for action in actions:
+                if 'route' in action:
                     try:
-                        values[action['handler']] = action['route'].convert(msg.note)
+                        # Get MIDI value using mapped attribute
+                        midi_value = getattr(msg, self.get_midi_attribute(trigger))
+                        values[action['handler']] = action['route'].convert(midi_value)
                     except Exception as e:
-                        log(TAG_ROUTE, f"Failed to convert note value: {str(e)}", is_error=True)
+                        log(TAG_ROUTE, f"Failed to convert value: {str(e)}", is_error=True)
                 
         return values
     

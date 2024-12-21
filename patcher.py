@@ -120,39 +120,30 @@ class MidiHandler:
             log(TAG_PATCH, "Received MIDI pressure: ch={} pressure={}".format(
                 msg.channel, msg.pressure))
 
-        # Get trigger key (cc# for CC messages, otherwise message type)
-        trigger = f"cc{msg.control}" if msg.type == 'cc' else msg.type
-            
-        # Get actions for this trigger
-        actions = self.router.midi_mappings.get(trigger, [])
-        if not actions:
+        # Get message type and values from router
+        msg_type = self.router.get_message_type(msg)
+        if not msg_type:
             return
             
-        # Get MIDI value
-        midi_value = msg.note if msg.type in ('note_on', 'note_off') else msg.value
+        # Handle note off immediately since it doesn't need values
+        if msg.type == 'note_off':
+            self.synthesizer.release_note(msg.note, msg.channel)
+            return
             
-        # Look up values
-        values = {}
-        for action in actions:
-            if action['handler'] in ('press_note', 'release_note'):
-                continue  # Skip conversion for note handlers
-                
-            try:
-                # Look up value from route
-                values[action['handler']] = action['route'].convert(midi_value)
-            except Exception as e:
-                log(TAG_PATCH, f"Failed to convert {midi_value} for {action['handler']} ({msg.type}): {str(e)}", is_error=True)
-                
-        # Send values to synth
+        # Get all values for this message (including velocity for note_on)
+        values = self.router.get_message_values(msg, msg_type)
+        if not values:
+            return
+            
+        # Send all values
         for handler, value in values.items():
-            try:
-                channel = self.router.get_channel_scope(msg, action)
-                self.synthesizer.handle_value(handler, value, channel)
-            except Exception as e:
-                log(TAG_PATCH, f"Failed to send value: {str(e)}", is_error=True)
+            channel = self.router.get_channel_scope(msg, {'use_channel': True})
+            log(TAG_PATCH, f"Setting {handler} = {format_value(value)} on channel {channel}")
+            # Log envelope parameter routing
+            if handler.startswith('attack_') or handler.startswith('decay_') or handler.startswith('release_') or handler.startswith('sustain_'):
+                log(TAG_PATCH, f"Routing envelope param {handler} from {msg.type} value {msg.value if hasattr(msg, 'value') else msg.velocity}")
+            self.synthesizer.handle_value(handler, value, channel)
                 
-        # Press/release note after setting values
+        # Press note after setting values
         if msg.type == 'note_on' and 'frequency' in values:
             self.synthesizer.press_note(msg.note, values['frequency'], msg.channel)
-        elif msg.type == 'note_off':
-            self.synthesizer.release_note(msg.note, msg.channel)
