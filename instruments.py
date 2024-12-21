@@ -21,7 +21,7 @@ synth/envelope:attack_level/0.3-1/cc85
 synth/envelope:attack_time/0.001-0.5/cc73
 synth/envelope:decay_time/0.001-0.25/cc75
 synth/envelope:sustain_level/0.001-1/cc66
-synth/envelope:release_time/0.001-2/cc72
+channel/envelope:release_time/0.001-3/velocity
 
 
 

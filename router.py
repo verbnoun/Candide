@@ -14,7 +14,10 @@ PARAM_TYPES = {
     # Fixed Float (can't be block)
     'frequency': 'float',
     'ring_frequency': 'float',  # Must be float per synthio docs
+    
+    # Envelope parameters (clean names from path parser)
     'attack_time': 'float',
+    'attack_level': 'float',
     'decay_time': 'float',
     'sustain_level': 'float',
     'release_time': 'float',
@@ -125,11 +128,11 @@ config_format = {
 # Map internal handler names to human-readable control labels
 control_label_map = {
     # Envelope Controls
-    'envelope_attack_time': 'Attack Time',
-    'envelope_attack_level': 'Attack Level',
-    'envelope_decay_time': 'Decay Time',
-    'envelope_sustain_level': 'Sustain Level',
-    'envelope_release_time': 'Release Time',
+    'attack_time': 'Attack Time',
+    'attack_level': 'Attack Level',
+    'decay_time': 'Decay Time',
+    'sustain_level': 'Sustain Level',
+    'release_time': 'Release Time',
     
     # Filter Controls
     'synth_filter_low_pass_frequency': 'Low Pass Cutoff',

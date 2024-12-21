@@ -168,8 +168,8 @@ class PathParser:
             if handler.startswith('envelope:'):
                 # Format: scope/envelope:param/value/trigger
                 _, param = handler.split(':')
-                # Store as envelope parameter
-                handler = f"envelope_{param}"
+                # Use clean parameter name
+                handler = param
                 log(TAG_PARSER, f"  Mapped envelope parameter: {param}")
                 
             elif handler.startswith('filter_frequency:') or handler.startswith('filter_resonance:'):
