@@ -76,7 +76,7 @@ class SynthStore:
             # Log other storage (only for channel 1 to avoid spam)
             elif channel == 1:
                 if isinstance(value, (list, bytearray, memoryview)):
-                    log(TAG_STORE, f"Stored {name} (waveform data)")
+                    log(TAG_STORE, f"Stored {name}")
                 else:
                     log(TAG_STORE, f"Stored {name}={format_value(value)}")
                 

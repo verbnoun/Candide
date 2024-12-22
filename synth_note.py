@@ -58,7 +58,10 @@ class NoteManager:
                             self.store.store(param, block.value, channel)
                         log(TAG_NOTE, f"  Using block for {param}: {type(block).__name__}")
                     else:
-                        log(TAG_NOTE, f"  Using value for {param}: {format_value(value)}")
+                        if param == 'waveform':
+                            log(TAG_NOTE, "  Using waveform value")
+                        else:
+                            log(TAG_NOTE, f"  Using value for {param}: {format_value(value)}")
                     note_params[param] = value
                 
         # Add envelope if stored
@@ -140,7 +143,7 @@ class NoteManager:
                 env = note_params['envelope']
                 log(TAG_NOTE, f"  envelope: attack={env.attack_time}s decay={env.decay_time}s release={env.release_time}s")
             if 'waveform' in note_params:
-                log(TAG_NOTE, f"  waveform: {len(note_params['waveform'])} samples")
+                log(TAG_NOTE, "Using waveform")
             
             # Create new note
             new_note = synthio.Note(**note_params)
@@ -286,11 +289,12 @@ class NoteManager:
                 # Set parameter value
                 setattr(note, param_name, value)
             
-            # Log update (skip waveform array details)
-            if isinstance(value, (list, bytearray, memoryview)):
-                log(TAG_NOTE, f"Updated {param_name} ({len(value)} samples) for note {note_number}")
+            # Log update
+            if param_name == 'waveform':
+                log(TAG_NOTE, f"Updated waveform for note {note_number}")
             else:
-                log(TAG_NOTE, f"Updated {param_name}={format_value(value)} for note {note_number}")
+                if not isinstance(value, (list, bytearray, memoryview)):
+                    log(TAG_NOTE, f"Updated {param_name}={format_value(value)} for note {note_number}")
             return True
             
         except Exception as e:

@@ -31,7 +31,7 @@ class WaveManager:
         """
         cache_key = f"{waveform_type}_{samples}"
         if cache_key in _WAVEFORM_CACHE:
-            log(TAG_WAVE, f"Using cached {waveform_type} waveform ({samples} samples)")
+            log(TAG_WAVE, f"Using cached {waveform_type} waveform")
             return _WAVEFORM_CACHE[cache_key]
             
         buffer = array.array('h')
@@ -67,7 +67,7 @@ class WaveManager:
                 raise ValueError(f"Unknown waveform type: {waveform_type}")
                 
             _WAVEFORM_CACHE[cache_key] = buffer
-            log(TAG_WAVE, f"Created {waveform_type} waveform ({samples} samples)")
+            log(TAG_WAVE, f"Created {waveform_type} waveform")
             return buffer
             
         except Exception as e:
@@ -109,10 +109,7 @@ class WaveManager:
                 value = int(waveform1[i] * (1-t) + waveform2[i] * t)
                 morphed.append(value)
             
-            log(TAG_WAVE, f"Created morphed waveform ({samples} samples):")
-            log(TAG_WAVE, f"  From: {waveform_sequence[transition_index]}")
-            log(TAG_WAVE, f"  To: {waveform_sequence[transition_index + 1]}")
-            log(TAG_WAVE, f"  Position: {morph_position:.2f}")
+            log(TAG_WAVE, "Created morphed waveform")
             return morphed
             
         except Exception as e:

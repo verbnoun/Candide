@@ -232,8 +232,35 @@ class Synthesizer:
                 lfo_setup = value
                 lfo_name = lfo_setup['name']
                 
-                # Execute steps in order
-                for step, params in lfo_setup['steps']:
+                # Convert string representation back to tuple list
+                steps_str = lfo_setup['steps'].strip('[]')  # Remove outer brackets
+                steps = []
+                # Basic string parsing - expects format like: ('create', {...}), ('route', ...)
+                for step_str in steps_str.split('),'):
+                    if not step_str.strip(): 
+                        continue
+                    # Clean up string and evaluate as tuple
+                    step_str = step_str.strip('() ')
+                    step_type, params_str = step_str.split(',', 1)
+                    step_type = step_type.strip("' ")
+                    
+                    # Parse parameters
+                    if step_type == 'create':
+                        # Convert string dict to actual dict and convert numeric values
+                        params_dict = eval(params_str)  # Safe here since we control input
+                        for k, v in params_dict.items():
+                            try:
+                                params_dict[k] = float(v)
+                            except (ValueError, TypeError):
+                                pass  # Keep non-numeric values as is
+                        params = params_dict
+                    else:
+                        params = params_str.strip("' ")
+                        
+                    steps.append((step_type, params))
+                
+                # Now process the parsed steps
+                for step, params in steps:
                     if step == 'create':
                         # Create LFO with params
                         waveform_type = 'sine'  # Default waveform

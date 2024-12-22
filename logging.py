@@ -86,7 +86,7 @@ def format_value(value):
     try:
         # Handle CircuitPython array.array objects
         if isinstance(value, array.array):
-            return "array('{}', [...])".format(value.typecode)
+            return "waveform"
         # Handle list-like objects    
         elif hasattr(value, '__len__') and hasattr(value, '__getitem__'):
             return '[...]'

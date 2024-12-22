@@ -66,8 +66,8 @@ class PathParser:
                 
             log(TAG_PARSER, "\nStartup Values:")
             for handler, config in result.startup_values.items():
-                if handler.endswith('waveform'):
-                    log(TAG_PARSER, f"{handler} -> Waveform configured")
+                if isinstance(config['value'], dict) and config['value'].get('type') == 'waveform':
+                    log(TAG_PARSER, f"{handler} -> waveform")
                 else:
                     log(TAG_PARSER, f"{handler} -> {format_value(config['value'])}")
                     
@@ -389,7 +389,7 @@ class PathParser:
                     'value': {'type': 'waveform', 'name': value_or_range},
                     'use_channel': scope == 'channel'
                 }
-                log(TAG_PARSER, f"  Added waveform startup value: {value_or_range}")
+                log(TAG_PARSER, f"  Added waveform")
             else:
                 result.startup_values[handler] = {
                     'value': value_or_range,

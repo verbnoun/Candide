@@ -258,7 +258,10 @@ class Route:
             
             # Log creation
             if self.fixed_value is not None:
-                log(TAG_ROUTE, f"Created route: {name} [fixed: {format_value(self.fixed_value)}]")
+                if isinstance(self.fixed_value, (array.array, bytearray, memoryview)):
+                    log(TAG_ROUTE, f"Created route: {name} [fixed: waveform]")
+                else:
+                    log(TAG_ROUTE, f"Created route: {name} [fixed: {format_value(self.fixed_value)}]")
             elif self.lookup_table is None:
                 log(TAG_ROUTE, f"Created route: {name} [pass through]")
                 
@@ -383,7 +386,12 @@ class Router:
             
             # Store results
             self.midi_mappings = parse_result.midi_mappings
-            self.startup_values = parse_result.startup_values
+            existing_lfo_setups = {}
+            for k, v in self.startup_values.items():
+                if k.startswith('lfo_setup_'):
+                    existing_lfo_setups[k] = v
+            self.startup_values = parse_result.startup_values  
+            self.startup_values.update(existing_lfo_setups)
             self.enabled_messages = parse_result.enabled_messages
             self.enabled_ccs = parse_result.enabled_ccs
             self.current_instrument_name = parse_result.current_instrument_name
@@ -561,7 +569,10 @@ class Router:
                 for step, params in lfo_setup['steps']:
                     log(TAG_ROUTE, f"  {step}: {format_value(params)}")
             else:
-                log(TAG_ROUTE, f"{handler}: {format_value(config['value'])}")
+                if isinstance(config['value'], (array.array, bytearray, memoryview)):
+                    log(TAG_ROUTE, f"{handler}: waveform")
+                else:
+                    log(TAG_ROUTE, f"{handler}: {format_value(config['value'])}")
         
         # Create ordered dict of startup values
         ordered_values = {}
@@ -580,7 +591,7 @@ class Router:
                 ordered_values[handler] = config
                 log(TAG_ROUTE, f"Adding startup value: {handler}")
                 
-        log(TAG_ROUTE, f"Returning ordered values: {ordered_values}")
+        log(TAG_ROUTE, "Returning ordered values")
         return (ordered_values, {})
     
     def get_midi_mappings(self):

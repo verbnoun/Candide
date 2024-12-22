@@ -71,7 +71,7 @@ class ModulationManager:
                 log(TAG_MOD, f"  scale: {params.get('scale', 1.0)}")
                 log(TAG_MOD, f"  offset: {params.get('offset', 0.0)}")
                 if 'waveform' in params:
-                    log(TAG_MOD, f"  waveform: {len(params['waveform'])} samples")
+                    log(TAG_MOD, "  waveform: set")
                 log(TAG_MOD, f"  once: {params.get('once', False)}")
                 log(TAG_MOD, f"  interpolate: {params.get('interpolate', True)}")
                 return lfo
