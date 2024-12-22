@@ -43,19 +43,12 @@ class NoteManager:
         """
         note_params = {'frequency': frequency}
         
-        # Get blocks for note parameters
+        # Get values for note parameters
         for param in self.NOTE_PARAMS:
-            log(TAG_NOTE, f"Getting block for {param}")
-            block = self.modulation.get_block(param, note_number, channel)
-            if block:
-                if isinstance(block, synthio.LFO):
-                    log(TAG_NOTE, f"  {param} controlled by LFO:")
-                    log(TAG_NOTE, f"    rate: {block.rate} Hz")
-                    log(TAG_NOTE, f"    scale: {block.scale}")
-                    log(TAG_NOTE, f"    offset: {block.offset}")
-                    log(TAG_NOTE, f"    current value: {block.value}")
-                log(TAG_NOTE, f"  Using block for {param}: {type(block).__name__}")
-                note_params[param] = block
+            value = self.store.get(param, channel)
+            if value is not None:
+                note_params[param] = value
+                log(TAG_NOTE, f"Using value for {param}: {format_value(value)}")
                 
         # Get values for value parameters
         for param in self.VALUE_PARAMS:
@@ -93,36 +86,11 @@ class NoteManager:
                 filter_mode_name = filter_type.replace(' ', '_').upper()
                 filter_mode = getattr(synthio.FilterMode, filter_mode_name)
                 
-                # Get blocks for filter parameters
-                freq_block = self.modulation.get_block('filter_frequency', note_number, channel)
-                if freq_block:
-                    if isinstance(freq_block, synthio.LFO):
-                        log(TAG_NOTE, f"  filter frequency controlled by LFO:")
-                        log(TAG_NOTE, f"    rate: {freq_block.rate} Hz")
-                        log(TAG_NOTE, f"    scale: {freq_block.scale}")
-                        log(TAG_NOTE, f"    offset: {freq_block.offset}")
-                        log(TAG_NOTE, f"    current value: {freq_block.value}")
-                else:
-                    # Use stored value if no block
-                    freq_block = self.store.get('filter_frequency', channel, 500)
-                
-                q_block = self.modulation.get_block('filter_q', note_number, channel)
-                if q_block:
-                    if isinstance(q_block, synthio.LFO):
-                        log(TAG_NOTE, f"  filter Q controlled by LFO:")
-                        log(TAG_NOTE, f"    rate: {q_block.rate} Hz")
-                        log(TAG_NOTE, f"    scale: {q_block.scale}")
-                        log(TAG_NOTE, f"    offset: {q_block.offset}")
-                        log(TAG_NOTE, f"    current value: {q_block.value}")
-                else:
-                    # Use stored value if no block
-                    q_block = self.store.get('filter_q', channel, 0.707)
-                
-                # Create filter with blocks
+                # Create filter with values
                 filter_obj = synthio.BlockBiquad(
                     mode=filter_mode,
-                    frequency=freq_block,  # Block or value
-                    Q=q_block  # Block or value
+                    frequency=self.store.get('filter_frequency', channel, 500),
+                    Q=self.store.get('filter_q', channel, 0.707)
                 )
                 note_params['filter'] = filter_obj
                 log(TAG_NOTE, f"Created {filter_type} filter with blocks")
@@ -257,29 +225,34 @@ class NoteManager:
         
         # Update all parameters if none specified
         if param_name is None:
-            # Update block parameters
-            for param in self.BLOCK_PARAMS:
-                log(TAG_NOTE, f"Getting block for {param}")
-                block = self.modulation.get_block(param, note_number, channel)
-                if block:
-                    if isinstance(block, synthio.LFO):
-                        log(TAG_NOTE, f"  {param} controlled by LFO:")
-                        log(TAG_NOTE, f"    rate: {block.rate} Hz")
-                        log(TAG_NOTE, f"    scale: {block.scale}")
-                        log(TAG_NOTE, f"    offset: {block.offset}")
-                        log(TAG_NOTE, f"    current value: {block.value}")
-                    log(TAG_NOTE, f"  Using block for {param}: {type(block).__name__}")
-                    setattr(note, param, block)
+            # Update note parameters (amplitude, bend, panning)
+            for param in self.NOTE_PARAMS:
+                value = self.store.get(param, channel)
+                if value is not None:
+                    setattr(note, param, value)
+                    log(TAG_NOTE, f"Updated {param}={format_value(value)}")
                     
-            # Update value parameters
+            # Update filter parameters (filter_frequency, filter_q)
+            if note.filter:
+                for param in self.FILTER_PARAMS:
+                    value = self.store.get(param, channel)
+                    if value is not None:
+                        if param == 'filter_frequency':
+                            note.filter.frequency = value
+                            log(TAG_NOTE, f"Updated filter frequency={format_value(value)}")
+                        elif param == 'filter_q':
+                            note.filter.Q = value
+                            log(TAG_NOTE, f"Updated filter Q={format_value(value)}")
+                            
+            # Update value parameters (waveform etc)
             for param in self.VALUE_PARAMS:
                 value = self.store.get(param, channel)
                 if value is not None:
-                    if param == 'waveform':
-                        log(TAG_NOTE, "Using waveform value")
-                    else:
-                        log(TAG_NOTE, f"Using value for {param}: {format_value(value)}")
                     setattr(note, param, value)
+                    if param == 'waveform':
+                        log(TAG_NOTE, "Updated waveform")
+                    else:
+                        log(TAG_NOTE, f"Updated {param}={format_value(value)}")
             return True
             
         # Handle single parameter update
@@ -288,36 +261,42 @@ class NoteManager:
             if param_name.startswith('lfo_'):
                 return True
                 
-            # Handle block parameters
-            if param_name in self.BLOCK_PARAMS:
-                log(TAG_NOTE, f"Getting block for {param_name}")
-                block = self.modulation.get_block(param_name, note_number, channel)
-                if block:
-                    if isinstance(block, synthio.LFO):
-                        log(TAG_NOTE, f"  {param_name} controlled by LFO:")
-                        log(TAG_NOTE, f"    rate: {block.rate} Hz")
-                        log(TAG_NOTE, f"    scale: {block.scale}")
-                        log(TAG_NOTE, f"    offset: {block.offset}")
-                        log(TAG_NOTE, f"    current value: {block.value}")
-                    log(TAG_NOTE, f"  Using block for {param_name}: {type(block).__name__}")
-                    setattr(note, param_name, block)
-                    log(TAG_NOTE, f"Updated {param_name} with block")
+            # Handle note parameters (amplitude, bend, panning)
+            if param_name in self.NOTE_PARAMS:
+                value = self.store.get(param_name, channel)
+                if value is not None:
+                    setattr(note, param_name, value)
+                    log(TAG_NOTE, f"Updated {param_name}={format_value(value)}")
                     return True
                 return False
             
-            # Handle value parameters
+            # Handle filter parameters (filter_frequency, filter_q)
+            elif param_name in self.FILTER_PARAMS:
+                if not note.filter:
+                    log(TAG_NOTE, f"No filter exists on note {note_number}, skipping update")
+                    return False
+                    
+                value = self.store.get(param_name, channel)
+                if value is not None:
+                    if param_name == 'filter_frequency':
+                        note.filter.frequency = value
+                        log(TAG_NOTE, f"Updated filter frequency={format_value(value)}")
+                    elif param_name == 'filter_q':
+                        note.filter.Q = value
+                        log(TAG_NOTE, f"Updated filter Q={format_value(value)}")
+                    return True
+                return False
+            
+            # Handle value parameters (waveform etc)
             elif param_name in self.VALUE_PARAMS:
                 if value is None:
                     value = self.store.get(param_name, channel)
                 if value is not None:
+                    setattr(note, param_name, value)
                     if param_name == 'waveform':
-                        log(TAG_NOTE, "Using waveform value")
-                        setattr(note, param_name, value)
-                        log(TAG_NOTE, f"Updated waveform for note {note_number}")
+                        log(TAG_NOTE, "Updated waveform")
                     else:
-                        log(TAG_NOTE, f"Using value for {param_name}: {format_value(value)}")
-                        setattr(note, param_name, value)
-                        log(TAG_NOTE, f"Updated {param_name}={format_value(value)} for note {note_number}")
+                        log(TAG_NOTE, f"Updated {param_name}={format_value(value)}")
                     return True
                 return False
             

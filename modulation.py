@@ -188,6 +188,10 @@ class ModulationManager:
             
             block = self.blocks.get(source_name)
             if block:
+                # Add to synth blocks for updates if not already there
+                if block not in self.synth.synth.blocks:
+                    self.synth.synth.blocks.append(block)
+                    log(TAG_MOD, f"Added block {source_name} to synth blocks")
                 log(TAG_MOD, f"Found routed block for {name}:")
                 log(TAG_MOD, f"  Source: {source_name}")
                 log(TAG_MOD, f"  Type: {type(block).__name__}")
@@ -204,6 +208,10 @@ class ModulationManager:
         # Return global block if it exists and is global scope
         if name in self.blocks and self.active_scopes.get(name, True):
             block = self.blocks[name]
+            # Add to synth blocks for updates if not already there
+            if block not in self.synth.synth.blocks:
+                self.synth.synth.blocks.append(block)
+                log(TAG_MOD, f"Added block {name} to synth blocks")
             log(TAG_MOD, f"Found global block for {name}:")
             log(TAG_MOD, f"  Type: {type(block).__name__}")
             return block
@@ -234,6 +242,10 @@ class ModulationManager:
                                             **proto['params'])
                                             
                 if block:
+                    # Add to synth blocks for updates if not already there
+                    if block not in self.synth.synth.blocks:
+                        self.synth.synth.blocks.append(block)
+                        log(TAG_MOD, f"Added per-note block {name} to synth blocks")
                     self.note_blocks[note_key][name] = block
                     return block
                 
@@ -291,6 +303,10 @@ class ModulationManager:
             block = self.blocks[source_name]
             # Set up routing
             self.chains[target_param] = source_name
+            # Add to synth blocks for updates if not already there
+            if block not in self.synth.synth.blocks:
+                self.synth.synth.blocks.append(block)
+                log(TAG_MOD, f"Added block {source_name} to synth blocks")
             log(TAG_MOD, f"Set up new routing: {target_param} -> {source_name}")
             log(TAG_MOD, f"Updated routing table: {self.chains}")
             log(TAG_MOD, f"Routed block {source_name} to {target_param}:")
@@ -299,7 +315,6 @@ class ModulationManager:
                 log(TAG_MOD, f"  LFO scale: {block.scale}")
                 log(TAG_MOD, f"  LFO offset: {block.offset}")
                 log(TAG_MOD, f"  Current value: {block.value}")
-                # Block is ready for use
             return True
         return False
         

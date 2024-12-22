@@ -15,15 +15,22 @@ channel/frequency/note_number/note_on
 # Base waveform
 synth/waveform/triangle
 
-synth/filter_frequency:band_pass/220-2000/cc21
-synth/filter_resonance:band_pass/0.01-1/cc33
 
-
+# Basic Value Modulator LFO (Tremolo)
+# 0.1-10 Hz oscillation
+synth/lfo/rate/tremolo:0.1-10/cc74
+# Depth of effect
+synth/lfo/scale/tremolo:0-1/cc75
+# Center at 0.5 amplitude
+synth/lfo/offset/tremolo:0.5
+# Connect to amplitude
+synth/amplitude/lfo:tremolo
 '''
 
 """
 
 ## WORKS
+
 channel/amplitude/0.001-1/velocity
 channel/bend/n0.1-0.1/pitch_bend
 channel/amplitude/0.001-1/pressure
