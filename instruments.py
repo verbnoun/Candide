@@ -15,16 +15,15 @@ channel/frequency/note_number/note_on
 # Base waveform
 synth/waveform/triangle
 
+# Channel filter sweep (one-shot triggered by note-on)
+channel/lfo/once/sweep_ch:true
+channel/lfo/rate/sweep_ch:0.5
+# Range based on note pressure
+channel/lfo/scale/sweep_ch:500-2000/pressure
+channel/lfo/waveform/sweep_ch:saw
+channel/filter_frequency:high_pass/lfo:sweep_ch
 
-# Basic Value Modulator LFO (Tremolo)
-# 0.1-10 Hz oscillation
-synth/lfo/rate/tremolo:0.1-10/cc74
-# Depth of effect
-synth/lfo/scale/tremolo:0-1/cc75
-# Center at 0.5 amplitude
-synth/lfo/offset/tremolo:0.5
-# Connect to amplitude
-synth/amplitude/lfo:tremolo
+synth/filter_resonance:high_pass/0.01-1/cc33
 '''
 
 """

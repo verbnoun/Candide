@@ -45,10 +45,17 @@ class NoteManager:
         
         # Get values for note parameters
         for param in self.NOTE_PARAMS:
-            value = self.store.get(param, channel)
-            if value is not None:
-                note_params[param] = value
-                log(TAG_NOTE, f"Using value for {param}: {format_value(value)}")
+            # Check modulation first
+            block = self.modulation.get_block(param, note_number, channel)
+            if block:
+                note_params[param] = block
+                log(TAG_NOTE, f"Using block for {param}")
+            else:
+                # Fall back to store value
+                value = self.store.get(param, channel)
+                if value is not None:
+                    note_params[param] = value
+                    log(TAG_NOTE, f"Using value for {param}: {format_value(value)}")
                 
         # Get values for value parameters
         for param in self.VALUE_PARAMS:
@@ -227,10 +234,17 @@ class NoteManager:
         if param_name is None:
             # Update note parameters (amplitude, bend, panning)
             for param in self.NOTE_PARAMS:
-                value = self.store.get(param, channel)
-                if value is not None:
-                    setattr(note, param, value)
-                    log(TAG_NOTE, f"Updated {param}={format_value(value)}")
+                # Check modulation first
+                block = self.modulation.get_block(param, note_number, channel)
+                if block:
+                    setattr(note, param, block)
+                    log(TAG_NOTE, f"Updated {param} with block")
+                else:
+                    # Fall back to store value
+                    value = self.store.get(param, channel)
+                    if value is not None:
+                        setattr(note, param, value)
+                        log(TAG_NOTE, f"Updated {param}={format_value(value)}")
                     
             # Update filter parameters (filter_frequency, filter_q)
             if note.filter:
@@ -263,11 +277,19 @@ class NoteManager:
                 
             # Handle note parameters (amplitude, bend, panning)
             if param_name in self.NOTE_PARAMS:
-                value = self.store.get(param_name, channel)
-                if value is not None:
-                    setattr(note, param_name, value)
-                    log(TAG_NOTE, f"Updated {param_name}={format_value(value)}")
+                # Check modulation first
+                block = self.modulation.get_block(param_name, note_number, channel)
+                if block:
+                    setattr(note, param_name, block)
+                    log(TAG_NOTE, f"Updated {param_name} with block")
                     return True
+                else:
+                    # Fall back to store value
+                    value = self.store.get(param_name, channel)
+                    if value is not None:
+                        setattr(note, param_name, value)
+                        log(TAG_NOTE, f"Updated {param_name}={format_value(value)}")
+                        return True
                 return False
             
             # Handle filter parameters (filter_frequency, filter_q)
