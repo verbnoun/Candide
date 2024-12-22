@@ -25,17 +25,7 @@ synth/lfo/offset/tremolo:0.5
 # Connect to amplitude
 synth/amplitude/lfo:tremolo
 
-# One-Shot Fade LFO (Slow Attack)
-# One-time execution
-synth/lfo/once/fade:true
-# Complete over 2 seconds  
-synth/lfo/rate/fade:0.5
-# Full range            
-synth/lfo/scale/fade:1
-# Linear ramp            
-synth/lfo/waveform/fade:ramp
-# Target amplitude
-synth/amplitude/lfo:fade
+
 
 '''
 
@@ -80,8 +70,8 @@ synth/lfo/once/fade:true
 synth/lfo/rate/fade:0.5
 # Full range            
 synth/lfo/scale/fade:1
-# Linear ramp            
-synth/lfo/waveform/fade:ramp
+# Linear ramp up           
+synth/lfo/waveform/fade:saw
 # Target amplitude
 synth/amplitude/lfo:fade
 
@@ -107,6 +97,18 @@ synth/lfo/phase_offset/vib:0.5
 # Connect to pitch bend
 synth/bend/lfo:vib
 
+# One-Shot Fade Down LFO (Release)
+# One-time execution
+synth/lfo/once/fade_down:true
+# Complete over 2 seconds  
+synth/lfo/rate/fade_down:0.5
+# Full range            
+synth/lfo/scale/fade_down:1
+# Linear ramp down            
+synth/lfo/waveform/fade_down:reverse_saw
+# Target amplitude
+synth/amplitude/lfo:fade_down
+
 # Per-channel LFO examples with MIDI targeting:
 
 # Channel vibrato (bend) triggered by aftertouch (pressure)
@@ -129,7 +131,7 @@ channel/lfo/once/sweep_ch:true
 channel/lfo/rate/sweep_ch:0.5
 # Range based on note velocity
 channel/lfo/scale/sweep_ch:500-2000/velocity
-channel/lfo/waveform/sweep_ch:ramp
+channel/lfo/waveform/sweep_ch:saw
 channel/filter_frequency:high_pass/lfo:sweep_ch
 
 # Channel ring mod with pitch bend depth
