@@ -6,8 +6,14 @@ from logging import log, TAG_NOTE, format_value
 class NoteManager:
     """Manages active notes and their parameters."""
     
-    # Parameters that are BlockInputs
-    BLOCK_PARAMS = {'amplitude', 'bend', 'panning'}
+    # Note parameters that are BlockInputs
+    NOTE_PARAMS = {'amplitude', 'bend', 'panning'}
+    
+    # Filter parameters that are BlockInputs
+    FILTER_PARAMS = {'filter_frequency', 'filter_q'}
+    
+    # All block parameters (for retrigger)
+    BLOCK_PARAMS = NOTE_PARAMS | FILTER_PARAMS
     
     # Parameters that are values
     VALUE_PARAMS = {
@@ -15,9 +21,6 @@ class NoteManager:
         'ring_frequency', 'ring_bend', 'ring_waveform',
         'ring_waveform_loop_start', 'ring_waveform_loop_end'
     }
-    
-    # Filter parameters
-    FILTER_PARAMS = {'filter_frequency', 'filter_q'}
     
     def __init__(self, synth, store, modulation_manager):
         self.synth = synth
@@ -40,8 +43,8 @@ class NoteManager:
         """
         note_params = {'frequency': frequency}
         
-        # Get blocks for block parameters
-        for param in self.BLOCK_PARAMS:
+        # Get blocks for note parameters
+        for param in self.NOTE_PARAMS:
             log(TAG_NOTE, f"Getting block for {param}")
             block = self.modulation.get_block(param, note_number, channel)
             if block:
@@ -82,27 +85,48 @@ class NoteManager:
             except Exception as e:
                 log(TAG_NOTE, f"Error creating envelope: {str(e)}", is_error=True)
                 
-        # Get filter if stored
+        # Create filter with blocks if type is set
         filter_type = self.store.get('filter_type', channel)
-        filter_freq = self.store.get('filter_frequency', channel)
-        filter_q = self.store.get('filter_q', channel, 0.707)
-        
-        if filter_type and filter_freq:
+        if filter_type:
             try:
                 # Convert string filter type to synthio.FilterMode
                 filter_mode_name = filter_type.replace(' ', '_').upper()
                 filter_mode = getattr(synthio.FilterMode, filter_mode_name)
                 
-                # Check for modulation blocks
+                # Get blocks for filter parameters
                 freq_block = self.modulation.get_block('filter_frequency', note_number, channel)
-                q_block = self.modulation.get_block('filter_q', note_number, channel)
+                if freq_block:
+                    if isinstance(freq_block, synthio.LFO):
+                        log(TAG_NOTE, f"  filter frequency controlled by LFO:")
+                        log(TAG_NOTE, f"    rate: {freq_block.rate} Hz")
+                        log(TAG_NOTE, f"    scale: {freq_block.scale}")
+                        log(TAG_NOTE, f"    offset: {freq_block.offset}")
+                        log(TAG_NOTE, f"    current value: {freq_block.value}")
+                else:
+                    # Use stored value if no block
+                    freq_block = self.store.get('filter_frequency', channel, 500)
                 
-                note_params['filter'] = synthio.BlockBiquad(
+                q_block = self.modulation.get_block('filter_q', note_number, channel)
+                if q_block:
+                    if isinstance(q_block, synthio.LFO):
+                        log(TAG_NOTE, f"  filter Q controlled by LFO:")
+                        log(TAG_NOTE, f"    rate: {q_block.rate} Hz")
+                        log(TAG_NOTE, f"    scale: {q_block.scale}")
+                        log(TAG_NOTE, f"    offset: {q_block.offset}")
+                        log(TAG_NOTE, f"    current value: {q_block.value}")
+                else:
+                    # Use stored value if no block
+                    q_block = self.store.get('filter_q', channel, 0.707)
+                
+                # Create filter with blocks
+                filter_obj = synthio.BlockBiquad(
                     mode=filter_mode,
-                    frequency=freq_block if freq_block else filter_freq,
-                    Q=q_block if q_block else filter_q
+                    frequency=freq_block,  # Block or value
+                    Q=q_block  # Block or value
                 )
-                log(TAG_NOTE, f"Created {filter_type} filter at {filter_freq}Hz")
+                note_params['filter'] = filter_obj
+                log(TAG_NOTE, f"Created {filter_type} filter with blocks")
+                
             except AttributeError:
                 log(TAG_NOTE, f"Unknown filter type: {filter_type}, skipping filter")
             except Exception as e:
@@ -296,41 +320,6 @@ class NoteManager:
                         log(TAG_NOTE, f"Updated {param_name}={format_value(value)} for note {note_number}")
                     return True
                 return False
-            
-            # Handle filter parameters
-            elif param_name in self.FILTER_PARAMS:
-                if not note.filter:
-                    log(TAG_NOTE, f"No filter exists on note {note_number}, skipping update")
-                    return False
-                
-                try:
-                    # Check for modulation block
-                    block = self.modulation.get_block(param_name, note_number, channel)
-                    if block:
-                        value = block
-                    
-                    # Update the specific filter parameter
-                    if param_name == 'filter_frequency':
-                        note.filter.frequency = value
-                        log(TAG_NOTE, f"Updated filter frequency to {format_value(value)} for note {note_number}")
-                    elif param_name == 'filter_q':
-                        note.filter.Q = value
-                        log(TAG_NOTE, f"Updated filter Q to {format_value(value)} for note {note_number}")
-                    return True
-                except Exception as e:
-                    log(TAG_NOTE, f"Error updating filter parameter: {str(e)}", is_error=True)
-                    return False
-                    
-            # Handle direct filter object assignment
-            elif param_name == 'filter':
-                if isinstance(value, dict):
-                    # Create new filter from parameters
-                    note.filter = synthio.BlockBiquad(**value)
-                else:
-                    # Direct filter object assignment
-                    note.filter = value
-                log(TAG_NOTE, f"Updated filter for note {note_number}")
-                return True
             
             log(TAG_NOTE, f"Parameter {param_name} cannot be updated", is_error=True)
             return False

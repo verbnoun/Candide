@@ -15,14 +15,8 @@ channel/frequency/note_number/note_on
 # Base waveform
 synth/waveform/triangle
 
-# One-Shot Fade LFO (Slow Attack)
-synth/lfo/once/fade:true
-synth/lfo/rate/fade:0.5
-synth/lfo/scale/fade:0.5
-synth/lfo/offset/fade:0.5
-synth/lfo/waveform/fade:saw
-channel/amplitude/lfo:fade
-
+synth/filter_frequency:band_pass/220-2000/cc21
+synth/filter_resonance:band_pass/0.01-1/cc33
 
 
 '''
@@ -62,16 +56,12 @@ synth/lfo/offset/tremolo:0.5
 synth/amplitude/lfo:tremolo
 
 # One-Shot Fade LFO (Slow Attack)
-# One-time execution
 synth/lfo/once/fade:true
-# Complete over 2 seconds  
 synth/lfo/rate/fade:0.5
-# Full range            
-synth/lfo/scale/fade:1
-# Linear ramp up           
+synth/lfo/scale/fade:0.5
+synth/lfo/offset/fade:0.5
 synth/lfo/waveform/fade:saw
-# Target amplitude
-synth/amplitude/lfo:fade
+channel/amplitude/lfo:fade
 
 # Phase-shifted LFO (Vibrato with delay)
 # 6 Hz vibrato
@@ -83,17 +73,6 @@ synth/lfo/phase_offset/vib:0.5
 # Connect to pitch bend
 synth/bend/lfo:vib
 
-# One-Shot Fade Down LFO (Release)
-# One-time execution
-synth/lfo/once/fade_down:true
-# Complete over 2 seconds  
-synth/lfo/rate/fade_down:0.5
-# Full range            
-synth/lfo/scale/fade_down:1
-# Linear ramp down            
-synth/lfo/waveform/fade_down:reverse_saw
-# Target amplitude
-synth/amplitude/lfo:fade_down
 
 # Per-channel LFO examples with MIDI targeting:
 
@@ -120,10 +99,15 @@ channel/lfo/scale/sweep_ch:500-2000/velocity
 channel/lfo/waveform/sweep_ch:saw
 channel/filter_frequency:high_pass/lfo:sweep_ch
 
-# Channel ring mod with pitch bend depth
-channel/lfo/rate/ring_ch:1-20/cc75
-channel/lfo/scale/ring_ch:0-100/pitch_bend
-channel/ring_frequency/lfo:ring_ch
+# Channel filter sweep (one-shot triggered by note-on)
+channel/lfo/once/sweep_ch:true
+channel/lfo/rate/sweep_ch:0.5
+channel/lfo/scale/sweep_ch:100-4000/cc12
+channel/lfo/waveform/sweep_ch:saw
+channel/filter_frequency:high_pass/lfo:sweep_ch
+channel/filter_resonance:high_pass/0.5-5/cc33
+
+
 
 # LFO CONFIGURATION SCHEMA
 # SCOPE/lfo/[parameter]/[name]:[value or range]/[midi_trigger (optional)]
