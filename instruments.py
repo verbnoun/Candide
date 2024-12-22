@@ -5,6 +5,36 @@ import time
 from logging import log, TAG_INST
 from router import get_router
 
+RICH_SAW_PATHS = '''
+
+# Note handling
+channel/press_note/note_on
+channel/release_note/note_off
+channel/frequency/note_number/note_on
+
+# Base waveform
+synth/waveform/saw
+
+# Ring modulation for harmonic richness
+synth/ring_frequency/2-22/cc22
+synth/ring_waveform/triangle
+
+# Dynamic amplitude control
+channel/amplitude/0.1-1/pressure
+
+# Envelope shaping
+synth/envelope:attack_time/0.05
+synth/envelope:attack_level/1
+synth/envelope:decay_time/0.5
+synth/envelope:sustain_level/0.5
+synth/envelope:release_time/2
+
+# Filter for tone shaping
+synth/filter_frequency:notch/20-2000/pressure
+synth/filter_resonance:notch/0.1-2.0/cc71
+
+'''
+
 TEST_PATHS = '''
 # Note handling
 channel/press_note/note_on
@@ -15,15 +45,6 @@ channel/frequency/note_number/note_on
 # Base waveform
 synth/waveform/triangle
 
-# Channel filter sweep (one-shot triggered by note-on)
-channel/lfo/once/sweep_ch:true
-channel/lfo/rate/sweep_ch:0.5
-# Range based on note pressure
-channel/lfo/scale/sweep_ch:500-2000/pressure
-channel/lfo/waveform/sweep_ch:saw
-channel/filter_frequency:high_pass/lfo:sweep_ch
-
-synth/filter_resonance:high_pass/0.01-1/cc33
 '''
 
 """
@@ -100,18 +121,11 @@ channel/amplitude/lfo:trem_ch
 # Channel filter sweep (one-shot triggered by note-on)
 channel/lfo/once/sweep_ch:true
 channel/lfo/rate/sweep_ch:0.5
-# Range based on note velocity
-channel/lfo/scale/sweep_ch:500-2000/velocity
+channel/lfo/scale/sweep_ch:500-2000/cc24
 channel/lfo/waveform/sweep_ch:saw
 channel/filter_frequency:high_pass/lfo:sweep_ch
+synth/filter_resonance:high_pass/0.01-1/cc33
 
-# Channel filter sweep (one-shot triggered by note-on)
-channel/lfo/once/sweep_ch:true
-channel/lfo/rate/sweep_ch:0.5
-channel/lfo/scale/sweep_ch:100-4000/cc12
-channel/lfo/waveform/sweep_ch:saw
-channel/filter_frequency:high_pass/lfo:sweep_ch
-channel/filter_resonance:high_pass/0.5-5/cc33
 
 
 
@@ -140,9 +154,10 @@ Parameters:
 
 """
 
-RICH_SAW_PATHS = '''# One-Shot Fade LFO (Slow Attack)
+RICH_SAW_PATHS = '''
+# One-Shot Fade LFO (Slow Attack)
 synth/lfo/once/fade:true
-synth/lfo/rate/fade:0.5
+synth/lfo/rate/fade:0.5-2/cc72
 synth/lfo/scale/fade:0.5
 synth/lfo/offset/fade:0.5
 synth/lfo/waveform/fade:saw
@@ -171,8 +186,8 @@ synth/envelope:sustain_level/0.5
 synth/envelope:release_time/2
 
 # Filter for tone shaping
-synth/filter_frequency:low_pass/200-2000/pressure
-synth/envelope:release_time/2
+synth/filter_frequency:notch/20-20000/pressure
+synth/filter_resonance:notch/0.1-2.0/cc71
 
 '''
 

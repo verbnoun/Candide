@@ -93,11 +93,24 @@ class NoteManager:
                 filter_mode_name = filter_type.replace(' ', '_').upper()
                 filter_mode = getattr(synthio.FilterMode, filter_mode_name)
                 
-                # Create filter with values
+                # Get filter frequency (check modulation first)
+                freq_block = self.modulation.get_block('filter_frequency', note_number, channel)
+                if freq_block:
+                    log(TAG_NOTE, f"Using modulation block for filter frequency")
+                    frequency = freq_block
+                else:
+                    frequency = self.store.get('filter_frequency', channel, 0.0)
+                    log(TAG_NOTE, f"Using stored/default filter frequency: {frequency}")
+                    
+                # Get filter Q
+                q_value = self.store.get('filter_q', channel, 0.0)
+                log(TAG_NOTE, f"Using filter Q: {q_value}")
+                
+                # Create filter
                 filter_obj = synthio.BlockBiquad(
                     mode=filter_mode,
-                    frequency=self.store.get('filter_frequency', channel, 500),
-                    Q=self.store.get('filter_q', channel, 0.707)
+                    frequency=frequency,
+                    Q=q_value
                 )
                 note_params['filter'] = filter_obj
                 log(TAG_NOTE, f"Created {filter_type} filter with blocks")
@@ -249,14 +262,25 @@ class NoteManager:
             # Update filter parameters (filter_frequency, filter_q)
             if note.filter:
                 for param in self.FILTER_PARAMS:
-                    value = self.store.get(param, channel)
-                    if value is not None:
+                    # Check modulation first
+                    block = self.modulation.get_block(param, note_number, channel)
+                    if block:
                         if param == 'filter_frequency':
-                            note.filter.frequency = value
-                            log(TAG_NOTE, f"Updated filter frequency={format_value(value)}")
+                            note.filter.frequency = block
+                            log(TAG_NOTE, f"Updated filter frequency with block")
                         elif param == 'filter_q':
-                            note.filter.Q = value
-                            log(TAG_NOTE, f"Updated filter Q={format_value(value)}")
+                            note.filter.Q = block
+                            log(TAG_NOTE, f"Updated filter Q with block")
+                    else:
+                        # Fall back to store value
+                        value = self.store.get(param, channel)
+                        if value is not None:
+                            if param == 'filter_frequency':
+                                note.filter.frequency = value
+                                log(TAG_NOTE, f"Updated filter frequency={format_value(value)}")
+                            elif param == 'filter_q':
+                                note.filter.Q = value
+                                log(TAG_NOTE, f"Updated filter Q={format_value(value)}")
                             
             # Update value parameters (waveform etc)
             for param in self.VALUE_PARAMS:
@@ -298,6 +322,18 @@ class NoteManager:
                     log(TAG_NOTE, f"No filter exists on note {note_number}, skipping update")
                     return False
                     
+                # Check modulation first
+                block = self.modulation.get_block(param_name, note_number, channel)
+                if block:
+                    if param_name == 'filter_frequency':
+                        note.filter.frequency = block
+                        log(TAG_NOTE, f"Updated filter frequency with block")
+                    elif param_name == 'filter_q':
+                        note.filter.Q = block
+                        log(TAG_NOTE, f"Updated filter Q with block")
+                    return True
+                    
+                # Fall back to store value
                 value = self.store.get(param_name, channel)
                 if value is not None:
                     if param_name == 'filter_frequency':
