@@ -25,6 +25,13 @@ class ModulationManager:
         Returns:
             True if block should be global, False if per-note
         """
+        # Make one-shot LFOs per-note by default
+        if name in self.prototypes:
+            proto = self.prototypes[name]
+            if proto['type'] == 'lfo' and proto['params'].get('once'):
+                log(TAG_MOD, f"Block {name} is one-shot LFO, making per-note")
+                return False
+        
         # Check if any paths modify this block's parameters per-note
         paths = path_config.get_paths_for_block(name)
         return not any(p.scope == 'channel' for p in paths)

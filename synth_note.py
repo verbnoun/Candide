@@ -148,10 +148,20 @@ class NoteManager:
             # Create new note
             new_note = synthio.Note(**note_params)
             
-            # Perform atomic note change
+            # Get blocks to retrigger
+            retrigger_blocks = []
+            for param in self.BLOCK_PARAMS:
+                block = self.modulation.get_block(param, note_number, channel)
+                if block and hasattr(block, 'retrigger'):
+                    if isinstance(block, synthio.LFO) and block.once:
+                        log(TAG_NOTE, f"Will retrigger one-shot LFO for {param}")
+                        retrigger_blocks.append(block)
+            
+            # Perform atomic note change with retrigger
             self.synth.change(
                 release=[old_note] if old_note else [],
-                press=[new_note]
+                press=[new_note],
+                retrigger=retrigger_blocks
             )
             
             # Update tracking after successful change

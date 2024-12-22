@@ -231,9 +231,12 @@ class Synthesizer:
                         # Create LFO with params
                         lfo = self.modulation.create_lfo(lfo_name, **params)
                         if lfo:
-                            # Add to free-running blocks
-                            self.add_free_block(lfo_name)
-                            log(TAG_SYNTH, f"Created and started LFO {lfo_name}")
+                            # Only add non-oneshot LFOs to free blocks
+                            if not params.get('once'):
+                                self.add_free_block(lfo_name)
+                                log(TAG_SYNTH, f"Created and started free-running LFO {lfo_name}")
+                            else:
+                                log(TAG_SYNTH, f"Created one-shot LFO {lfo_name}")
                             
                     elif step == 'route':
                         # Route LFO to target
