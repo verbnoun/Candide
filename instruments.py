@@ -17,11 +17,7 @@ synth/waveform/triangle
 
 
 
-# Basic Value Modulator LFO (Tremolo)
-synth/lfo/rate/tremolo:0.1-10/cc77
-synth/lfo/scale/tremolo:0-1/cc75
-synth/lfo/offset/tremolo:0.5
-synth/amplitude/lfo:tremolo
+
 
 '''
 
