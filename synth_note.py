@@ -250,6 +250,10 @@ class NoteManager:
             
         # Handle single parameter update
         try:
+            # Skip LFO parameter updates - handled by ModulationManager
+            if param_name.startswith('lfo_'):
+                return True
+                
             # Handle block parameters
             if param_name in self.BLOCK_PARAMS:
                 log(TAG_NOTE, f"Getting block for {param_name}")
@@ -266,7 +270,7 @@ class NoteManager:
                     log(TAG_NOTE, f"Updated {param_name} with block")
                     return True
                 return False
-                
+            
             # Handle value parameters
             elif param_name in self.VALUE_PARAMS:
                 if value is None:
@@ -282,19 +286,19 @@ class NoteManager:
                         log(TAG_NOTE, f"Updated {param_name}={format_value(value)} for note {note_number}")
                     return True
                 return False
-                
+            
             # Handle filter parameters
             elif param_name in self.FILTER_PARAMS:
                 if not note.filter:
                     log(TAG_NOTE, f"No filter exists on note {note_number}, skipping update")
                     return False
-                    
+                
                 try:
                     # Check for modulation block
                     block = self.modulation.get_block(param_name, note_number, channel)
                     if block:
                         value = block
-                        
+                    
                     # Update the specific filter parameter
                     if param_name == 'filter_frequency':
                         note.filter.frequency = value
@@ -306,7 +310,7 @@ class NoteManager:
                 except Exception as e:
                     log(TAG_NOTE, f"Error updating filter parameter: {str(e)}", is_error=True)
                     return False
-                        
+                    
             # Handle direct filter object assignment
             elif param_name == 'filter':
                 if isinstance(value, dict):
@@ -317,7 +321,7 @@ class NoteManager:
                     note.filter = value
                 log(TAG_NOTE, f"Updated filter for note {note_number}")
                 return True
-                
+            
             log(TAG_NOTE, f"Parameter {param_name} cannot be updated", is_error=True)
             return False
             
