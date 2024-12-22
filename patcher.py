@@ -73,14 +73,12 @@ class MidiHandler:
         for handler, config in startup_values.items():
             value = config['value']
             channel = 1 if config['use_channel'] else 0
-            if handler.startswith('lfo_create_'):
-                lfo_name = handler[11:]
-                log(TAG_PATCH, f"Creating LFO {lfo_name}:")
-                for param, param_value in value.items():
-                    log(TAG_PATCH, f"  {param}: {format_value(param_value)}")
-            elif handler.startswith('lfo_target_'):
-                lfo_name = handler[11:]
-                log(TAG_PATCH, f"Routing LFO {lfo_name} to {value}")
+            if handler.startswith('lfo_setup_'):
+                lfo_setup = value
+                lfo_name = lfo_setup['name']
+                log(TAG_PATCH, f"Setting up LFO {lfo_name}:")
+                for step, params in lfo_setup['steps']:
+                    log(TAG_PATCH, f"  {step}: {format_value(params)}")
             elif handler.endswith('waveform'):
                 log(TAG_PATCH, f"Setting {handler} (channel {channel})")
             else:

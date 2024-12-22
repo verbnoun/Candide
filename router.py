@@ -566,16 +566,17 @@ class Router:
         # Create ordered dict of startup values
         ordered_values = {}
         
-        # Add values in defined order
-        for prefix in STARTUP_ORDER:
-            for handler, config in self.startup_values.items():
-                if handler.startswith(prefix):
-                    ordered_values[handler] = config
-                    log(TAG_ROUTE, f"Adding startup value: {handler}")
-                    
-        # Add remaining non-LFO values
+        # Add LFO setup first
         for handler, config in self.startup_values.items():
-            if not any(handler.startswith(prefix) for prefix in STARTUP_ORDER):
+            if handler.startswith('lfo_setup_'):
+                ordered_values[handler] = config
+                lfo_setup = config['value']
+                log(TAG_ROUTE, f"Adding LFO setup: {lfo_setup['name']}")
+                log(TAG_ROUTE, f"  Steps: {lfo_setup['steps']}")
+                    
+        # Add remaining values
+        for handler, config in self.startup_values.items():
+            if not handler.startswith('lfo_setup_'):
                 ordered_values[handler] = config
                 log(TAG_ROUTE, f"Adding startup value: {handler}")
                 
