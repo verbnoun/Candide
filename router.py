@@ -530,6 +530,9 @@ class Router:
                             min_val, max_val = param_config['value']['range']
                             # Use middle of range as initial value
                             create_params[param_name] = (min_val + max_val) / 2
+                        elif param_config['value']['type'] == 'waveform':
+                            # Pass waveform info through to synth
+                            create_params['waveform'] = {'value': param_config['value']}
                     else:
                         create_params[param_name] = float(param_config['value'])
                 lfo_setup['steps'].append(('create', create_params))

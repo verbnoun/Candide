@@ -15,15 +15,13 @@ channel/frequency/note_number/note_on
 # Base waveform
 synth/waveform/triangle
 
-# Basic Value Modulator LFO (Tremolo)
-# 0.1-10 Hz oscillation
-synth/lfo/rate/tremolo:0.1-10/cc74
-# Depth of effect
-synth/lfo/scale/tremolo:0-1/cc75
-# Center at 0.5 amplitude
-synth/lfo/offset/tremolo:0.5
-# Connect to amplitude
-synth/amplitude/lfo:tremolo
+# One-Shot Fade LFO (Slow Attack)
+synth/lfo/once/fade:true
+synth/lfo/rate/fade:0.5
+synth/lfo/scale/fade:0.5
+synth/lfo/offset/fade:0.5
+synth/lfo/waveform/fade:saw
+channel/amplitude/lfo:fade
 
 
 
@@ -74,18 +72,6 @@ synth/lfo/scale/fade:1
 synth/lfo/waveform/fade:saw
 # Target amplitude
 synth/amplitude/lfo:fade
-
-# Stepped LFO (Arpeggiator-style)
-# No smoothing
-synth/lfo/interpolate/step:false
-# 4 Hz for quarter notes      
-synth/lfo/rate/step:4
-# Octave range
-synth/lfo/scale/step:12
-# Sharp steps
-synth/lfo/waveform/step:square
-# Affect pitch
-synth/bend/lfo:step
 
 # Phase-shifted LFO (Vibrato with delay)
 # 6 Hz vibrato
@@ -164,7 +150,14 @@ Parameters:
 
 """
 
-RICH_SAW_PATHS = '''
+RICH_SAW_PATHS = '''# One-Shot Fade LFO (Slow Attack)
+synth/lfo/once/fade:true
+synth/lfo/rate/fade:0.5
+synth/lfo/scale/fade:0.5
+synth/lfo/offset/fade:0.5
+synth/lfo/waveform/fade:saw
+synth/amplitude/lfo:fade
+
 # Note handling
 channel/press_note/note_on
 channel/release_note/note_off
