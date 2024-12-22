@@ -209,9 +209,8 @@ class Synthesizer:
             return
             
         try:
-            # Store value first (unless it's an LFO target or parameter since those are handled differently)
-            if not (name.startswith('lfo_target_') or name.startswith('lfo_')):
-                self.store.store(name, value, channel)
+            # Store all values
+            self.store.store(name, value, channel)
             
             # Handle block-related operations
             if name.startswith('lfo_setup_'):
@@ -282,16 +281,13 @@ class Synthesizer:
                         
             # Handle LFO parameter updates
             elif name.startswith('lfo_'):
-                # Extract LFO name and parameter
                 parts = name.split('_', 2)  # lfo_param_name
                 if len(parts) == 3:
                     param = parts[1]  # rate, scale, offset etc
                     lfo_name = parts[2]  # tremolo etc
-                    # Update LFO parameter (this triggers update_blocks via callback)
-                    if not self.modulation.update_block(lfo_name, param, value):
-                        log(TAG_SYNTH, f"Failed to update LFO {lfo_name} {param}", is_error=True)
-                        return
-                    log(TAG_SYNTH, f"Updated LFO {lfo_name} {param}={format_value(value)}")
+                    # Update will happen in update_blocks()
+                    self.modulation.update_blocks()
+                    log(TAG_SYNTH, f"Stored LFO {lfo_name} {param}={format_value(value)}")
             
             elif name.startswith('route_'):
                 parts = name.split('_', 1)

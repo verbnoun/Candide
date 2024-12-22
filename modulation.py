@@ -188,7 +188,7 @@ class ModulationManager:
                     log(TAG_MOD, f"  Current value: {block.value}")
                 return block
             else:
-                log(TAG_MOD, f"Error: Block {source_name} not found for {name}", is_error=True)
+                log(TAG_MOD, f"Warning: Block {source_name} not found for {name}")
                 return None
                 
         # Return global block if it exists and is global scope
@@ -197,8 +197,6 @@ class ModulationManager:
             log(TAG_MOD, f"Found global block for {name}:")
             log(TAG_MOD, f"  Type: {type(block).__name__}")
             return block
-        elif name in self.blocks:
-            log(TAG_MOD, f"Error: Block {name} exists but is not in global scope", is_error=True)
             
         # Handle per-note blocks
         if note_num is not None and channel is not None:
@@ -228,26 +226,38 @@ class ModulationManager:
                 if block:
                     self.note_blocks[note_key][name] = block
                     return block
-                else:
-                    log(TAG_MOD, f"Error: Failed to create per-note block {name}", is_error=True)
-                    return None
-                    
-        log(TAG_MOD, f"Error: No block found or created for {name}", is_error=True)
+                
+        # No block found - this is expected for non-modulated parameters
         return None
         
     def update_blocks(self):
-        """Update store with current block values."""
-        # Log all blocks first
+        """Update blocks from store and store their outputs."""
+        # Update LFO parameters from store
         for name, block in self.blocks.items():
             if isinstance(block, synthio.LFO):
+                # Get stored parameters
+                rate = self.synth.store.get(f"lfo_rate_{name}", 0)
+                scale = self.synth.store.get(f"lfo_scale_{name}", 0)
+                offset = self.synth.store.get(f"lfo_offset_{name}", 0)
+                
+                # Update block
+                block.rate = rate
+                block.scale = scale
+                block.offset = offset
+                
+                # Store current values
+                self.synth.store.store(f"lfo_value_{name}", block.value, 0)
+                self.synth.store.store(f"lfo_phase_{name}", block.phase, 0)
+                
+                # Log state
                 log(TAG_MOD, f"LFO {name}:")
-                log(TAG_MOD, f"  rate: {block.rate} Hz")
-                log(TAG_MOD, f"  scale: {block.scale}")
-                log(TAG_MOD, f"  offset: {block.offset}")
+                log(TAG_MOD, f"  rate: {rate} Hz")
+                log(TAG_MOD, f"  scale: {scale}")
+                log(TAG_MOD, f"  offset: {offset}")
                 log(TAG_MOD, f"  phase: {block.phase}")
                 log(TAG_MOD, f"  value: {format_value(block.value)}")
                 
-        # Then update store with routed values
+        # Update routed values
         for target_param, source_name in self.chains.items():
             block = self.blocks.get(source_name)
             if block and hasattr(block, 'value'):
@@ -268,40 +278,14 @@ class ModulationManager:
             value: New value
             
         Returns:
-            True if update succeeded, False if block/param not found
+            True if block exists, False if not found
         """
-        log(TAG_MOD, f"Attempting to update {name} {param}={format_value(value)}")
-        block = self.blocks.get(name)
-        if not block:
-            log(TAG_MOD, f"Error: Block {name} not found", is_error=True)
-            return False
-            
-        if not hasattr(block, param):
-            log(TAG_MOD, f"Error: Block {name} has no parameter {param}", is_error=True)
-            return False
-            
-        try:
-            old_value = getattr(block, param)
-            setattr(block, param, value)
-            log(TAG_MOD, f"Updated block {name}:")
-            log(TAG_MOD, f"  {param}: {format_value(old_value)} -> {format_value(value)}")
-            if isinstance(block, synthio.LFO):
-                log(TAG_MOD, f"  Current value: {block.value}")
-                # Don't store/update on parameter change - let update cycle handle it
-            
-            # Update prototype
-            if name in self.prototypes:
-                self.prototypes[name]['params'][param] = value
-                
-            # Update any per-note instances
-            for blocks in self.note_blocks.values():
-                if name in blocks:
-                    setattr(blocks[name], param, value)
+        # Parameters are updated from store in update_blocks()
+        if name in self.blocks:
+            log(TAG_MOD, f"Block {name} parameters are updated from store")
             return True
-                    
-        except Exception as e:
-            log(TAG_MOD, f"Error updating block parameter: {str(e)}", is_error=True)
-            return False
+        log(TAG_MOD, f"Error: Block {name} not found", is_error=True)
+        return False
                 
     def route_block(self, source_name, target_param):
         """Route block output to parameter.
