@@ -15,21 +15,33 @@ channel/frequency/note_number/note_on
 # Base waveform
 synth/waveform/triangle
 
+# Basic Value Modulator LFO (Tremolo)
+# 0.1-10 Hz oscillation
+synth/lfo/rate/tremolo:0.1-10/cc74
+# Depth of effect
+synth/lfo/scale/tremolo:0-1/cc75
+# Center at 0.5 amplitude
+synth/lfo/offset/tremolo:0.5
+# Connect to amplitude
+synth/amplitude/lfo:tremolo
 
-
-
+# One-Shot Fade LFO (Slow Attack)
+# One-time execution
+synth/lfo/once/fade:true
+# Complete over 2 seconds  
+synth/lfo/rate/fade:0.5
+# Full range            
+synth/lfo/scale/fade:1
+# Linear ramp            
+synth/lfo/waveform/fade:ramp
+# Target amplitude
+synth/amplitude/lfo:fade
 
 '''
 
 """
 
-
-
-
-
-
-
-## working
+## WORKS
 channel/amplitude/0.001-1/velocity
 channel/bend/n0.1-0.1/pitch_bend
 channel/amplitude/0.001-1/pressure
@@ -49,63 +61,74 @@ synth/envelope:decay_time/0.001-0.25/cc75
 synth/envelope:sustain_level/0.001-1/cc66
 synth/envelope:release_time/0.001-3/velocity
 
-"""
+# LFO PATHS
 
-LFO_PATHS = '''
-
-'''
-
-"""
 # Basic Value Modulator LFO (Tremolo)
-synth/lfo/rate/tremolo:0.1-10/cc74      # 0.1-10 Hz oscillation
-synth/lfo/scale/tremolo:0-1/cc75        # Depth of effect
-synth/lfo/offset/tremolo:0.5            # Center at 0.5 amplitude
-synth/amplitude/lfo:tremolo         # Connect to amplitude
+# 0.1-10 Hz oscillation
+synth/lfo/rate/tremolo:0.1-10/cc74
+# Depth of effect
+synth/lfo/scale/tremolo:0-1/cc75
+# Center at 0.5 amplitude
+synth/lfo/offset/tremolo:0.5
+# Connect to amplitude
+synth/amplitude/lfo:tremolo
 
 # One-Shot Fade LFO (Slow Attack)
-synth/lfo/once/fade:true                # One-time execution
-synth/lfo/rate/fade:0.5                 # Complete over 2 seconds
-synth/lfo/scale/fade:1                  # Full range
-synth/lfo/waveform/fade:ramp            # Linear ramp
-synth/amplitude/lfo:fade            # Target amplitude
+# One-time execution
+synth/lfo/once/fade:true
+# Complete over 2 seconds  
+synth/lfo/rate/fade:0.5
+# Full range            
+synth/lfo/scale/fade:1
+# Linear ramp            
+synth/lfo/waveform/fade:ramp
+# Target amplitude
+synth/amplitude/lfo:fade
 
 # Stepped LFO (Arpeggiator-style)
-synth/lfo/interpolate/step:false        # No smoothing
-synth/lfo/rate/step:4                   # 4 Hz for quarter notes
-synth/lfo/scale/step:12                 # Octave range
-synth/lfo/waveform/step:square          # Sharp steps
-synth/bend/lfo:step                 # Affect pitch
+# No smoothing
+synth/lfo/interpolate/step:false
+# 4 Hz for quarter notes      
+synth/lfo/rate/step:4
+# Octave range
+synth/lfo/scale/step:12
+# Sharp steps
+synth/lfo/waveform/step:square
+# Affect pitch
+synth/bend/lfo:step
 
 # Phase-shifted LFO (Vibrato with delay)
-synth/lfo/rate/vib:6                    # 6 Hz vibrato
-synth/lfo/scale/vib:0.2                 # Small pitch variation
-synth/lfo/phase_offset/vib:0.5          # Start halfway through
-synth/bend/lfo:vib                  # Connect to pitch bend
-
-# Complex waveform LFO (Custom envelope)
-synth/lfo/waveform/env:custom-shape     # Custom waveform
-synth/lfo/loop_start/env:0              # Full waveform
-synth/lfo/loop_end/env:64               # Use all points
-synth/lfo/once/env:true                 # Play once
-synth/filter_frequency:low_pass/lfo:env      # Swept filter
+# 6 Hz vibrato
+synth/lfo/rate/vib:6
+# Small pitch variation
+synth/lfo/scale/vib:0.2
+# Start halfway through
+synth/lfo/phase_offset/vib:0.5
+# Connect to pitch bend
+synth/bend/lfo:vib
 
 # Per-channel LFO examples with MIDI targeting:
 
 # Channel vibrato (bend) triggered by aftertouch (pressure)
-channel/lfo/rate/vib_ch:6               # Fixed 6Hz
-channel/lfo/scale/vib_ch:0-0.2/pressure # Depth controlled by pressure
+# Fixed 6Hz
+channel/lfo/rate/vib_ch:6
+# Depth controlled by pressure
+channel/lfo/scale/vib_ch:0-0.2/pressure
 channel/lfo/waveform/vib_ch:sine
 channel/bend/lfo:vib_ch
 
 # Channel tremolo with CC control
-channel/lfo/rate/trem_ch:0.1-10/cc73    # Rate controlled by CC73  
-channel/lfo/scale/trem_ch:0-1/cc74      # Depth controlled by CC74
+# Rate controlled by CC73
+channel/lfo/rate/trem_ch:0.1-10/cc73
+# Depth controlled by CC74
+channel/lfo/scale/trem_ch:0-1/cc74
 channel/amplitude/lfo:trem_ch
 
 # Channel filter sweep (one-shot triggered by note-on)
 channel/lfo/once/sweep_ch:true
-channel/lfo/rate/sweep_ch:0.5  
-channel/lfo/scale/sweep_ch:500-2000/velocity # Range based on note velocity
+channel/lfo/rate/sweep_ch:0.5
+# Range based on note velocity
+channel/lfo/scale/sweep_ch:500-2000/velocity
 channel/lfo/waveform/sweep_ch:ramp
 channel/filter_frequency:high_pass/lfo:sweep_ch
 
