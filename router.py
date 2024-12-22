@@ -9,6 +9,11 @@ from synth_wave import WaveManager
 from constants import STATIC_WAVEFORM_SAMPLES
 from path_parser import PathParser
 
+# Order of operations for startup values
+STARTUP_ORDER = [
+    'lfo_setup_',  # LFO setup (create and route)
+]
+
 # Complete type specification for parameters
 PARAM_TYPES = {
     # Fixed Float (can't be block)
@@ -355,6 +360,7 @@ class Router:
         self.current_instrument_name = None
         self.on_paths_parsed = None
         self.path_parser = PathParser()
+        self.lfo_config = {}  # Store LFO configuration from path parser
         
     def parse_paths(self, paths, config_name=None):
         """Parse paths and create routes."""
@@ -367,6 +373,7 @@ class Router:
             self.startup_values.clear()
             self.enabled_messages.clear()
             self.enabled_ccs = []
+            self.lfo_config.clear()  # Reset LFO config
             
             # Parse paths
             parse_result = self.path_parser.parse_paths(paths, config_name)
@@ -380,6 +387,7 @@ class Router:
             self.enabled_messages = parse_result.enabled_messages
             self.enabled_ccs = parse_result.enabled_ccs
             self.current_instrument_name = parse_result.current_instrument_name
+            self.lfo_config = parse_result.lfo_config  # Store LFO config from parser
             
             # Notify listeners that paths have been parsed
             if self.on_paths_parsed:
@@ -499,32 +507,37 @@ class Router:
                     
             # Handle LFO configuration
             for lfo_name, lfo_config in parse_result.lfo_config.items():
-                # Extract initial values from param configs
-                lfo_params = {}
+                # Build LFO setup info
+                lfo_setup = {
+                    'name': lfo_name,
+                    'steps': []
+                }
+                
+                # Step 1: Create LFO with initial params
+                create_params = {}
                 for param_name, param_config in lfo_config['params'].items():
                     if isinstance(param_config['value'], dict):
                         if param_config['value']['type'] == 'range':
-                            # Use middle of range as initial value
+                            # Get range tuple directly
                             min_val, max_val = param_config['value']['range']
-                            lfo_params[param_name] = (min_val + max_val) / 2
+                            # Use middle of range as initial value
+                            create_params[param_name] = (min_val + max_val) / 2
                     else:
-                        lfo_params[param_name] = float(param_config['value'])
+                        create_params[param_name] = float(param_config['value'])
+                lfo_setup['steps'].append(('create', create_params))
                 
-                # Tell synth to create LFO
-                self.startup_values[f"lfo_create_{lfo_name}"] = {
-                    'value': lfo_params,
-                    'use_channel': False  # LFO creation is always global
-                }
-                
-                # Tell synth about targets
+                # Step 2: Route LFO to targets
                 for target in lfo_config['targets']:
-                    target_value = f"{target['param']}"
+                    target_value = target['param']
                     if target['filter_type']:
                         target_value = f"{target_value}:{target['filter_type']}"
-                    self.startup_values[f"lfo_target_{lfo_name}"] = {
-                        'value': target_value,
-                        'use_channel': False  # LFO routing is always global
-                    }
+                    lfo_setup['steps'].append(('route', target_value))
+                
+                # Store LFO setup info
+                self.startup_values[f"lfo_setup_{lfo_name}"] = {
+                    'value': lfo_setup,
+                    'use_channel': False  # LFO setup is always global
+                }
     
     def get_startup_values(self):
         """Get startup values and LFO config.
@@ -533,7 +546,41 @@ class Router:
             Tuple of (startup_values, lfo_config)
             Note: lfo_config is empty as LFOs are handled by synth
         """
-        return (self.startup_values.copy(), {})
+        log(TAG_ROUTE, "=== Getting Startup Values ===")
+        log(TAG_ROUTE, "\nLFO Config:")
+        for lfo_name, config in self.lfo_config.items():
+            log(TAG_ROUTE, f"LFO {lfo_name}:")
+            log(TAG_ROUTE, f"  Parameters: {format_value(config['params'])}")
+            log(TAG_ROUTE, f"  Targets: {config['targets']}")
+            
+        log(TAG_ROUTE, "\nStartup Values:")
+        for handler, config in self.startup_values.items():
+            if handler.startswith('lfo_setup_'):
+                lfo_setup = config['value']
+                log(TAG_ROUTE, f"\nLFO Setup for {lfo_setup['name']}:")
+                for step, params in lfo_setup['steps']:
+                    log(TAG_ROUTE, f"  {step}: {format_value(params)}")
+            else:
+                log(TAG_ROUTE, f"{handler}: {format_value(config['value'])}")
+        
+        # Create ordered dict of startup values
+        ordered_values = {}
+        
+        # Add values in defined order
+        for prefix in STARTUP_ORDER:
+            for handler, config in self.startup_values.items():
+                if handler.startswith(prefix):
+                    ordered_values[handler] = config
+                    log(TAG_ROUTE, f"Adding startup value: {handler}")
+                    
+        # Add remaining non-LFO values
+        for handler, config in self.startup_values.items():
+            if not any(handler.startswith(prefix) for prefix in STARTUP_ORDER):
+                ordered_values[handler] = config
+                log(TAG_ROUTE, f"Adding startup value: {handler}")
+                
+        log(TAG_ROUTE, f"Returning ordered values: {ordered_values}")
+        return (ordered_values, {})
     
     def get_midi_mappings(self):
         """Get MIDI mappings."""

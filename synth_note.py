@@ -54,6 +54,8 @@ class NoteManager:
                             log(TAG_NOTE, f"    scale: {block.scale}")
                             log(TAG_NOTE, f"    offset: {block.offset}")
                             log(TAG_NOTE, f"    current value: {block.value}")
+                            # Store initial LFO value
+                            self.store.store(param, block.value, channel)
                         log(TAG_NOTE, f"  Using block for {param}: {type(block).__name__}")
                     else:
                         log(TAG_NOTE, f"  Using value for {param}: {format_value(value)}")
@@ -199,27 +201,51 @@ class NoteManager:
                 return False
         return False
         
-    def update_note(self, note_number, channel, param_name, value):
-        """Update parameter for active note.
+    def update_note(self, note_number, channel, param_name=None, value=None):
+        """Update note parameter.
         
         Args:
             note_number: MIDI note number or unique identifier
             channel: MIDI channel
-            param_name: Name of parameter to update
-            value: New parameter value
+            param_name: Optional param to update (None to update all)
+            value: New value (None to get from store)
         """
         address = f"{note_number}.{channel}"
         if address not in self.notes:
             log(TAG_NOTE, f"Note {note_number} not found on channel {channel}", is_error=True)
             return False
             
+        # Get note instance
+        note = self.notes[address]
+        
+        # Update all parameters if none specified
+        if param_name is None:
+            # Update all updatable params
+            for param in self.UPDATABLE_PARAMS:
+                if param not in self.FILTER_PARAMS:
+                    # Get value from store
+                    value = self.store.get(param, channel)
+                    if value is not None:
+                        # Check for modulation block
+                        block = self.modulation.get_block(param, note_number, channel)
+                        if block:
+                            value = block
+                        # Set parameter
+                        setattr(note, param, value)
+            return True
+            
+        # Handle single parameter update
         if param_name not in self.UPDATABLE_PARAMS and param_name not in self.FILTER_PARAMS:
             log(TAG_NOTE, f"Parameter {param_name} cannot be updated", is_error=True)
             return False
             
         try:
-            note = self.notes[address]
-            
+            # Get value from store if not provided
+            if value is None:
+                value = self.store.get(param_name, channel)
+                if value is None:
+                    return False
+                    
             # Handle filter parameter updates
             if param_name in self.FILTER_PARAMS:
                 if not note.filter:

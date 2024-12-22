@@ -15,6 +15,8 @@ channel/frequency/note_number/note_on
 # Base waveform
 synth/waveform/triangle
 
+
+
 # Basic Value Modulator LFO (Tremolo)
 synth/lfo/rate/tremolo:0.1-10/cc77
 synth/lfo/scale/tremolo:0-1/cc75
@@ -166,7 +168,7 @@ synth/envelope:release_time/2
 
 # Filter for tone shaping
 synth/filter_frequency:low_pass/200-2000/pressure
-synth/filter_resonance:low_pass/0.1-2/cc22
+synth/envelope:release_time/2
 
 '''
 

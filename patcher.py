@@ -69,15 +69,28 @@ class MidiHandler:
             
         log(TAG_PATCH, "Sending startup values...")
         
+        # Log all startup values first
+        for handler, config in startup_values.items():
+            value = config['value']
+            channel = 1 if config['use_channel'] else 0
+            if handler.startswith('lfo_create_'):
+                lfo_name = handler[11:]
+                log(TAG_PATCH, f"Creating LFO {lfo_name}:")
+                for param, param_value in value.items():
+                    log(TAG_PATCH, f"  {param}: {format_value(param_value)}")
+            elif handler.startswith('lfo_target_'):
+                lfo_name = handler[11:]
+                log(TAG_PATCH, f"Routing LFO {lfo_name} to {value}")
+            elif handler.endswith('waveform'):
+                log(TAG_PATCH, f"Setting {handler} (channel {channel})")
+            else:
+                log(TAG_PATCH, f"Setting {handler} = {format_value(value)} (channel {channel})")
+                
         # Send all values to synth
         for handler, config in startup_values.items():
             try:
                 value = config['value']
                 channel = 1 if config['use_channel'] else 0
-                if handler.endswith('waveform'):
-                    log(TAG_PATCH, f"Setting {handler} (channel {channel})")
-                else:
-                    log(TAG_PATCH, f"Setting {handler} = {format_value(value)} (channel {channel})")
                 self.synthesizer.handle_value(handler, value, channel)
             except Exception as e:
                 log(TAG_PATCH, f"Failed to send startup value: {str(e)}", is_error=True)
