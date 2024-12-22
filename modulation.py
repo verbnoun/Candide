@@ -287,12 +287,7 @@ class ModulationManager:
             log(TAG_MOD, f"  {param}: {format_value(old_value)} -> {format_value(value)}")
             if isinstance(block, synthio.LFO):
                 log(TAG_MOD, f"  Current value: {block.value}")
-                # Store updated LFO value and trigger callback
-                for target_param, source_name in self.chains.items():
-                    if source_name == name:
-                        self.synth.store.store(target_param, block.value, 0)
-                        if self.on_update:
-                            self.on_update()
+                # Don't store/update on parameter change - let update cycle handle it
             
             # Update prototype
             if name in self.prototypes:
@@ -328,8 +323,7 @@ class ModulationManager:
                 log(TAG_MOD, f"  LFO scale: {block.scale}")
                 log(TAG_MOD, f"  LFO offset: {block.offset}")
                 log(TAG_MOD, f"  Current value: {block.value}")
-                # Store initial LFO value
-                self.synth.store.store(target_param, block.value, 0)
+                # Don't store initial value - let update cycle handle it
             return True
         return False
         

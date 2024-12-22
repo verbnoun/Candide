@@ -213,65 +213,46 @@ class Synthesizer:
             if not (name.startswith('lfo_target_') or name.startswith('lfo_')):
                 self.store.store(name, value, channel)
             
-            # Handle LFO parameter updates
-            if name.startswith('lfo_'):
-                # Extract LFO name and parameter
-                parts = name.split('_', 2)  # lfo_param_name
-                if len(parts) == 3:
-                    param = parts[1]  # rate, scale, offset etc
-                    lfo_name = parts[2]  # tremolo etc
-                    # Update LFO parameter (this triggers update_blocks via callback)
-                    if not self.modulation.update_block(lfo_name, param, value):
-                        log(TAG_SYNTH, f"Failed to update LFO {lfo_name} {param}", is_error=True)
-                        return
-                    log(TAG_SYNTH, f"Updated LFO {lfo_name} {param}={format_value(value)}")
-            
             # Handle block-related operations
             if name.startswith('lfo_setup_'):
                 # Handle LFO setup info
                 lfo_setup = value
                 lfo_name = lfo_setup['name']
                 
-                # Convert string representation back to tuple list
-                steps_str = lfo_setup['steps'].strip('[]')  # Remove outer brackets
-                steps = []
-                # Basic string parsing - expects format like: ('create', {...}), ('route', ...)
-                for step_str in steps_str.split('),'):
-                    if not step_str.strip(): 
-                        continue
-                    # Clean up string and evaluate as tuple
-                    step_str = step_str.strip('() ')
-                    step_type, params_str = step_str.split(',', 1)
-                    step_type = step_type.strip("' ")
-                    
-                    # Parse parameters
+                # Get steps list
+                steps = lfo_setup['steps']
+                
+                # Convert any string values to float in create params
+                for i, (step_type, params) in enumerate(steps):
                     if step_type == 'create':
-                        # Convert string dict to actual dict and convert numeric values
-                        params_dict = eval(params_str)  # Safe here since we control input
-                        for k, v in params_dict.items():
+                        float_params = {}
+                        for k, v in params.items():
                             try:
-                                params_dict[k] = float(v)
+                                float_params[k] = float(v)
                             except (ValueError, TypeError):
-                                pass  # Keep non-numeric values as is
-                        params = params_dict
-                    else:
-                        params = params_str.strip("' ")
-                        
-                    steps.append((step_type, params))
+                                float_params[k] = v
+                        steps[i] = (step_type, float_params)
                 
                 # Now process the parsed steps
                 for step, params in steps:
                     if step == 'create':
                         # Create LFO with params
-                        waveform_type = 'sine'  # Default waveform
+                        if not self.wave_manager:
+                            self.wave_manager = WaveManager(self.store)
+                        
+                        # Create waveform
+                        waveform = self.wave_manager.create_waveform('sine')  # Default waveform
                         if 'waveform' in params:
                             waveform_info = params['waveform']['value']
                             if isinstance(waveform_info, dict) and waveform_info['type'] == 'waveform':
-                                waveform_type = waveform_info['name']
+                                waveform = self.wave_manager.create_waveform(waveform_info['name'])
                             del params['waveform']
                             
+                        # Add waveform to params
+                        params['waveform'] = waveform
+                            
                         # Create LFO with params
-                        lfo = self.modulation.create_lfo(lfo_name, waveform_type=waveform_type, **params)
+                        lfo = self.modulation.create_lfo(lfo_name, **params)
                         if lfo:
                             # Add to free-running blocks
                             self.add_free_block(lfo_name)
@@ -299,6 +280,19 @@ class Synthesizer:
                                 return
                         log(TAG_SYNTH, f"Routed LFO {lfo_name} to {target}")
                         
+            # Handle LFO parameter updates
+            elif name.startswith('lfo_'):
+                # Extract LFO name and parameter
+                parts = name.split('_', 2)  # lfo_param_name
+                if len(parts) == 3:
+                    param = parts[1]  # rate, scale, offset etc
+                    lfo_name = parts[2]  # tremolo etc
+                    # Update LFO parameter (this triggers update_blocks via callback)
+                    if not self.modulation.update_block(lfo_name, param, value):
+                        log(TAG_SYNTH, f"Failed to update LFO {lfo_name} {param}", is_error=True)
+                        return
+                    log(TAG_SYNTH, f"Updated LFO {lfo_name} {param}={format_value(value)}")
+            
             elif name.startswith('route_'):
                 parts = name.split('_', 1)
                 if len(parts) == 2:
