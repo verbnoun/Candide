@@ -34,12 +34,7 @@ class Synthesizer:
             # Track blocks that run even without notes
             self.blocks = self.synth.blocks
             
-            # Set up block update callback
-            self.modulation.on_update = self.handle_block_update
-            
-            # Add update timer
-            self.update_timer = 0
-            self.UPDATE_INTERVAL = 256  # Update every 256 samples
+            # Initialize synth
             
             log(TAG_SYNTH, "Synthesizer initialization complete")
             
@@ -154,8 +149,6 @@ class Synthesizer:
         if block and block not in self.blocks:
             self.blocks.append(block)
             log(TAG_SYNTH, f"Added {block_name} to free-running blocks")
-            # Force initial update
-            self.modulation.update_blocks()
 
     def remove_free_block(self, block_name):
         block = self.modulation.get_block(block_name)
@@ -187,21 +180,6 @@ class Synthesizer:
         except Exception as e:
             log(TAG_SYNTH, f"Error in atomic change: {str(e)}", is_error=True)
             
-    def update(self):
-        """Update blocks and notes."""
-        # Update store with current block values
-        self.modulation.update_blocks()
-        # Update all active notes with new values
-        for ch, note_number in self.note_manager.channel_map.items():
-            self.note_manager.update_note(note_number, ch)
-                
-    def handle_block_update(self):
-        """Called when blocks need updating."""
-        # Update store with current block values
-        self.modulation.update_blocks()
-        # Update all active notes with new values
-        for ch, note_number in self.note_manager.channel_map.items():
-            self.note_manager.update_note(note_number, ch)
             
     def handle_value(self, name, value, channel):
         if not self._active:
@@ -255,8 +233,6 @@ class Synthesizer:
                         if lfo:
                             # Add to free-running blocks
                             self.add_free_block(lfo_name)
-                            # Force initial update
-                            self.modulation.update_blocks()
                             log(TAG_SYNTH, f"Created and started LFO {lfo_name}")
                             
                     elif step == 'route':
@@ -285,9 +261,9 @@ class Synthesizer:
                 if len(parts) == 3:
                     param = parts[1]  # rate, scale, offset etc
                     lfo_name = parts[2]  # tremolo etc
-                    # Update will happen in update_blocks()
-                    self.modulation.update_blocks()
-                    log(TAG_SYNTH, f"Stored LFO {lfo_name} {param}={format_value(value)}")
+                    # Update specific block parameter
+                    self.modulation.update_block(lfo_name, param, value)
+                    log(TAG_SYNTH, f"Updated LFO {lfo_name} {param}={format_value(value)}")
             
             elif name.startswith('route_'):
                 parts = name.split('_', 1)
